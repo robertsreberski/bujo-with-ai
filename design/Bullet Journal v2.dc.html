@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #16130F; }
+  * { box-sizing: border-box; }
+  a { color: #E4652E; text-decoration: underline; text-underline-offset: 3px; }
+  a:hover { color: #F0873F; }
+  input, button, textarea { font: inherit; color: inherit; }
+  input:focus { outline: none; }
+  ::placeholder { color: #8A7E75; }
+  ::selection { background: #352E28; }
+  @keyframes shOverlay { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes shDialog { from { opacity: 0; transform: scale(.97) translateY(6px) } to { opacity: 1; transform: none } }
+  @keyframes shToast { 0% { opacity: 0; transform: translateY(8px) } 10% { opacity: 1; transform: none } 90% { opacity: 1 } 100% { opacity: 0 } }
+  .sh-scroll::-webkit-scrollbar { width: 8px }
+  .sh-scroll::-webkit-scrollbar-thumb { background: #574D45; border-radius: 4px }
+  .sh-scroll::-webkit-scrollbar-track { background: transparent }
+</style>
+</helmet>
+
+<div style="min-height: 100vh; display: flex; justify-content: center; background: #16130F; font-family: 'Geist', ui-sans-serif, system-ui, sans-serif; color: #F5EFEA; -webkit-font-smoothing: antialiased;">
+  <div style="{{ frameStyle }}">
+
+    <aside style="{{ sidebarStyle }}">
+      <div style="padding: 18px 14px 16px;">
+        <div style="font-size: 15px; font-weight: 600; letter-spacing: -.01em;">Journal</div>
+        <div style="font-size: 12.5px; color: #9C8F85; padding-top: 2px;">{{ todayLabel }}</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 2px; padding: 0 8px;">
+        <sc-for list="{{ navItems }}" as="n" hint-placeholder-count="4">
+          <button onClick="{{ n.onClick }}" style="{{ n.style }}" style-hover="background: #2B2521;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="{{ n.iconPath }}"></path></svg>
+            <span style="flex: 1; text-align: left;">{{ n.label }}</span>
+            <span style="{{ n.badgeStyle }}">{{ n.badge }}</span>
+          </button>
+        </sc-for>
+      </div>
+      <div style="margin-top: auto; padding: 10px 8px 12px; display: flex; flex-direction: column; gap: 2px; border-top: 1px solid #352E28;">
+        <button onClick="{{ openSearch }}" style="display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 9px; background: transparent; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; color: #D6CCC4;" style-hover="background: #2B2521;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3"></path></svg>
+          <span style="flex: 1; text-align: left;">Search</span>
+          <span style="font-family: 'Geist Mono', ui-monospace, monospace; font-size: 11px; color: #9C8F85;">⌘K</span>
+        </button>
+        <button onClick="{{ openSettings }}" style="display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 9px; background: transparent; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; color: #D6CCC4;" style-hover="background: #2B2521;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+          <span style="flex: 1; text-align: left;">Assistant access</span>
+        </button>
+      </div>
+    </aside>
+
+    <div style="{{ paneStyle }}">
+
+    <header style="flex: none; padding: 14px 16px 0; background: #1E1A17; border-bottom: 1px solid #352E28;">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+        <div style="min-width: 0;">
+          <div style="font-size: 15px; font-weight: 600; letter-spacing: -.01em; line-height: 1.3;">{{ headerTitle }}</div>
+          <div style="font-size: 12.5px; color: #9C8F85; line-height: 1.4;">{{ headerSub }}</div>
+        </div>
+        <div style="{{ headerActionsStyle }}">
+          <button onClick="{{ openSearch }}" title="Search (⌘K)" style="height: 32px; width: 32px; display: grid; place-items: center; background: #1E1A17; border: 1px solid #352E28; border-radius: 6px; cursor: pointer; color: #B3A79E;" style-hover="background: #2B2521; color: #F5EFEA;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3"></path></svg>
+          </button>
+          <button onClick="{{ openSettings }}" title="Assistant access" style="height: 32px; width: 32px; display: grid; place-items: center; background: #1E1A17; border: 1px solid #352E28; border-radius: 6px; cursor: pointer; color: #B3A79E;" style-hover="background: #2B2521; color: #F5EFEA;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <div style="{{ tabsStyle }}">
+        <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+          <button onClick="{{ t.onClick }}" style="{{ t.style }}">
+            <span>{{ t.label }}</span>
+            <span style="{{ t.badgeStyle }}">{{ t.badge }}</span>
+          </button>
+        </sc-for>
+      </div>
+      <div style="{{ headerSpacerStyle }}"></div>
+    </header>
+
+    <main class="sh-scroll" style="flex: 1; overflow-y: auto; overscroll-behavior: contain; background: #1E1A17;">
+      <div style="{{ contentStyle }}">
+
+      <section data-screen-label="Today" style="display: {{ showToday }};">
+        <sc-if value="{{ hasLeftovers }}" hint-placeholder-val="{{ true }}">
+          <div style="margin: 14px 16px 4px; border: 1px solid #352E28; border-radius: 8px; padding: 13px 14px; display: flex; gap: 11px; align-items: flex-start;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9C8F85" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: none; margin-top: 1px;"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 8v4M12 16h.01"></path></svg>
+            <div style="flex: 1; min-width: 0;">
+              <div style="font-size: 13.5px; font-weight: 500; line-height: 1.4;">{{ leftoverTitle }}</div>
+              <div style="font-size: 12.5px; color: #9C8F85; line-height: 1.5; padding-top: 2px;">Decide what to do with each one: move it to today, finish it, or drop it.</div>
+              <button onClick="{{ startMigration }}" style="margin-top: 10px; height: 32px; padding: 0 12px; background: #E4652E; color: #1B1310; border: none; border-radius: 6px; cursor: pointer; font-size: 12.5px; font-weight: 500;" style-hover="background: #F0773D;">Review them</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-for list="{{ daySections }}" as="d" hint-placeholder-count="2">
+          <div>
+            <div style="position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px 6px; background: #1E1A17;">
+              <div style="display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+                <span style="font-size: 13.5px; font-weight: 600; letter-spacing: -.005em;">{{ d.title }}</span>
+                <span style="font-size: 12px; color: #9C8F85;">{{ d.sub }}</span>
+              </div>
+              <span style="font-size: 12px; color: #9C8F85; flex: none;">{{ d.count }}</span>
+            </div>
+
+            <sc-for list="{{ d.entries }}" as="e" hint-placeholder-count="5">
+              <div onClick="{{ e.onOpen }}" style="{{ e.rowStyle }}" style-hover="background: #241F1B;">
+                <div style="{{ e.leadStyle }}">
+                  <button onClick="{{ e.onToggle }}" title="{{ e.toggleTitle }}" style="{{ e.checkStyle }}">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" style="{{ e.checkMarkStyle }}"><path d="M20 6 9 17l-5-5"></path></svg>
+                  </button>
+                  <div style="{{ e.iconStyle }}">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ e.iconPath }}"></path></svg>
+                  </div>
+                </div>
+                <div style="min-width: 0; display: flex; flex-direction: column; gap: 5px;">
+                  <div style="{{ e.textStyle }}">{{ e.text }}</div>
+                  <div style="{{ e.metaRowStyle }}">
+                    <span style="{{ e.typeBadgeStyle }}">{{ e.typeLabel }}</span>
+                    <span style="{{ e.stateBadgeStyle }}">{{ e.stateLabel }}</span>
+                    <span style="{{ e.aiBadgeStyle }}">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+                    </span>
+                    <span style="{{ e.tagStyle }}">{{ e.tagLabel }}</span>
+                  </div>
+                </div>
+                <div style="{{ e.timeStyle }}">{{ e.timeLabel }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-for>
+        <div style="height: 24px;"></div>
+      </section>
+
+      <section data-screen-label="Month" style="display: {{ showMonth }};">
+        <div style="padding: 14px 16px 0;">
+          <div style="border: 1px solid #352E28; border-radius: 10px; padding: 12px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 0 2px 10px;">
+              <button onClick="{{ prevMonth }}" style="height: 28px; width: 28px; display: grid; place-items: center; background: #1E1A17; border: 1px solid #352E28; border-radius: 6px; cursor: pointer; color: #B3A79E;" style-hover="background: #2B2521;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+              </button>
+              <div style="font-size: 13.5px; font-weight: 500;">{{ monthLabel }}</div>
+              <button onClick="{{ nextMonth }}" style="height: 28px; width: 28px; display: grid; place-items: center; background: #1E1A17; border: 1px solid #352E28; border-radius: 6px; cursor: pointer; color: #B3A79E;" style-hover="background: #2B2521;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+              </button>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px;">
+              <sc-for list="{{ weekdayLabels }}" as="w" hint-placeholder-count="7">
+                <div style="height: 26px; display: grid; place-items: center; font-size: 11.5px; font-weight: 500; color: #9C8F85;">{{ w }}</div>
+              </sc-for>
+              <sc-for list="{{ calendarCells }}" as="c" hint-placeholder-count="35">
+                <button onClick="{{ c.onClick }}" title="{{ c.title }}" style="{{ c.style }}">
+                  <span>{{ c.num }}</span>
+                  <span style="{{ c.dotStyle }}"></span>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+
+        <div style="padding: 18px 16px 0;">
+          <div style="display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 4px;">
+            <div style="font-size: 13.5px; font-weight: 600;">Monthly log</div>
+            <div style="font-size: 12px; color: #9C8F85;">{{ monthlyMeta }}</div>
+          </div>
+          <div style="font-size: 12.5px; color: #9C8F85; line-height: 1.5; padding-bottom: 6px;">Things that belong to the month, not to a day.</div>
+          <sc-for list="{{ monthlyEntries }}" as="e" hint-placeholder-count="4">
+            <div onClick="{{ e.onOpen }}" style="{{ e.rowStyleFlush }}" style-hover="background: #241F1B;">
+              <div style="{{ e.leadStyle }}">
+                <button onClick="{{ e.onToggle }}" title="{{ e.toggleTitle }}" style="{{ e.checkStyle }}">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" style="{{ e.checkMarkStyle }}"><path d="M20 6 9 17l-5-5"></path></svg>
+                </button>
+                <div style="{{ e.iconStyle }}">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ e.iconPath }}"></path></svg>
+                </div>
+              </div>
+              <div style="min-width: 0; display: flex; flex-direction: column; gap: 5px;">
+                <div style="{{ e.textStyle }}">{{ e.text }}</div>
+                <div style="{{ e.metaRowStyle }}">
+                  <span style="{{ e.typeBadgeStyle }}">{{ e.typeLabel }}</span>
+                  <span style="{{ e.stateBadgeStyle }}">{{ e.stateLabel }}</span>
+                  <span style="{{ e.aiBadgeStyle }}">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+                  </span>
+                  <span style="{{ e.tagStyle }}">{{ e.tagLabel }}</span>
+                </div>
+              </div>
+              <div style="{{ e.timeStyle }}">{{ e.timeLabel }}</div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="display: none;">
+          <div style="font-size: 13.5px; font-weight: 600; padding-bottom: 4px;">Habits</div>
+          <div style="border: 1px solid #352E28; border-radius: 10px; padding: 12px 13px;">
+            <sc-for list="{{ habits }}" as="h" hint-placeholder-count="3">
+              <div style="{{ h.wrapStyle }}">
+                <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding-bottom: 6px;">
+                  <div style="font-size: 12.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ h.name }}</div>
+                  <div style="font-size: 11.5px; color: #9C8F85; flex: none;">{{ h.count }}</div>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(31, 1fr); gap: 2px;">
+                  <sc-for list="{{ h.cells }}" as="cell" hint-placeholder-count="31">
+                    <div title="{{ cell.title }}" style="{{ cell.style }}"></div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="padding: 18px 16px 24px;">
+          <div style="border: 1px solid #352E28; border-radius: 10px; overflow: hidden;">
+            <div style="padding: 13px 14px 12px;">
+              <div style="display: flex; align-items: center; gap: 7px; padding-bottom: 7px;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#9C8F85" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+                <span style="font-size: 12.5px; font-weight: 500;">Weekly summary</span>
+                <span style="font-size: 11.5px; color: #9C8F85;">generated automatically</span>
+              </div>
+              <div style="font-size: 13.5px; line-height: 1.6; color: #D6CCC4; text-wrap: pretty;">{{ reflection }}</div>
+            </div>
+            <div style="display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid #352E28; background: #241F1B;">
+              <button onClick="{{ keepReflection }}" style="height: 30px; padding: 0 11px; background: #E4652E; color: #1B1310; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500;" style-hover="background: #F0773D;">Save to today</button>
+              <button onClick="{{ regenReflection }}" style="height: 30px; padding: 0 11px; background: #1E1A17; color: #F5EFEA; border: 1px solid #352E28; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500;" style-hover="background: #2B2521;">Rewrite</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section data-screen-label="Index" style="display: {{ showIndex }};">
+        <sc-for list="{{ indexGroups }}" as="g" hint-placeholder-count="3">
+          <div style="padding: 16px 16px 0;">
+            <div style="font-size: 13.5px; font-weight: 600; padding-bottom: 2px;">{{ g.label }}</div>
+            <div style="font-size: 12.5px; color: #9C8F85; line-height: 1.5; padding-bottom: 8px;">{{ g.note }}</div>
+            <div style="border: 1px solid #352E28; border-radius: 10px; overflow: hidden;">
+              <sc-for list="{{ g.items }}" as="it" hint-placeholder-count="3">
+                <button onClick="{{ it.onClick }}" style="{{ it.style }}" style-hover="background: #241F1B;">
+                  <span style="flex: 1; min-width: 0; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ it.name }}</span>
+                  <span style="flex: none; font-size: 12px; color: #9C8F85;">{{ it.count }}</span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A7E75" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="m9 18 6-6-6-6"></path></svg>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+        </sc-for>
+        <div style="height: 24px;"></div>
+      </section>
+
+      <section data-screen-label="Collection" style="display: {{ showCollection }};">
+        <div style="padding: 14px 16px 0;">
+          <button onClick="{{ backToIndex }}" style="display: flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px 0 8px; background: #1E1A17; border: 1px solid #352E28; border-radius: 6px; cursor: pointer; font-size: 12.5px; color: #B3A79E;" style-hover="background: #2B2521; color: #F5EFEA;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"></path></svg>
+            <span>Index</span>
+          </button>
+          <div style="font-size: 16px; font-weight: 600; letter-spacing: -.01em; padding: 12px 0 2px;">{{ collectionTitle }}</div>
+          <div style="font-size: 12.5px; color: #9C8F85; padding-bottom: 6px;">{{ collectionMeta }}</div>
+        </div>
+        <sc-for list="{{ collectionEntries }}" as="e" hint-placeholder-count="5">
+          <div onClick="{{ e.onOpen }}" style="{{ e.rowStyle }}" style-hover="background: #241F1B;">
+            <div style="{{ e.leadStyle }}">
+              <button onClick="{{ e.onToggle }}" title="{{ e.toggleTitle }}" style="{{ e.checkStyle }}">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" style="{{ e.checkMarkStyle }}"><path d="M20 6 9 17l-5-5"></path></svg>
+              </button>
+              <div style="{{ e.iconStyle }}">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ e.iconPath }}"></path></svg>
+              </div>
+            </div>
+            <div style="min-width: 0; display: flex; flex-direction: column; gap: 5px;">
+              <div style="{{ e.textStyle }}">{{ e.text }}</div>
+              <div style="{{ e.metaRowStyle }}">
+                <span style="{{ e.typeBadgeStyle }}">{{ e.typeLabel }}</span>
+                <span style="{{ e.stateBadgeStyle }}">{{ e.stateLabel }}</span>
+                <span style="{{ e.aiBadgeStyle }}">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+                </span>
+                <span style="{{ e.tagStyle }}">{{ e.tagLabel }}</span>
+              </div>
+            </div>
+            <div style="{{ e.timeStyle }}">{{ e.timeLabel }}</div>
+          </div>
+        </sc-for>
+        <div style="height: 24px;"></div>
+      </section>
+
+      <section data-screen-label="Review" style="display: {{ showReview }};">
+        <div style="padding: 16px 16px 0;">
+          <div style="font-size: 13.5px; font-weight: 600; padding-bottom: 2px;">Waiting for you</div>
+          <div style="font-size: 12.5px; color: #9C8F85; line-height: 1.5;">{{ reviewIntro }}</div>
+        </div>
+        <sc-for list="{{ proposals }}" as="p" hint-placeholder-count="3">
+          <div style="margin: 12px 16px 0; border: 1px solid #352E28; border-radius: 10px; overflow: hidden;">
+            <div style="padding: 13px 14px 12px;">
+              <div style="display: flex; align-items: center; gap: 7px; padding-bottom: 7px;">
+                <span style="display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border: 1px solid #352E28; border-radius: 999px; font-size: 11px; font-weight: 500; color: #B3A79E;">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+                  <span>{{ p.kind }}</span>
+                </span>
+              </div>
+              <div style="font-size: 14px; font-weight: 500; line-height: 1.45; text-wrap: pretty;">{{ p.title }}</div>
+              <div style="font-size: 12.5px; color: #9C8F85; line-height: 1.55; padding-top: 4px; text-wrap: pretty;">{{ p.detail }}</div>
+              <sc-for list="{{ p.lines }}" as="l" hint-placeholder-count="0">
+                <div style="display: flex; gap: 8px; align-items: baseline; padding-top: 6px;">
+                  <span style="width: 5px; height: 5px; border-radius: 999px; background: #574D45; flex: none; transform: translateY(-2px);"></span>
+                  <span style="font-size: 13px; color: #D6CCC4;">{{ l }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid #352E28; background: #241F1B;">
+              <button onClick="{{ p.onApprove }}" style="height: 30px; padding: 0 12px; background: #E4652E; color: #1B1310; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500;" style-hover="background: #F0773D;">Approve</button>
+              <button onClick="{{ p.onDismiss }}" style="height: 30px; padding: 0 12px; background: #1E1A17; color: #F5EFEA; border: 1px solid #352E28; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500;" style-hover="background: #2B2521;">Dismiss</button>
+            </div>
+          </div>
+        </sc-for>
+
+        <div style="padding: 20px 16px 0;">
+          <div style="font-size: 13.5px; font-weight: 600; padding-bottom: 2px;">Recent activity</div>
+          <div style="font-size: 12.5px; color: #9C8F85; line-height: 1.5; padding-bottom: 8px;">Changes made automatically. All reversible.</div>
+          <div style="border: 1px solid #352E28; border-radius: 10px; overflow: hidden;">
+            <sc-for list="{{ activity }}" as="a" hint-placeholder-count="4">
+              <div style="{{ a.style }}">
+                <div style="font-family: 'Geist Mono', ui-monospace, monospace; font-size: 11.5px; color: #9C8F85; flex: none; width: 42px;">{{ a.time }}</div>
+                <div style="flex: 1; min-width: 0; font-size: 12.5px; color: #D6CCC4; line-height: 1.45;">{{ a.text }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="height: 24px;"></div>
+      </section>
+      </div>
+    </main>
+
+    <div style="{{ composerStyle }}">
+      <div style="{{ contentStyle }}">
+      <div style="{{ chipRowStyle }}">
+        <sc-for list="{{ parseChips }}" as="c" hint-placeholder-count="0">
+          <span style="{{ c.style }}">{{ c.label }}</span>
+        </sc-for>
+      </div>
+      <form onSubmit="{{ submitDraft }}" style="display: flex; align-items: center; gap: 8px;">
+        <button type="button" onClick="{{ toggleTypeMenu }}" title="Entry type" style="{{ typeButtonStyle }}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ draftIconPath }}"></path></svg>
+          <span>{{ draftTypeLabel }}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8A7E75" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+        </button>
+        <input value="{{ draft }}" onChange="{{ onDraftChange }}" placeholder="Add an entry…" style="flex: 1; min-width: 0; height: 36px; padding: 0 11px; background: #1E1A17; border: 1px solid #352E28; border-radius: 6px; font-size: 13.5px;" style-focus="border-color: #E4652E; box-shadow: 0 0 0 3px rgba(228,101,46,.2);" />
+        <button type="submit" title="Add" style="height: 36px; width: 36px; flex: none; display: grid; place-items: center; background: #E4652E; color: #1B1310; border: none; border-radius: 6px; cursor: pointer;" style-hover="background: #F0773D;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5v14"></path></svg>
+        </button>
+      </form>
+      <div style="{{ hintStyle }}">Shortcuts: <b style="font-weight: 500;">.</b> task · <b style="font-weight: 500;">o</b> event · <b style="font-weight: 500;">-</b> note · #tag · @3pm · &gt;tomorrow</div>
+      </div>
+    </div>
+
+    <sc-if value="{{ typeMenuOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeTypeMenu }}" style="position: absolute; inset: 0; z-index: 15;">
+        <div onClick="{{ stop }}" style="position: absolute; left: 12px; bottom: 92px; width: 208px; background: #1E1A17; border: 1px solid #352E28; border-radius: 8px; box-shadow: 0 10px 30px -10px rgba(0,0,0,.55); padding: 4px; animation: shDialog .12s ease-out;">
+          <sc-for list="{{ typeOptions }}" as="t" hint-placeholder-count="7">
+            <button onClick="{{ t.onClick }}" style="{{ t.style }}" style-hover="background: #2B2521;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="{{ t.iconPath }}"></path></svg>
+              <span style="flex: 1; text-align: left;">{{ t.label }}</span>
+              <span style="{{ t.checkStyle }}">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+              </span>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ dialogOpen }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeDialog }}" style="position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.7); display: flex; align-items: center; justify-content: center; padding: 16px; animation: shOverlay .13s ease-out;">
+        <div onClick="{{ stop }}" style="width: 100%; max-width: 400px; max-height: 86%; overflow-y: auto; background: #1E1A17; border: 1px solid #352E28; border-radius: 12px; box-shadow: 0 24px 60px -20px rgba(0,0,0,.7); animation: shDialog .16s cubic-bezier(.16,1,.3,1);">
+
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 16px 0;">
+            <div style="min-width: 0;">
+              <div style="font-size: 15px; font-weight: 600; letter-spacing: -.01em;">{{ dialogTitle }}</div>
+              <div style="font-size: 12.5px; color: #9C8F85; line-height: 1.5; padding-top: 2px;">{{ dialogDesc }}</div>
+            </div>
+            <button onClick="{{ closeDialog }}" title="Close" style="flex: none; height: 26px; width: 26px; display: grid; place-items: center; background: transparent; border: none; border-radius: 6px; cursor: pointer; color: #9C8F85;" style-hover="background: #2B2521; color: #F5EFEA;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+            </button>
+          </div>
+
+          <div style="display: {{ showEntryDialog }}; padding: 14px 16px 16px;">
+            <div style="border: 1px solid #352E28; border-radius: 8px; overflow: hidden;">
+              <sc-for list="{{ detailFields }}" as="f" hint-placeholder-count="4">
+                <div style="{{ f.style }}">
+                  <div style="width: 76px; flex: none; font-size: 12px; color: #9C8F85;">{{ f.label }}</div>
+                  <div style="flex: 1; min-width: 0; font-size: 12.5px; color: #F5EFEA; line-height: 1.5;">{{ f.value }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="{{ detailAiStyle }}">
+              <div style="display: flex; align-items: center; gap: 6px; padding-bottom: 5px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B3A79E" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+                <span style="font-size: 12px; font-weight: 500;">Added automatically</span>
+              </div>
+              <div style="font-size: 12.5px; color: #B3A79E; line-height: 1.55;">{{ detailAiSource }}</div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding-top: 14px;">
+              <sc-for list="{{ detailActions }}" as="a" hint-placeholder-count="4">
+                <button onClick="{{ a.onClick }}" style="{{ a.style }}">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="{{ a.iconPath }}"></path></svg>
+                  <span>{{ a.label }}</span>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display: {{ showMigDialog }}; padding: 14px 16px 16px;">
+            <div style="border: 1px solid #352E28; border-radius: 8px; padding: 13px 14px;">
+              <div style="font-size: 14px; font-weight: 500; line-height: 1.45; text-wrap: pretty;">{{ migText }}</div>
+              <div style="font-size: 12px; color: #9C8F85; padding-top: 4px;">{{ migMeta }}</div>
+              <div style="{{ migHintStyle }}">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#B3A79E" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex: none; margin-top: 2px;"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"></path></svg>
+                <span>{{ migHint }}</span>
+              </div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding-top: 12px;">
+              <sc-for list="{{ migActions }}" as="a" hint-placeholder-count="4">
+                <button onClick="{{ a.onClick }}" style="{{ a.style }}">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="{{ a.iconPath }}"></path></svg>
+                  <span>{{ a.label }}</span>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display: {{ showSearchDialog }}; padding: 12px 16px 16px;">
+            <div style="display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px; border: 1px solid #352E28; border-radius: 6px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A7E75" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3"></path></svg>
+              <input value="{{ search }}" onChange="{{ onSearchChange }}" autoFocus="{{ true }}" placeholder="Search entries and tags…" style="flex: 1; min-width: 0; border: none; background: transparent; font-size: 13.5px;" />
+            </div>
+            <div style="{{ searchListStyle }}">
+              <sc-for list="{{ searchResults }}" as="e" hint-placeholder-count="0">
+                <div onClick="{{ e.onOpen }}" style="{{ e.rowStyleFlush }}" style-hover="background: #241F1B;">
+                  <div style="{{ e.leadStyle }}">
+                    <button onClick="{{ e.onToggle }}" title="{{ e.toggleTitle }}" style="{{ e.checkStyle }}">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" style="{{ e.checkMarkStyle }}"><path d="M20 6 9 17l-5-5"></path></svg>
+                    </button>
+                    <div style="{{ e.iconStyle }}">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{ e.iconPath }}"></path></svg>
+                    </div>
+                  </div>
+                  <div style="min-width: 0; display: flex; flex-direction: column; gap: 5px;">
+                    <div style="{{ e.textStyle }}">{{ e.text }}</div>
+                    <div style="{{ e.metaRowStyle }}">
+                      <span style="{{ e.typeBadgeStyle }}">{{ e.typeLabel }}</span>
+                      <span style="{{ e.stateBadgeStyle }}">{{ e.stateLabel }}</span>
+                      <span style="{{ e.tagStyle }}">{{ e.tagLabel }}</span>
+                    </div>
+                  </div>
+                  <div style="{{ e.timeStyle }}">{{ e.timeLabel }}</div>
+                </div>
+              </sc-for>
+              <div style="{{ searchEmptyStyle }}">{{ searchEmptyText }}</div>
+            </div>
+          </div>
+
+          <div style="display: {{ showSettingsDialog }}; padding: 14px 16px 16px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid #352E28; border-radius: 8px; padding: 11px 12px;">
+              <div style="min-width: 0;">
+                <div style="font-size: 12.5px; font-weight: 500;">MCP server</div>
+                <div style="font-family: 'Geist Mono', ui-monospace, monospace; font-size: 11.5px; color: #9C8F85; padding-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">journal.local/mcp</div>
+              </div>
+              <span style="flex: none; display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; background: #2B2521; color: #F5EFEA; border: 1px solid #352E28; border-radius: 999px; font-size: 11px; font-weight: 500;">
+                <span style="width: 5px; height: 5px; border-radius: 999px; background: #4ADE80;"></span>
+                <span>Connected</span>
+              </span>
+            </div>
+            <div style="font-size: 12.5px; color: #9C8F85; line-height: 1.55; padding: 12px 0 8px;">New entries are added automatically and marked with an icon. Edits and deletions go to Review first.</div>
+            <div style="border: 1px solid #352E28; border-radius: 8px; overflow: hidden;">
+              <sc-for list="{{ mcpTools }}" as="t" hint-placeholder-count="7">
+                <div style="{{ t.rowStyle }}">
+                  <div style="flex: 1; min-width: 0; font-family: 'Geist Mono', ui-monospace, monospace; font-size: 11.5px; color: #F5EFEA; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ t.name }}</div>
+                  <span style="{{ t.badgeStyle }}">{{ t.mode }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <button onClick="{{ resetData }}" style="margin-top: 14px; height: 32px; padding: 0 12px; background: #1E1A17; color: #F08375; border: 1px solid #352E28; border-radius: 6px; cursor: pointer; font-size: 12.5px; font-weight: 500;" style-hover="background: #3A211C; border-color: #5C332C;">Reset demo data</button>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <div style="{{ toastStyle }}">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex: none;"><path d="M20 6 9 17l-5-5"></path></svg>
+      <span>{{ toast }}</span>
+    </div>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:448,&quot;height&quot;:900},&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;comfortable&quot;,&quot;compact&quot;],&quot;default&quot;:&quot;comfortable&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;showTypeBadges&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;highlightAiEntries&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  state = {
+    view: 'today', dialog: null, detailId: null, typeMenu: false,
+    draft: '', draftType: 'task', search: '', collectionId: null,
+    migQueue: [], migIndex: 0, monthOffset: 0, toast: null, w: typeof window !== 'undefined' ? window.innerWidth : 1280,
+    entries: this.seed(), proposals: this.seedProposals(),
+    reflectionIdx: 0, activity: this.seedActivity()
+  };
+
+  C = { fg: '#F5EFEA', fg2: '#F5EFEA', body: '#D6CCC4', mid: '#B3A79E', mute: '#9C8F85',
+        faint: '#8A7E75', border: '#352E28', line: '#2B2521', bg: '#1E1A17', hover: '#241F1B',
+        raised: '#3A322C', primary: '#E4652E', primaryFg: '#1B1310', danger: '#F08375' };
+
+  TODAY = '2026-07-31';
+
+  TYPES() {
+    return {
+      task:     { label: 'Task',     icon: 'M20 6 9 17l-5-5' },
+      event:    { label: 'Event',    icon: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z' },
+      note:     { label: 'Note',     icon: 'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7zM15 2v5h5M9 13h5M9 17h5' },
+      idea:     { label: 'Idea',     icon: 'M9 18h6M10 22h4M15.1 14c.2-1 .7-1.7 1.4-2.5A4.6 4.6 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.8.8 1.2 1.5 1.4 2.5' },
+      question: { label: 'Question', icon: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01' },
+      habit:    { label: 'Habit',    icon: 'm17 2 4 4-4 4M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v1a4 4 0 0 1-4 4H3' },
+      mood:     { label: 'Mood',     icon: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01' }
+    };
+  }
+
+  ICON = {
+    arrowRight: 'M5 12h14M12 5l7 7-7 7',
+    check: 'M20 6 9 17l-5-5',
+    undo: 'M3 7v6h6M3 13a9 9 0 1 0 3-7.7L3 8',
+    calendar: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z',
+    trash: 'M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2',
+    x: 'M18 6 6 18M6 6l12 12',
+    folder: 'M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.9-1.3A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z',
+    today: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM12 15h.01'
+  };
+
+  // ---------- seed ----------
+  seed() {
+    let n = 0;
+    const e = (date, type, text, extra) => Object.assign(
+      { id: 'e' + (++n), date, type, text, state: type === 'task' || type === 'habit' ? 'open' : 'logged',
+        time: null, tags: [], author: 'me', source: null, migrations: 0, collection: null },
+      extra || {});
+    return [
+      e('2026-07-31', 'event', 'Design review', { time: '11:00', tags: ['work'] }),
+      e('2026-07-31', 'task', 'Reply to Mira about the Q3 handoff', { tags: ['work'] }),
+      e('2026-07-31', 'task', 'Book flights for Lisbon', { author: 'ai', source: 'From the email “Lisbon: dates confirmed” (Ana, 09:41). Dates read as Sep 14–20.', tags: ['travel'] }),
+      e('2026-07-31', 'task', 'Water the plants', { state: 'done' }),
+      e('2026-07-31', 'habit', 'Read 20 min', { state: 'done' }),
+      e('2026-07-31', 'note', 'Checkboxes read faster than bullets', { tags: ['design'] }),
+      e('2026-07-31', 'idea', 'A journal that writes its own index'),
+      e('2026-07-31', 'question', 'Does MCP support streaming resource updates?', { tags: ['research'] }),
+      e('2026-07-31', 'mood', 'Steady. Slept 7h.'),
+
+      e('2026-07-30', 'event', 'Call with Anders', { time: '16:00', tags: ['work'] }),
+      e('2026-07-30', 'note', 'Anders: keep collections flat, no nesting', { author: 'ai', source: 'Summarised from the transcript of “Call with Anders”, 16:00.', tags: ['work'] }),
+      e('2026-07-30', 'task', 'Draft the migration flow copy', { state: 'migrated', migrations: 1 }),
+      e('2026-07-30', 'task', 'Fix the calendar alignment', { tags: ['design'] }),
+      e('2026-07-30', 'task', 'Grocery run', { state: 'done' }),
+      e('2026-07-30', 'task', 'Sign up for the pottery class', { state: 'cancelled' }),
+      e('2026-07-30', 'habit', 'Read 20 min', { state: 'done' }),
+
+      e('2026-07-29', 'task', 'Ship the index page', { state: 'done', tags: ['work'] }),
+      e('2026-07-29', 'task', 'Call the dentist', { migrations: 4 }),
+      e('2026-07-29', 'event', 'Dinner with Ana & Tom', { time: '19:30' }),
+      e('2026-07-29', 'note', 'Cheap to write, expensive to keep — that is the whole method'),
+      e('2026-07-29', 'idea', 'Weekly summary as a printed page'),
+
+      e('2026-07-28', 'task', 'Rewrite the onboarding email', { state: 'done', tags: ['work'] }),
+      e('2026-07-28', 'habit', 'Read 20 min', { state: 'done' }),
+      e('2026-07-28', 'note', 'Two spreads a week is the honest maximum'),
+
+      e('2026-07-01', 'task', 'Plan the launch', { collection: 'month', tags: ['work'] }),
+      e('2026-07-01', 'event', 'Quarter close', { collection: 'month' }),
+      e('2026-07-01', 'task', 'Renew the domain', { collection: 'month', state: 'done' }),
+      e('2026-07-01', 'task', 'Send Ana the Lisbon itinerary', { collection: 'month', author: 'ai', source: 'Follow-up to “Book flights for Lisbon”. Filed in the monthly log.' }),
+
+      e('2026-07-12', 'task', 'The Dawn of Everything', { collection: 'books' }),
+      e('2026-07-12', 'task', 'Impro — Keith Johnstone', { collection: 'books', state: 'done' }),
+      e('2026-07-12', 'task', 'Seeing Like a State', { collection: 'books' }),
+      e('2026-07-12', 'task', 'A Pattern Language', { collection: 'books' }),
+      e('2026-07-20', 'task', 'Working in Public — Nadia Eghbal', { collection: 'books', author: 'ai', source: 'You mentioned it in chat on Jul 20: “I should read Nadia’s book”.' }),
+
+      e('2026-07-05', 'idea', 'MCP server for this journal', { collection: 'ideas' }),
+      e('2026-07-08', 'idea', 'Local-first sync with CRDTs', { collection: 'ideas' }),
+      e('2026-07-15', 'idea', 'An agent that files my receipts', { collection: 'ideas' }),
+      e('2026-07-22', 'idea', 'Codebase-aware changelog writer', { collection: 'ideas', author: 'ai', source: 'Suggested while reviewing your repo notes on Jul 22.' }),
+      e('2026-07-26', 'note', 'Ideas here are cheap. Only three ever get built.', { collection: 'ideas' })
+    ];
+  }
+
+  seedProposals() {
+    return [
+      { id: 'p1', kind: 'Split a task', title: '“Plan the launch” is too vague to start', detail: 'Open since Jul 1. Replace it with three concrete tasks in the monthly log.',
+        lines: ['Write the launch note', 'Line up three quotes', 'Pick the date with Anders'], act: 'split' },
+      { id: 'p2', kind: 'Suggest a drop', title: 'Drop “Call the dentist”', detail: 'Moved forward four times since Jul 12 without progress.', lines: [], act: 'drop' },
+      { id: 'p3', kind: 'Clean up tags', title: 'Merge #reading into #books', detail: 'Six entries use both tags for the same thing.', lines: [], act: 'retag' }
+    ];
+  }
+
+  seedActivity() {
+    return [
+      { time: '09:41', text: 'Added “Book flights for Lisbon” from an email' },
+      { time: '16:52', text: 'Added one note from the Anders call transcript' },
+      { time: '17:04', text: 'Sent 3 suggestions for review' }
+    ];
+  }
+
+  reflections() {
+    return [
+      'Four days, thirty-one entries. Work took Tuesday and Wednesday; the design notes all landed Thursday. Reading held every day. Two tasks have been carried for three weeks — the dentist and the launch plan — and neither is really a task yet.',
+      'More notes than tasks this week, which is unusual for you. The Lisbon thread resolved in a day once it had a date. Everything still open is waiting either on Anders or on a decision only you can make.'
+    ];
+  }
+
+  // ---------- lifecycle ----------
+  componentDidMount() {
+    try {
+      const raw = localStorage.getItem('bujo.shadcn.v1');
+      if (raw) { const d = JSON.parse(raw); if (d && d.entries) this.setState({ entries: d.entries, proposals: d.proposals || this.state.proposals }); }
+    } catch (err) { /* ignore */ }
+    this._key = (ev) => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'k') { ev.preventDefault(); this.setState({ dialog: 'search' }); }
+      else if (ev.key === 'Escape') this.setState({ dialog: null, typeMenu: false });
+    };
+    window.addEventListener('keydown', this._key);
+    this._resize = () => {
+      const w = window.innerWidth;
+      if (Math.abs(w - this.state.w) > 2) this.setState({ w });
+    };
+    window.addEventListener('resize', this._resize);
+    this._resize();
+  }
+  componentWillUnmount() {
+    window.removeEventListener('keydown', this._key);
+    window.removeEventListener('resize', this._resize);
+    clearTimeout(this._t);
+  }
+  componentDidUpdate(pp, ps) {
+    if (ps.entries !== this.state.entries || ps.proposals !== this.state.proposals) {
+      try { localStorage.setItem('bujo.shadcn.v1', JSON.stringify({ entries: this.state.entries, proposals: this.state.proposals })); } catch (err) { /* ignore */ }
+    }
+  }
+
+  say(msg) { this.setState({ toast: msg }); clearTimeout(this._t); this._t = setTimeout(() => this.setState({ toast: null }), 2400); }
+
+  // ---------- helpers ----------
+  fmt(iso, style) {
+    const [y, m, d] = iso.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    const wd = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dt.getDay()];
+    const mo = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][m - 1];
+    if (style === 'long') return wd + ', ' + mo + ' ' + d;
+    if (style === 'short') return mo.slice(0, 3) + ' ' + d;
+    return wd + ' ' + d;
+  }
+  addDays(iso, n) {
+    const [y, m, d] = iso.split('-').map(Number);
+    const dt = new Date(y, m - 1, d + n);
+    const p = (v) => String(v).padStart(2, '0');
+    return dt.getFullYear() + '-' + p(dt.getMonth() + 1) + '-' + p(dt.getDate());
+  }
+  mutate(id, patch) { this.setState((s) => ({ entries: s.entries.map((e) => (e.id === id ? Object.assign({}, e, patch) : e)) })); }
+
+  parse(raw) {
+    const out = { type: this.state.draftType, time: null, tags: [], text: raw.trim(), shift: null, typed: false };
+    let s = out.text;
+    const map = { '.': 'task', 'o': 'event', '-': 'note', '!': 'idea', '?': 'question', '+': 'habit', '~': 'mood' };
+    const lead = s.match(/^([.o\-!?+~])\s+/i);
+    if (lead) { out.type = map[lead[1].toLowerCase()] || out.type; out.typed = true; s = s.slice(lead[0].length); }
+    const tags = s.match(/#[\w-]+/g) || [];
+    out.tags = tags.map((t) => t.slice(1));
+    s = s.replace(/#[\w-]+/g, '').trim();
+    const tm = s.match(/@(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+    if (tm) {
+      let h = parseInt(tm[1], 10);
+      const ap = (tm[3] || '').toLowerCase();
+      if (ap === 'pm' && h < 12) h += 12;
+      if (ap === 'am' && h === 12) h = 0;
+      out.time = String(h).padStart(2, '0') + ':' + (tm[2] || '00');
+      s = s.replace(tm[0], '').trim();
+    }
+    if (/>tomorrow\b/i.test(s)) { out.shift = 1; s = s.replace(/>tomorrow\b/i, '').trim(); }
+    out.text = s.replace(/\s{2,}/g, ' ').trim();
+    return out;
+  }
+
+  stateLabel(e) {
+    if (e.state === 'migrated') return 'Moved forward';
+    if (e.state === 'scheduled') return 'In monthly log';
+    if (e.state === 'cancelled') return 'Dropped';
+    if (e.migrations > 1) return 'Moved ' + e.migrations + '×';
+    return '';
+  }
+
+  // ---------- entry row ----------
+  vm(e, opts) {
+    const C = this.C, T = this.TYPES()[e.type] || this.TYPES().task;
+    const compact = (this.props.density || 'comfortable') === 'compact';
+    const badges = this.props.showTypeBadges !== false;
+    const highlight = this.props.highlightAiEntries !== false;
+    const isTask = e.type === 'task' || e.type === 'habit';
+    const done = e.state === 'done';
+    const dim = done || e.state === 'cancelled' || e.state === 'migrated';
+    const isAi = e.author === 'ai';
+    const stateLabel = this.stateLabel(e);
+    const tagLabel = (opts && opts.showDate ? this.fmt(e.date, 'short') + '   ' : '') + e.tags.map((t) => '#' + t).join(' ');
+    const showType = badges && (e.type !== 'task');
+    const showMeta = showType || !!stateLabel || (isAi && highlight) || !!tagLabel;
+
+    const pad = compact ? '6px 16px' : '9px 16px';
+    const row = {
+      display: 'grid', gridTemplateColumns: '18px 1fr auto', columnGap: 11, alignItems: 'flex-start',
+      padding: pad, cursor: 'pointer', borderBottom: '1px solid ' + C.line, transition: 'background .1s ease'
+    };
+    if (isAi && highlight) row.background = '#241F1B';
+
+    const badge = (bg, color, border) => ({
+      display: 'inline-flex', alignItems: 'center', gap: 4, height: 18, padding: '0 6px',
+      borderRadius: 4, fontSize: 11, fontWeight: 500, background: bg, color: color,
+      border: '1px solid ' + border, whiteSpace: 'nowrap'
+    });
+
+    return {
+      id: e.id,
+      rowStyle: row,
+      rowStyleFlush: Object.assign({}, row, { padding: compact ? '6px 10px' : '9px 10px', borderRadius: 6, borderBottom: '1px solid ' + C.line }),
+      leadStyle: { paddingTop: 2, display: 'flex', justifyContent: 'flex-start' },
+      checkStyle: {
+        display: isTask ? 'grid' : 'none', placeItems: 'center', width: 16, height: 16, padding: 0,
+        borderRadius: 4, cursor: 'pointer',
+        border: '1px solid ' + (done ? C.primary : '#5C5148'),
+        background: done ? C.primary : C.bg, color: C.primaryFg
+      },
+      checkMarkStyle: { opacity: done ? 1 : 0 },
+      iconStyle: { display: isTask ? 'none' : 'block', color: dim ? C.faint : C.mute, lineHeight: 0, paddingTop: 1 },
+      iconPath: T.icon,
+      toggleTitle: isTask ? (done ? 'Mark as not done' : 'Mark as done') : T.label,
+      text: e.text,
+      textStyle: {
+        fontSize: 13.5, lineHeight: 1.45, color: dim ? C.mute : C.fg,
+        textDecoration: done || e.state === 'cancelled' ? 'line-through' : 'none',
+        textDecorationColor: '#8A7E75', textWrap: 'pretty'
+      },
+      metaRowStyle: { display: showMeta ? 'flex' : 'none', flexWrap: 'wrap', alignItems: 'center', gap: 6 },
+      typeLabel: T.label,
+      typeBadgeStyle: Object.assign(badge(C.bg, C.mid, C.border), { display: showType ? 'inline-flex' : 'none' }),
+      stateLabel,
+      stateBadgeStyle: Object.assign(badge(C.line, C.mid, C.line), { display: stateLabel ? 'inline-flex' : 'none' }),
+      aiBadgeStyle: Object.assign(badge('rgba(228,101,46,.15)', '#E8895A', 'rgba(228,101,46,.32)'), { display: isAi && highlight ? 'inline-flex' : 'none', width: 18, padding: 0, justifyContent: 'center' }),
+      tagLabel,
+      tagStyle: { display: tagLabel ? 'inline' : 'none', fontSize: 11.5, color: C.mute, whiteSpace: 'pre' },
+      timeLabel: e.time || '',
+      timeStyle: {
+        display: e.time ? 'block' : 'none', fontFamily: "'Geist Mono', ui-monospace, monospace",
+        fontSize: 11.5, color: C.mute, paddingTop: 2, whiteSpace: 'nowrap'
+      },
+      onOpen: () => this.setState({ dialog: 'entry', detailId: e.id }),
+      onToggle: (ev) => {
+        ev.stopPropagation();
+        if (isTask) this.mutate(e.id, { state: done ? 'open' : 'done' });
+        else this.setState({ dialog: 'entry', detailId: e.id });
+      }
+    };
+  }
+
+  btn(label, iconPath, onClick, tone) {
+    const C = this.C;
+    return {
+      label, iconPath, onClick,
+      style: {
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, height: 34,
+        padding: '0 10px', borderRadius: 6, cursor: 'pointer', fontSize: 12.5, fontWeight: 500,
+        background: tone === 'primary' ? C.primary : C.bg,
+        color: tone === 'primary' ? C.primaryFg : (tone === 'danger' ? C.danger : C.fg2),
+        border: tone === 'primary' ? 'none' : '1px solid ' + C.border
+      }
+    };
+  }
+
+  // ---------- render ----------
+  renderVals() {
+    const C = this.C, st = this.state, S = (v) => this.setState(v), TY = this.TYPES();
+    const dayEntries = st.entries.filter((e) => !e.collection);
+
+    const dates = Array.from(new Set(dayEntries.map((e) => e.date))).sort().reverse();
+    const pos = {};
+    st.entries.forEach((e, i) => { pos[e.id] = i; });
+    const newestFirst = (a, b) => pos[b.id] - pos[a.id];
+    const daySections = dates.map((d) => {
+      const es = dayEntries.filter((e) => e.date === d).sort(newestFirst);
+      const open = es.filter((e) => e.type === 'task' && e.state === 'open').length;
+      return {
+        title: d === this.TODAY ? 'Today' : this.fmt(d, 'long'),
+        sub: d === this.TODAY ? this.fmt(d, 'long') : '',
+        count: open ? open + ' open' : es.length + (es.length === 1 ? ' entry' : ' entries'),
+        entries: es.map((e) => this.vm(e))
+      };
+    });
+
+    const leftovers = st.entries.filter((e) => e.type === 'task' && e.state === 'open' && !e.collection && e.date < this.TODAY);
+
+    // calendar
+    const base = new Date(2026, 6 + st.monthOffset, 1);
+    const yy = base.getFullYear(), mm = base.getMonth();
+    const daysIn = new Date(yy, mm + 1, 0).getDate();
+    const padStart = base.getDay() === 0 ? 6 : base.getDay() - 1;
+    const cells = [];
+    for (let i = 0; i < padStart; i++) cells.push({ blank: true });
+    for (let d = 1; d <= daysIn; d++) {
+      const iso = yy + '-' + String(mm + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      cells.push({ blank: false, d, iso, n: st.entries.filter((e) => e.date === iso && !e.collection).length, isToday: iso === this.TODAY });
+    }
+    while (cells.length % 7 !== 0) cells.push({ blank: true });
+    const calendarCells = cells.map((c) => ({
+      num: c.blank ? '' : String(c.d),
+      title: c.blank ? '' : this.fmt(c.iso, 'long') + ' — ' + (c.n ? c.n + ' entries' : 'nothing logged'),
+      onClick: c.blank ? () => {} : () => { S({ view: 'today' }); this.say(this.fmt(c.iso, 'short') + ': ' + (c.n ? c.n + ' entries' : 'nothing logged')); },
+      style: {
+        position: 'relative', height: 38, display: 'flex', flexDirection: 'column', alignItems: 'center',
+        justifyContent: 'center', gap: 2, borderRadius: 6, cursor: c.blank ? 'default' : 'pointer',
+        border: '1px solid ' + (c.isToday ? C.border : 'transparent'),
+        background: c.isToday ? C.line : 'transparent',
+        color: c.blank ? 'transparent' : (c.isToday ? C.fg : C.body),
+        fontSize: 12.5, fontWeight: c.isToday ? 600 : 400
+      },
+      dotStyle: {
+        display: !c.blank && c.n ? 'block' : 'none', width: 4, height: 4, borderRadius: 999,
+        background: c.isToday ? C.primary : '#574D45', position: 'absolute', bottom: 4
+      }
+    }));
+
+    const habitNames = ['Read 20 min', 'Walk', 'No screens after 22'];
+    const habits = habitNames.map((name, hi) => {
+      let count = 0;
+      const cs = [];
+      for (let d = 1; d <= 31; d++) {
+        const iso = '2026-07-' + String(d).padStart(2, '0');
+        let on = hi === 0
+          ? st.entries.some((e) => e.type === 'habit' && e.date === iso && e.state === 'done')
+          : (d * (hi + 3)) % 5 < 3;
+        if (hi === 2 && d > 24) on = false;
+        if (on) count++;
+        cs.push({ title: name + ' — Jul ' + d, style: { height: 16, borderRadius: 3, background: on ? (hi === 0 ? C.primary : '#8A7E75') : C.line } });
+      }
+      return { name, cells: cs, count: count + ' / 31', wrapStyle: { padding: hi === 0 ? '0 0 12px' : (hi === 2 ? '12px 0 0' : '12px 0'), borderTop: hi === 0 ? 'none' : '1px solid ' + C.line } };
+    });
+
+    const monthlyEntries = st.entries.filter((e) => e.collection === 'month').sort(newestFirst).map((e) => this.vm(e));
+    const COLL = { books: 'Books to read', ideas: 'Project ideas (AI coding)' };
+    const collEntries = st.entries.filter((e) => e.collection === st.collectionId).slice().sort(newestFirst);
+
+    const indexGroups = [
+      { label: 'Collections', note: 'Lists that are not tied to a date.',
+        items: Object.keys(COLL).map((k, i, arr) => ({
+          name: COLL[k], count: st.entries.filter((e) => e.collection === k).length + ' items',
+          onClick: () => S({ view: 'collection', collectionId: k }),
+          style: this.indexRow(i, arr.length + 1)
+        })) },
+      { label: 'Monthly spreads', note: 'One page per month.',
+        items: [
+          { name: 'July 2026', count: st.entries.filter((e) => e.date.startsWith('2026-07')).length + ' entries', onClick: () => S({ view: 'month' }), style: this.indexRow(0, 1) }
+        ] },
+      { label: 'Saved views', note: 'Filters you use often.',
+        items: [
+          { name: 'Open tasks', count: st.entries.filter((e) => e.type === 'task' && e.state === 'open').length + '', onClick: () => S({ dialog: 'search', search: 'open' }), style: this.indexRow(0, 3) },
+          { name: 'Added by assistant', count: st.entries.filter((e) => e.author === 'ai').length + '', onClick: () => S({ dialog: 'search', search: 'claude' }), style: this.indexRow(1, 3) },
+          { name: 'Tagged #work', count: st.entries.filter((e) => e.tags.indexOf('work') >= 0).length + '', onClick: () => S({ dialog: 'search', search: '#work' }), style: this.indexRow(2, 3) }
+        ] }
+    ];
+
+    // entry dialog
+    const de = st.entries.find((e) => e.id === st.detailId);
+    const detailFields = [];
+    const detailActions = [];
+    if (de) {
+      const T = TY[de.type] || TY.task;
+      const rows = [
+        ['Type', T.label],
+        ['Status', de.state === 'logged' ? 'Logged' : (de.state.charAt(0).toUpperCase() + de.state.slice(1))],
+        ['Date', this.fmt(de.date, 'long') + (de.time ? ' at ' + de.time : '')],
+        ['Tags', de.tags.length ? de.tags.map((t) => '#' + t).join(' ') : '—'],
+        ['Added by', de.author === 'ai' ? 'Assistant' : 'You']
+      ];
+      rows.forEach((r, i) => detailFields.push({
+        label: r[0], value: r[1],
+        style: { display: 'flex', gap: 10, padding: '9px 12px', borderTop: i === 0 ? 'none' : '1px solid ' + C.line }
+      }));
+      const isTask = de.type === 'task' || de.type === 'habit';
+      if (isTask) {
+        detailActions.push(this.btn(de.state === 'done' ? 'Mark not done' : 'Mark done', de.state === 'done' ? this.ICON.undo : this.ICON.check, () => { this.mutate(de.id, { state: de.state === 'done' ? 'open' : 'done' }); S({ dialog: null }); }, 'primary'));
+        detailActions.push(this.btn('Move to today', this.ICON.arrowRight, () => {
+          this.mutate(de.id, { state: 'migrated' });
+          this.setState((s) => ({ entries: s.entries.concat([Object.assign({}, de, { id: 'm' + Date.now(), date: this.TODAY, state: 'open', migrations: (de.migrations || 0) + 1 })]), dialog: null }));
+          this.say('Moved to today');
+        }));
+        detailActions.push(this.btn('To monthly log', this.ICON.calendar, () => { this.mutate(de.id, { state: 'scheduled' }); S({ dialog: null }); this.say('Moved to the monthly log'); }));
+        detailActions.push(this.btn('Drop', this.ICON.x, () => { this.mutate(de.id, { state: 'cancelled' }); S({ dialog: null }); this.say('Dropped'); }, 'danger'));
+      } else {
+        detailActions.push(this.btn('Move to today', this.ICON.arrowRight, () => { this.mutate(de.id, { date: this.TODAY }); S({ dialog: null }); this.say('Moved to today'); }, 'primary'));
+        detailActions.push(this.btn('File in ideas', this.ICON.folder, () => { this.mutate(de.id, { collection: 'ideas' }); S({ dialog: null }); this.say('Filed in Project ideas'); }));
+        detailActions.push(this.btn('Delete', this.ICON.trash, () => { this.setState((s) => ({ entries: s.entries.filter((x) => x.id !== de.id), dialog: null })); this.say('Deleted'); }, 'danger'));
+      }
+    }
+
+    // migration
+    const q = st.migQueue, cur = q[st.migIndex];
+    const advance = () => {
+      if (st.migIndex + 1 >= q.length) { S({ dialog: null, migIndex: 0 }); this.say('All caught up'); }
+      else S({ migIndex: st.migIndex + 1 });
+    };
+    const migActions = cur ? [
+      this.btn('Move to today', this.ICON.arrowRight, () => {
+        this.mutate(cur.id, { state: 'migrated' });
+        this.setState((s) => ({ entries: s.entries.concat([Object.assign({}, cur, { id: 'g' + Date.now(), date: this.TODAY, state: 'open', migrations: (cur.migrations || 0) + 1 })]) }));
+        advance();
+      }, 'primary'),
+      this.btn('Mark done', this.ICON.check, () => { this.mutate(cur.id, { state: 'done' }); advance(); }),
+      this.btn('To monthly log', this.ICON.calendar, () => { this.mutate(cur.id, { state: 'scheduled' }); advance(); }),
+      this.btn('Drop it', this.ICON.x, () => { this.mutate(cur.id, { state: 'cancelled' }); advance(); }, 'danger')
+    ] : [];
+
+    // composer
+    const parsed = this.parse(st.draft);
+    const chip = (label) => ({ label, style: {
+      display: 'inline-flex', alignItems: 'center', height: 20, padding: '0 7px', borderRadius: 4,
+      background: C.line, color: C.mid, fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap'
+    } });
+    const parseChips = [];
+    if (st.draft.trim()) {
+      parseChips.push(chip(TY[parsed.type].label));
+      if (parsed.time) parseChips.push(chip('at ' + parsed.time));
+      parsed.tags.forEach((t) => parseChips.push(chip('#' + t)));
+      if (parsed.shift) parseChips.push(chip('tomorrow'));
+    }
+
+    const typeOptions = Object.keys(TY).map((k) => ({
+      label: TY[k].label, iconPath: TY[k].icon,
+      onClick: () => S({ draftType: k, typeMenu: false }),
+      style: {
+        display: 'flex', alignItems: 'center', gap: 9, width: '100%', height: 32, padding: '0 8px',
+        background: 'transparent', border: 'none', borderRadius: 6, cursor: 'pointer',
+        fontSize: 13, color: C.fg2
+      },
+      checkStyle: { display: st.draftType === k ? 'grid' : 'none', placeItems: 'center', color: C.mute, lineHeight: 0 }
+    }));
+
+    const submitDraft = (ev) => {
+      ev.preventDefault();
+      const p = this.parse(st.draft);
+      if (!p.text) return;
+      const ent = {
+        id: 'u' + Date.now(), date: p.shift ? this.addDays(this.TODAY, p.shift) : this.TODAY,
+        type: p.type, text: p.text, state: p.type === 'task' || p.type === 'habit' ? 'open' : 'logged',
+        time: p.time, tags: p.tags, author: 'me', source: null, migrations: 0, collection: null
+      };
+      this.setState((s) => ({ entries: s.entries.concat([ent]), draft: '', view: 'today' }));
+      this.say('Added to today');
+    };
+
+    // search
+    const qy = st.search.trim().toLowerCase();
+    let results = [];
+    if (qy) {
+      results = st.entries.filter((e) => {
+        if (qy === 'claude') return e.author === 'ai';
+        if (qy === 'open') return e.type === 'task' && e.state === 'open';
+        if (qy.charAt(0) === '#') return e.tags.some((t) => ('#' + t) === qy);
+        return e.text.toLowerCase().indexOf(qy) >= 0 || e.tags.some((t) => t.indexOf(qy) >= 0);
+      });
+    }
+
+    const mcpTools = [
+      { name: 'journal.add_entry', mode: 'automatic' },
+      { name: 'journal.add_to_collection', mode: 'automatic' },
+      { name: 'journal.list_day', mode: 'read only' },
+      { name: 'journal.search', mode: 'read only' },
+      { name: 'journal.update_entry', mode: 'needs approval' },
+      { name: 'journal.delete_entry', mode: 'needs approval' },
+      { name: 'journal.propose_migration', mode: 'needs approval' }
+    ].map((t, i, arr) => ({
+      name: t.name, mode: t.mode,
+      rowStyle: { display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderTop: i === 0 ? 'none' : '1px solid ' + C.line },
+      badgeStyle: {
+        flex: 'none', display: 'inline-flex', alignItems: 'center', height: 19, padding: '0 7px', borderRadius: 4,
+        fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap',
+        background: t.mode === 'needs approval' ? C.bg : C.line,
+        color: t.mode === 'needs approval' ? C.fg2 : C.mute,
+        border: '1px solid ' + (t.mode === 'needs approval' ? '#574D45' : C.line)
+      }
+    }));
+
+    const proposals = st.proposals.map((p) => ({
+      kind: p.kind, title: p.title, detail: p.detail, lines: p.lines,
+      onApprove: () => {
+        if (p.act === 'split') {
+          this.setState((s) => ({
+            entries: s.entries.map((e) => (e.text === 'Plan the launch' ? Object.assign({}, e, { state: 'cancelled' }) : e))
+              .concat(p.lines.map((l, i) => ({ id: 'sp' + i + Date.now(), date: '2026-07-01', type: 'task', text: l, state: 'open', time: null, tags: ['work'], author: 'ai', source: 'Split out of “Plan the launch”, approved by you on Jul 31.', migrations: 0, collection: 'month' }))),
+            proposals: s.proposals.filter((x) => x.id !== p.id)
+          }));
+        } else if (p.act === 'drop') {
+          this.setState((s) => ({
+            entries: s.entries.map((e) => (e.text === 'Call the dentist' ? Object.assign({}, e, { state: 'cancelled' }) : e)),
+            proposals: s.proposals.filter((x) => x.id !== p.id)
+          }));
+        } else {
+          this.setState((s) => ({
+            entries: s.entries.map((e) => (e.tags.indexOf('reading') >= 0 ? Object.assign({}, e, { tags: e.tags.map((t) => (t === 'reading' ? 'books' : t)) }) : e)),
+            proposals: s.proposals.filter((x) => x.id !== p.id)
+          }));
+        }
+        this.say('Approved and applied');
+      },
+      onDismiss: () => { this.setState((s) => ({ proposals: s.proposals.filter((x) => x.id !== p.id) })); this.say('Dismissed'); }
+    }));
+
+    const tabs = [
+      { key: 'today', label: 'Today' },
+      { key: 'month', label: 'Month' },
+      { key: 'index', label: 'Index' },
+      { key: 'review', label: 'Review', badge: st.proposals.length ? String(st.proposals.length) : '' }
+    ].map((t) => {
+      const active = st.view === t.key || (t.key === 'index' && st.view === 'collection');
+      return {
+        label: t.label, badge: t.badge || '',
+        onClick: () => S({ view: t.key }),
+        style: {
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, height: 30,
+          padding: '0 6px', borderRadius: 6, cursor: 'pointer', fontSize: 12.5, fontWeight: 500,
+          background: active ? C.raised : 'transparent',
+          color: active ? C.fg : C.mute,
+          border: 'none',
+          boxShadow: 'none'
+        },
+        badgeStyle: {
+          display: t.badge ? 'grid' : 'none', placeItems: 'center', minWidth: 16, height: 16,
+          padding: '0 4px', borderRadius: 999, background: active ? C.primary : '#574D45',
+          color: active ? C.primaryFg : '#B3A79E', fontSize: 10.5, fontWeight: 600
+        }
+      };
+    });
+
+    const dialogMeta = {
+      entry: { title: 'Entry', desc: de ? this.fmt(de.date, 'long') : '' },
+      migration: { title: 'Unfinished tasks', desc: cur ? (st.migIndex + 1) + ' of ' + q.length + ' — what should happen to this one?' : '' },
+      search: { title: 'Search', desc: 'Every entry, note and collection.' },
+      settings: { title: 'Assistant access', desc: 'What the AI can do in this journal.' }
+    };
+    const dm = dialogMeta[st.dialog] || { title: '', desc: '' };
+
+    const w = st.w;
+    const wide = w >= 1024, mid = w >= 680;
+    const viewTitles = { today: 'Today', month: 'Month', index: 'Index', collection: COLL[st.collectionId] || 'Collection', review: 'Review' };
+    const navIcons = { today: this.ICON.today, month: this.ICON.calendar, index: this.ICON.folder, review: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z' };
+    const navItems = tabs.map((t, i) => {
+      const keys = ['today', 'month', 'index', 'review'];
+      const key = keys[i];
+      const active = st.view === key || (key === 'index' && st.view === 'collection');
+      return {
+        label: t.label, badge: t.badge, iconPath: navIcons[key], onClick: t.onClick,
+        style: {
+          display: 'flex', alignItems: 'center', gap: 9, height: 34, padding: '0 9px',
+          background: active ? C.raised : 'transparent', border: 'none', borderRadius: 6,
+          cursor: 'pointer', fontSize: 13, fontWeight: active ? 500 : 400,
+          color: active ? C.fg : C.body
+        },
+        badgeStyle: {
+          display: t.badge ? 'grid' : 'none', placeItems: 'center', minWidth: 17, height: 17,
+          padding: '0 5px', borderRadius: 999, background: C.primary, color: C.primaryFg,
+          fontSize: 10.5, fontWeight: 600
+        }
+      };
+    });
+
+    return {
+      frameStyle: {
+        position: 'relative', display: 'flex', width: '100%',
+        maxWidth: wide ? 1160 : (mid ? 560 : 'none'),
+        height: '100vh', background: C.bg, overflow: 'hidden',
+        borderLeft: mid ? '1px solid ' + C.border : 'none',
+        borderRight: mid ? '1px solid ' + C.border : 'none'
+      },
+      sidebarStyle: {
+        display: wide ? 'flex' : 'none', flexDirection: 'column', width: 236, flex: 'none',
+        height: '100%', background: C.hover, borderRight: '1px solid ' + C.border
+      },
+      paneStyle: {
+        position: 'relative', flex: 1, minWidth: 0, height: '100%',
+        display: 'flex', flexDirection: 'column', background: C.bg, overflow: 'hidden'
+      },
+      contentStyle: { width: '100%', maxWidth: wide ? 720 : 'none', margin: '0 auto' },
+      composerStyle: { flex: 'none', borderTop: '1px solid ' + C.border, background: C.bg, padding: '10px 12px 12px' },
+      headerActionsStyle: { display: wide ? 'none' : 'flex', alignItems: 'center', gap: 6, flex: 'none' },
+      tabsStyle: {
+        display: wide ? 'none' : 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 4,
+        background: C.line, borderRadius: 8, padding: 3, margin: '12px 0'
+      },
+      navItems,
+      headerSpacerStyle: { display: wide ? 'block' : 'none', height: 14 },
+      todayLabel: this.fmt(this.TODAY, 'long'),
+      headerTitle: wide ? viewTitles[st.view] : 'Journal',
+      headerSub: wide
+        ? (st.view === 'today' ? this.fmt(this.TODAY, 'long') : daySections.length + ' days logged')
+        : this.fmt(this.TODAY, 'long') + ' · ' + daySections.length + ' days logged',
+      showToday: st.view === 'today' ? 'block' : 'none',
+      showMonth: st.view === 'month' ? 'block' : 'none',
+      showIndex: st.view === 'index' ? 'block' : 'none',
+      showCollection: st.view === 'collection' ? 'block' : 'none',
+      showReview: st.view === 'review' ? 'block' : 'none',
+      tabs,
+      openSearch: () => S({ dialog: 'search' }),
+      openSettings: () => S({ dialog: 'settings' }),
+
+      daySections,
+      hasLeftovers: leftovers.length > 0,
+      leftoverTitle: leftovers.length === 1 ? '1 task from an earlier day is still open' : leftovers.length + ' tasks from earlier days are still open',
+      startMigration: () => S({ dialog: 'migration', migQueue: leftovers, migIndex: 0 }),
+
+      weekdayLabels: ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'],
+      calendarCells,
+      monthLabel: base.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+      prevMonth: () => S({ monthOffset: st.monthOffset - 1 }),
+      nextMonth: () => S({ monthOffset: st.monthOffset + 1 }),
+      habits,
+      monthlyEntries,
+      monthlyMeta: monthlyEntries.length + ' items',
+      reflection: this.reflections()[st.reflectionIdx],
+      keepReflection: () => {
+        const text = this.reflections()[st.reflectionIdx];
+        this.setState((s) => ({ entries: s.entries.concat([{ id: 'r' + Date.now(), date: this.TODAY, type: 'note', text, state: 'logged', time: null, tags: ['summary'], author: 'ai', source: 'Weekly summary, saved by you on Jul 31.', migrations: 0, collection: null }]) }));
+        this.say('Saved to today');
+      },
+      regenReflection: () => S({ reflectionIdx: (st.reflectionIdx + 1) % this.reflections().length }),
+
+      indexGroups,
+      collectionTitle: COLL[st.collectionId] || 'Collection',
+      collectionMeta: collEntries.length + ' items · ' + collEntries.filter((e) => e.state === 'done').length + ' done',
+      collectionEntries: collEntries.map((e) => this.vm(e, { showDate: true })),
+      backToIndex: () => S({ view: 'index' }),
+
+      proposals,
+      reviewIntro: st.proposals.length
+        ? st.proposals.length + ' suggested changes. New entries are added automatically; edits and deletions wait for you.'
+        : 'Nothing waiting.',
+      activity: st.activity.map((a, i) => Object.assign({}, a, {
+        style: { display: 'flex', gap: 10, padding: '9px 12px', borderTop: i === 0 ? 'none' : '1px solid ' + C.line }
+      })),
+
+      chipRowStyle: { display: parseChips.length ? 'flex' : 'none', flexWrap: 'wrap', gap: 5, paddingBottom: 8 },
+      parseChips,
+      draft: st.draft,
+      onDraftChange: (ev) => S({ draft: ev.target.value }),
+      submitDraft,
+      draftTypeLabel: TY[parsed.type].label,
+      draftIconPath: TY[parsed.type].icon,
+      typeButtonStyle: {
+        display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 9px', flex: 'none',
+        background: C.bg, border: '1px solid ' + C.border, borderRadius: 6, cursor: 'pointer',
+        fontSize: 12.5, fontWeight: 500, color: parsed.typed ? C.mute : C.fg2
+      },
+      toggleTypeMenu: () => S({ typeMenu: !st.typeMenu }),
+      closeTypeMenu: () => S({ typeMenu: false }),
+      typeMenuOpen: st.typeMenu,
+      typeOptions,
+      hintStyle: { display: st.draft.trim() ? 'none' : 'block', paddingTop: 8, fontSize: 11.5, color: C.mute, lineHeight: 1.5 },
+
+      dialogOpen: !!st.dialog,
+      dialogTitle: dm.title,
+      dialogDesc: dm.desc,
+      closeDialog: () => S({ dialog: null }),
+      stop: (ev) => ev.stopPropagation(),
+
+      showEntryDialog: st.dialog === 'entry' && de ? 'block' : 'none',
+      detailFields,
+      detailAiStyle: { display: de && de.author === 'ai' ? 'block' : 'none', marginTop: 12, padding: '11px 12px', background: C.hover, border: '1px solid ' + C.border, borderRadius: 8 },
+      detailAiSource: de && de.source ? de.source : '',
+      detailActions,
+
+      showMigDialog: st.dialog === 'migration' && cur ? 'block' : 'none',
+      migText: cur ? cur.text : '',
+      migMeta: cur ? 'From ' + this.fmt(cur.date, 'long') + (cur.tags.length ? ' · ' + cur.tags.map((t) => '#' + t).join(' ') : '') : '',
+      migHintStyle: {
+        display: cur && cur.migrations > 1 ? 'flex' : 'none', gap: 7, marginTop: 10, paddingTop: 10,
+        borderTop: '1px solid ' + C.line, fontSize: 12.5, color: C.mid, lineHeight: 1.5
+      },
+      migHint: cur ? 'Moved forward ' + (cur.migrations || 0) + ' times already. Consider dropping it.' : '',
+      migActions,
+
+      showSearchDialog: st.dialog === 'search' ? 'block' : 'none',
+      search: st.search,
+      onSearchChange: (ev) => S({ search: ev.target.value }),
+      searchListStyle: { paddingTop: results.length || qy ? 8 : 0 },
+      searchResults: results.map((e) => this.vm(e, { showDate: true })),
+      searchEmptyStyle: { display: qy && !results.length ? 'block' : 'none', padding: '14px 2px', fontSize: 13, color: C.mute },
+      searchEmptyText: 'No entries match “' + st.search.trim() + '”.',
+
+      showSettingsDialog: st.dialog === 'settings' ? 'block' : 'none',
+      mcpTools,
+      resetData: () => { try { localStorage.removeItem('bujo.shadcn.v1'); } catch (err) {} this.setState({ entries: this.seed(), proposals: this.seedProposals(), dialog: null }); this.say('Demo data restored'); },
+
+      toast: st.toast || '',
+      toastStyle: {
+        display: st.toast ? 'flex' : 'none', alignItems: 'center', gap: 8,
+        position: 'absolute', left: 12, right: 12, bottom: 96, zIndex: 40,
+        padding: '11px 13px', background: C.primary, color: C.primaryFg, borderRadius: 8,
+        fontSize: 12.5, fontWeight: 500, boxShadow: '0 12px 30px -12px rgba(0,0,0,.7)',
+        animation: 'shToast 2.4s ease forwards'
+      }
+    };
+  }
+
+  indexRow(i, total) {
+    return {
+      display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '11px 12px',
+      background: 'transparent', border: 'none',
+      borderTop: i === 0 ? 'none' : '1px solid ' + this.C.line,
+      cursor: 'pointer', textAlign: 'left'
+    };
+  }
+}
+
+</script>
+</body>
+</html>
