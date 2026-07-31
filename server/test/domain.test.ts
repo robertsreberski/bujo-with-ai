@@ -386,6 +386,36 @@ describe('JournalDomain entry commands', () => {
     );
     expect(domain.searchEntries({ query: 'afé', limit: 25 }).total).toBe(1);
   });
+
+  it('ranks the tag vocabulary by use, then alphabetically, ignoring deleted entries', () => {
+    const { domain, owner, advance } = fixture();
+    const first = domain.createEntry(
+      { id: ulid(), text: 'Tagged one', type: 'note', tags: ['work', 'home'] },
+      owner,
+    );
+    advance(60_000);
+    domain.createEntry(
+      { id: ulid(), text: 'Tagged two', type: 'note', tags: ['work', 'zone'] },
+      owner,
+    );
+    advance(60_000);
+    const removed = domain.createEntry(
+      { id: ulid(), text: 'Tagged three', type: 'note', tags: ['archive', 'work'] },
+      owner,
+    );
+    if (first.kind !== 'entry' || removed.kind !== 'entry') throw new Error('Expected entries');
+    domain.deleteEntry(removed.entry.id, owner);
+
+    expect(domain.listTags()).toEqual([
+      { tag: 'work', uses: 2, lastUsedAt: '2026-07-31T10:01:00.000Z' },
+      { tag: 'home', uses: 1, lastUsedAt: first.entry.createdAt },
+      { tag: 'zone', uses: 1, lastUsedAt: '2026-07-31T10:01:00.000Z' },
+    ]);
+    expect(domain.listTags(1)).toEqual([
+      { tag: 'work', uses: 2, lastUsedAt: '2026-07-31T10:01:00.000Z' },
+    ]);
+    expect(() => domain.listTags(0)).toThrowError(/limit/i);
+  });
 });
 
 describe('JournalDomain summaries and credentials', () => {

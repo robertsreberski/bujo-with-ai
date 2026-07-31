@@ -3,10 +3,14 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';
 import { fileURLToPath, URL } from 'node:url';
 
+import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
 const PRECACHE_PLACEHOLDER = '__JOURNAL_PRECACHE_JSON__';
+// iOS reads launch images from the home-screen bookmark, never over fetch, so
+// precaching the (device-specific, mostly unused) splash set only burns budget.
+const PRECACHE_EXCLUDED = /^splash[/\\]/;
 const MCP_CONTRACT_MODULE_SUFFIX = '/server/src/contracts/mcp.ts';
 const PUBLIC_DIRECTORY = fileURLToPath(new URL('./public', import.meta.url));
 const INDEX_HTML = fileURLToPath(new URL('./index.html', import.meta.url));
@@ -53,13 +57,15 @@ export function journalServiceWorkerPlugin(): Plugin {
             revision: createHash('sha256').update(contents).digest('hex').slice(0, 16),
           };
         });
-      const publicManifest = publicFiles().map((path) => {
-        const contents = readFileSync(path);
-        return {
-          url: `/${relative(PUBLIC_DIRECTORY, path).split(sep).join('/')}`,
-          revision: createHash('sha256').update(contents).digest('hex').slice(0, 16),
-        };
-      });
+      const publicManifest = publicFiles()
+        .filter((path) => !PRECACHE_EXCLUDED.test(relative(PUBLIC_DIRECTORY, path)))
+        .map((path) => {
+          const contents = readFileSync(path);
+          return {
+            url: `/${relative(PUBLIC_DIRECTORY, path).split(sep).join('/')}`,
+            revision: createHash('sha256').update(contents).digest('hex').slice(0, 16),
+          };
+        });
       // Vite emits transformed index.html after Rollup's generateBundle hook.
       // Key its revision to the complete emitted asset graph so every app build
       // fetches the newly transformed shell during service-worker install.
@@ -112,7 +118,16 @@ export function browserContractBoundaryPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), browserContractBoundaryPlugin(), journalServiceWorkerPlugin()],
+  plugins: [
+    react(),
+    // optimize: false is load-bearing — Tailwind's Lightning CSS pass rewrites
+    // color syntax inside custom-property values (rgb(0 0 0 / 70%) → #000000b3),
+    // which breaks the byte-exact DESIGN_TOKENS contract in release-evidence.
+    // Vite's esbuild minifier handles CSS instead, preserving specified values.
+    tailwindcss({ optimize: false }),
+    browserContractBoundaryPlugin(),
+    journalServiceWorkerPlugin(),
+  ],
   build: {
     rollupOptions: {
       input: {

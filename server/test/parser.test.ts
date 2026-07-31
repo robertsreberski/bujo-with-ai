@@ -8,6 +8,7 @@ describe('capture parser', () => {
       text: 'Reply to Mira',
       time: '16:00',
       tags: ['work'],
+      collection: null,
       dateShift: 1,
       signifier: '.',
     });
@@ -19,6 +20,7 @@ describe('capture parser', () => {
       text: 'Design review',
       time: '11:00',
       tags: [],
+      collection: null,
       dateShift: 0,
       signifier: 'o',
     });
@@ -46,6 +48,7 @@ describe('capture parser', () => {
       text: 'Read 20 minutes',
       time: null,
       tags: [],
+      collection: null,
       dateShift: 0,
       signifier: null,
     });
@@ -80,8 +83,96 @@ describe('capture parser', () => {
       text: 'Design review',
       time: '11:00',
       tags: ['work'],
+      collection: null,
       dateShift: 1,
       signifier: 'o',
+    });
+  });
+});
+
+describe('capture parser collection token', () => {
+  it('parses a collection alongside every other token', () => {
+    expect(parseCapture('. Reply to Mira /errands #home @9 >tomorrow', 'idea')).toEqual({
+      type: 'task',
+      text: 'Reply to Mira',
+      time: '09:00',
+      tags: ['home'],
+      collection: 'errands',
+      dateShift: 1,
+      signifier: '.',
+    });
+  });
+
+  it('keeps the first collection token and leaves later ones as text', () => {
+    expect(parseCapture('- Plan the week /errands /shop')).toMatchObject({
+      text: 'Plan the week /shop',
+      collection: 'errands',
+    });
+  });
+
+  it('lowercases the captured slug', () => {
+    expect(parseCapture('- Plan the week /Errands-Weekly')).toMatchObject({
+      text: 'Plan the week',
+      collection: 'errands-weekly',
+    });
+  });
+
+  it('treats a doubled slash as an escape that yields literal text', () => {
+    expect(parseCapture('- Prep //standup')).toMatchObject({
+      text: 'Prep /standup',
+      collection: null,
+    });
+  });
+
+  it('escapes without promoting a later real token to the escaped one', () => {
+    expect(parseCapture('- Prep //standup /errands')).toMatchObject({
+      text: 'Prep /standup',
+      collection: 'errands',
+    });
+  });
+
+  it('keeps a slash-suffixed tag as a tag plus literal text', () => {
+    expect(parseCapture('- Note #work/x')).toMatchObject({
+      text: 'Note /x',
+      tags: ['work'],
+      collection: null,
+    });
+  });
+
+  it.each([
+    ['- Read https://a.com/b', 'Read https://a.com/b'],
+    ['- Check /usr/bin', 'Check /usr/bin'],
+    ['- Check /a_b', 'Check /a_b'],
+    ['- Ship /v1.2', 'Ship /v1.2'],
+    ['- Split a/b', 'Split a/b'],
+    ['- File /month:2026-07', 'File /month:2026-07'],
+    [`- Long /${'a'.repeat(81)}`, `Long /${'a'.repeat(81)}`],
+  ])('leaves %s as journal text without a collection', (draft, expectedText) => {
+    expect(parseCapture(draft)).toMatchObject({ text: expectedText, collection: null });
+  });
+
+  it('empties the text of a token-only draft, exactly like a tag-only draft', () => {
+    expect(parseCapture('/errands')).toMatchObject({ text: '', collection: 'errands' });
+    expect(parseCapture('#work')).toMatchObject({ text: '', tags: ['work'], collection: null });
+  });
+
+  it('accepts a token glued to the date shift but not one glued to a time', () => {
+    expect(parseCapture('- Plan the week /errands>tomorrow')).toMatchObject({
+      text: 'Plan the week',
+      collection: 'errands',
+      dateShift: 1,
+    });
+    expect(parseCapture('- Meet @9/errands')).toMatchObject({
+      text: 'Meet /errands',
+      collection: null,
+      time: '09:00',
+    });
+  });
+
+  it('still rejects an invalid tag after consuming a collection token', () => {
+    expect(safeParseCapture('. Fix this /errands #foo_bar')).toMatchObject({
+      success: false,
+      error: { code: 'invalid_tag', token: '#foo_bar' },
     });
   });
 });

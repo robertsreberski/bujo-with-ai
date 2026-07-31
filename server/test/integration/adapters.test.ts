@@ -240,6 +240,53 @@ describe('HTTP and MCP domain adapters', () => {
     });
   });
 
+  it('files a captured collection token and refuses an unknown slug', () => {
+    const { domain, owner, adapters } = fixture();
+    domain.createCollection({ id: 'errands', name: 'Errands' }, owner);
+    const dateIntent = {
+      kind: 'today' as const,
+      capturedAt: '2026-07-31T10:00:00.000Z',
+      baseToday: '2026-07-31',
+      timezone: 'UTC',
+    };
+
+    const filed = adapters.api.capture(
+      { draft: '. Post the parcel /errands', defaultType: 'task', dateIntent },
+      owner,
+      { id: ulid(), statusCode: 201 },
+    ) as { entry: Entry; parsed: { collection: string | null } };
+    expect(filed.parsed.collection).toBe('errands');
+    expect(filed.entry).toMatchObject({ text: 'Post the parcel', collection: 'errands' });
+
+    expect(() =>
+      adapters.api.capture(
+        { draft: '. Post the parcel /erands', defaultType: 'task', dateIntent },
+        owner,
+        { id: ulid(), statusCode: 201 },
+      ),
+    ).toThrowError(/collection erands was not found/i);
+
+    const escaped = adapters.api.capture(
+      { draft: '. Ship //errands', defaultType: 'task', dateIntent },
+      owner,
+      { id: ulid(), statusCode: 201 },
+    ) as { entry: Entry; parsed: { collection: string | null } };
+    expect(escaped.parsed.collection).toBeNull();
+    expect(escaped.entry).toMatchObject({ text: 'Ship /errands', collection: null });
+  });
+
+  it('serves the tag vocabulary ranked by use', () => {
+    const { domain, owner, adapters } = fixture();
+    createdEntry(domain, owner, { text: 'Tagged one', type: 'note', tags: ['work', 'home'] });
+    createdEntry(domain, owner, { text: 'Tagged two', type: 'note', tags: ['work'] });
+    expect(adapters.api.listTags(owner)).toEqual({
+      items: [
+        { tag: 'work', uses: 2, lastUsedAt: '2026-07-31T10:00:00.000Z' },
+        { tag: 'home', uses: 1, lastUsedAt: '2026-07-31T10:00:00.000Z' },
+      ],
+    });
+  });
+
   it('hashes the full canonical capture request instead of only its reduced entry', () => {
     const { owner, adapters } = fixture();
     const key = ulid();

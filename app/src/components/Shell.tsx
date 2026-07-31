@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useChromeGeometry } from '../hooks/use-chrome-geometry';
 import type { JournalRoute } from '../routes/useJournalRoute';
 import { Icon, type IconName } from './Icon';
 import { formatLongDate } from './dates';
@@ -49,6 +50,17 @@ export function Shell({
   onSettings,
   onDeadLetters,
 }: ShellProps) {
+  const paneRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLElement | null>(null);
+  // The composer arrives as a slot, so its shell element is resolved from the
+  // mounted pane. The geometry hook has to measure that element itself: while
+  // the keyboard is open it is `position: fixed`, so any wrapper around it
+  // would measure zero.
+  useLayoutEffect(() => {
+    composerRef.current = paneRef.current?.querySelector<HTMLElement>('.composer-shell') ?? null;
+  });
+  useChromeGeometry(paneRef, composerRef);
+
   const isActive = (name: (typeof navItems)[number]['name']) =>
     name === route.name || (name === 'index' && route.name === 'collection');
   const navigate = (name: (typeof navItems)[number]['name']) => {
@@ -94,7 +106,7 @@ export function Shell({
             </button>
           </div>
         </aside>
-        <div className="main-pane">
+        <div className="main-pane" ref={paneRef}>
           <header className="app-header">
             <div className="app-header__top content-column">
               <div className="app-header__copy">

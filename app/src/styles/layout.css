@@ -135,6 +135,12 @@
   min-height: 0;
   flex: 1;
   background: var(--bg);
+  scrollbar-gutter: stable;
+}
+
+/* interim — remove when Radix Dialog owns scroll locking (Phase 2) */
+html.dialog-open .app-main {
+  overflow: hidden;
 }
 
 .screen {
@@ -158,16 +164,20 @@ html.keyboard-open .tab-list {
   display: none;
 }
 
+/* Pinned to the measured pane box, not the window: a fixed box resolves
+   against the viewport, so on the sidebar layout the composer would otherwise
+   stretch under the sidebar. */
 html.keyboard-open .composer-shell {
   position: fixed;
-  right: var(--sar);
+  right: auto;
   bottom: calc(100% - var(--vv-offset, 0px) - var(--vv-height, 100%));
-  left: var(--sal);
+  left: var(--pane-left, var(--sal));
+  width: var(--pane-width, calc(100% - var(--sal) - var(--sar)));
   padding-bottom: 0;
 }
 
 html.keyboard-open .app-main {
-  padding-bottom: 88px;
+  padding-bottom: var(--composer-height, 88px);
 }
 
 @media (min-width: 680px) {

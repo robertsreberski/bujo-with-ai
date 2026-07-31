@@ -54,24 +54,46 @@ test('manifest, install metadata, icons, and custom service worker ship from one
     'href',
     '/icons/apple-touch-icon.png',
   );
+  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute(
+    'content',
+    'Journal',
+  );
+  await expect(page.locator('meta[name="apple-mobile-web-app-capable"]')).toHaveAttribute(
+    'content',
+    'yes',
+  );
+  await expect(page.locator('meta[name="apple-mobile-web-app-status-bar-style"]')).toHaveAttribute(
+    'content',
+    'black-translucent',
+  );
 
   const manifestResponse = await context.request.get('/manifest.webmanifest');
   expect(manifestResponse.ok()).toBeTruthy();
   const manifest = (await manifestResponse.json()) as {
+    id: string;
+    lang: string;
     name: string;
     short_name: string;
     display: string;
     start_url: string;
     scope: string;
     icons: Array<{ src: string; sizes: string; purpose?: string }>;
+    shortcuts: Array<{ name: string; short_name: string; url: string }>;
   };
   expect(manifest).toMatchObject({
+    id: '/',
+    lang: 'en',
     name: 'Journal',
     short_name: 'Journal',
     display: 'standalone',
     start_url: '/',
     scope: '/',
   });
+  expect(manifest.shortcuts).toEqual([
+    { name: 'Today', short_name: 'Today', url: '/' },
+    { name: 'This month', short_name: 'Month', url: '/month' },
+    { name: 'Review', short_name: 'Review', url: '/review' },
+  ]);
   expect(manifest.icons).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ src: '/icons/icon-192.png', sizes: '192x192' }),
@@ -107,6 +129,8 @@ test('manifest, install metadata, icons, and custom service worker ship from one
   const worker = await workerResponse.text();
   expect(worker).not.toContain('__JOURNAL_PRECACHE_JSON__');
   expect(worker).toContain('/manifest.webmanifest');
+  // Launch images ship, but iOS reads them from the bookmark — never precache.
+  expect(worker).not.toContain('/splash/');
 
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
@@ -121,6 +145,46 @@ test('manifest, install metadata, icons, and custom service worker ship from one
   await expect
     .poll(() => page.evaluate(() => navigator.serviceWorker.controller?.scriptURL ?? null))
     .toMatch(/\/sw\.js$/);
+});
+
+test('every iOS launch image is media-gated, served, and sized for the device it claims', async ({
+  context,
+  page,
+}) => {
+  await openJournal(page);
+
+  const links = await page.locator('link[rel="apple-touch-startup-image"]').all();
+  expect(links.length).toBeGreaterThanOrEqual(14);
+
+  for (const link of links) {
+    const href = await link.getAttribute('href');
+    const media = await link.getAttribute('media');
+    expect(href, 'launch image href').toMatch(/^\/splash\/\d+x\d+\.png$/);
+    // Without an exact four-part match iOS silently falls back to a white screen.
+    expect(media, href!).toMatch(
+      /^screen and \(device-width: \d+px\) and \(device-height: \d+px\) and \(-webkit-device-pixel-ratio: [23]\) and \(orientation: portrait\)$/,
+    );
+
+    const [width, height] = href!.slice('/splash/'.length, -'.png'.length).split('x').map(Number);
+    const scale = Number(/-webkit-device-pixel-ratio: (\d+)/.exec(media!)![1]);
+    expect(Number(/device-width: (\d+)px/.exec(media!)![1]), href!).toBe(width! / scale);
+    expect(Number(/device-height: (\d+)px/.exec(media!)![1]), href!).toBe(height! / scale);
+
+    const response = await context.request.get(href!);
+    expect(response.status(), href!).toBe(200);
+    expect(response.headers()['content-type'], href!).toContain('image/png');
+    const dimensions = await page.evaluate(
+      (src) =>
+        new Promise<{ width: number; height: number }>((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+          image.onerror = () => reject(new Error(`Unable to decode ${src}`));
+          image.src = src;
+        }),
+      href!,
+    );
+    expect(dimensions, href!).toEqual({ width, height });
+  }
 });
 
 test('the cached shell launches offline and an offline capture replays after reconnect', async ({

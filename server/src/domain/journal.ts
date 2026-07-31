@@ -51,6 +51,7 @@ import type {
   Snapshot,
   Settings,
   Summary,
+  TagUsage,
 } from './types.js';
 
 interface EntryRow {
@@ -889,6 +890,22 @@ export class JournalDomain {
         .prepare(`SELECT * FROM collections ${where} ORDER BY name COLLATE NOCASE`)
         .all() as CollectionRow[]
     ).map(mapCollection);
+  }
+
+  /** Tag vocabulary ranked by use, so capture can suggest what the owner already writes. */
+  public listTags(limit = 300): readonly TagUsage[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500)
+      invalid('limit must be between 1 and 500');
+    return this.db
+      .prepare(
+        `SELECT value AS tag, COUNT(*) AS uses, MAX(e.created_at) AS lastUsedAt
+         FROM entries e, json_each(e.tags)
+         WHERE e.deleted_at IS NULL
+         GROUP BY value
+         ORDER BY uses DESC, tag ASC
+         LIMIT ?`,
+      )
+      .all(limit) as TagUsage[];
   }
 
   public getCollection(id: string): Collection | null {

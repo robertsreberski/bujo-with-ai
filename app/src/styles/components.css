@@ -1180,11 +1180,14 @@ button.status-pill {
   padding-top: 4px;
 }
 
+/* Anchored 6px above the measured composer. `--composer-height` already
+   contains the composer's own `--sab` padding while the keyboard is closed, so
+   the inset is only re-added in the pre-measurement fallback. */
 .toast {
   position: fixed;
   z-index: 50;
   right: max(12px, var(--sar));
-  bottom: calc(94px + var(--sab));
+  bottom: calc(var(--composer-height, calc(88px + var(--sab))) + 6px);
   left: max(12px, var(--sal));
   display: flex;
   width: max-content;
@@ -1209,8 +1212,12 @@ button.status-pill {
   color: var(--danger);
 }
 
+/* The composer drops its `--sab` padding while the keyboard covers the home
+   indicator, so the measured height needs no inset here either. */
 html.keyboard-open .toast {
-  bottom: calc(90px + (100% - var(--vv-offset, 0px) - var(--vv-height, 100%)));
+  bottom: calc(
+    var(--composer-height, 88px) + 6px + (100% - var(--vv-offset, 0px) - var(--vv-height, 100%))
+  );
 }
 
 @media (hover: hover) {

@@ -321,6 +321,7 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
           date: resolveDateIntent(input.dateIntent),
           time: parsed.time,
           tags: parsed.tags,
+          collection: parsed.collection,
         },
         owner,
         withCanonicalRequest(mutation, input),
@@ -376,6 +377,8 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
       today: domain.today(),
       timezone: config.timezone,
     }),
+
+    listTags: () => ({ items: domain.listTags() }),
 
     createCollection: (raw, owner, mutation) => {
       const input = CreateCollectionRequestSchema.parse(raw);

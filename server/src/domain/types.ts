@@ -18,6 +18,7 @@ import type {
   SearchInput,
   Settings,
   Summary,
+  TagUsage,
 } from '../contracts/index.js';
 
 export type {
@@ -37,6 +38,7 @@ export type {
   JournalExport,
   Settings,
   Summary,
+  TagUsage,
 };
 
 export type Author = EntryAuthor;

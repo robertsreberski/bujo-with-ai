@@ -184,6 +184,9 @@ class MockOperations implements ApiJournalOperations {
   listCollections() {
     return { collections: [] };
   }
+  listTags() {
+    return { items: [{ tag: 'work', uses: 3, lastUsedAt: '2026-07-31T09:00:00.000Z' }] };
+  }
   createCollection() {
     return { collection: { id: 'ideas', name: 'Ideas' } };
   }
@@ -739,6 +742,21 @@ describe('one-origin HTTP application', () => {
       .set('Idempotency-Key', MUTATION_ID)
       .send({ copyId: '01J00000000000000000000005', month: '2026-08' })
       .expect(404);
+  });
+
+  it('serves the tag vocabulary to a paired device only', async () => {
+    const { application } = await build();
+    openApplications.push(application);
+    await request(application.app).get('/api/tags').set('Host', 'localhost:5178').expect(401);
+    const cookie = await pair(application);
+    const response = await request(application.app)
+      .get('/api/tags')
+      .set('Host', 'localhost:5178')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(response.body).toEqual({
+      items: [{ tag: 'work', uses: 3, lastUsedAt: '2026-07-31T09:00:00.000Z' }],
+    });
   });
 
   it('replays SSE batches and resets an epoch-mismatched cursor', async () => {

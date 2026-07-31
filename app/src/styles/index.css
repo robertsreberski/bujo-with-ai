@@ -1,6 +1,11 @@
+@layer theme, base, legacy, components, utilities;
+
 @import './fonts.css';
 @import './tokens.css';
-@import './base.css';
-@import './layout.css';
-@import './components.css';
-@import './views.css';
+@import 'tailwindcss/theme.css' layer(theme);
+@import './theme.css';
+@import './base.css' layer(base);
+@import './layout.css' layer(legacy);
+@import './components.css' layer(legacy);
+@import './views.css' layer(legacy);
+@import 'tailwindcss/utilities.css' layer(utilities);

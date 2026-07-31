@@ -1,0 +1,121 @@
+/*
+ * Tailwind token bridge.
+ *
+ * tokens.css is the single source of truth for the palette and is asserted
+ * byte-for-byte by e2e/release-evidence.spec.ts. This file only *maps* those
+ * raw custom properties into Tailwind's theme namespaces so utilities resolve
+ * to the same values. Never redeclare a palette value here.
+ *
+ * `inline` keeps the generated utilities pointing at the raw `var(--token)`
+ * rather than an extra `var(--color-*)` indirection.
+ */
+@theme inline {
+  /* Drop the stock palette: Journal is a closed, dark-only token set. */
+  --color-*: initial;
+
+  --color-bg-page: var(--bg-page);
+  --color-bg: var(--bg);
+  --color-bg-hover: var(--bg-hover);
+  --color-bg-line: var(--bg-line);
+  --color-bg-raised: var(--bg-raised);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-border-control: var(--border-control);
+
+  --color-fg: var(--fg);
+  --color-fg-body: var(--fg-body);
+  --color-fg-mid: var(--fg-mid);
+  --color-fg-mute: var(--fg-mute);
+  --color-fg-faint: var(--fg-faint);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-fg: var(--primary-fg);
+
+  --color-ai-bg: var(--ai-bg);
+  --color-ai-fg: var(--ai-fg);
+  --color-ai-border: var(--ai-border);
+
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg-hover);
+  --color-danger-border: var(--danger-border);
+
+  --color-ok: var(--ok);
+  --color-warning: var(--warning);
+  --color-overlay: var(--overlay);
+}
+
+/*
+ * Non-color scales. These are Journal's own values (not aliases), so they are
+ * declared without `inline` and emitted as real theme variables.
+ *
+ * `--shadow-*` is deliberately absent: tokens.css already owns
+ * --shadow-menu/dialog/toast, and aliasing them into Tailwind's --shadow-*
+ * namespace would self-reference. Consume them as shadow-(--shadow-menu).
+ */
+@theme {
+  --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, monospace;
+
+  /* DS-4 type ramp. */
+  --text-count: 10.5px;
+  --text-count--line-height: 1;
+  --text-2xs: 11px;
+  --text-2xs--line-height: 1.35;
+  --text-tag: 11.5px;
+  --text-tag--line-height: 1.35;
+  --text-xs: 12px;
+  --text-xs--line-height: 1.4;
+  --text-sm: 12.5px;
+  --text-sm--line-height: 1.4;
+  --text-md: 13px;
+  --text-md--line-height: 1.4;
+  --text-base: 13.5px;
+  --text-base--line-height: 1.45;
+  --text-card: 14px;
+  --text-card--line-height: 1.45;
+  --text-lg: 15px;
+  --text-lg--line-height: 1.3;
+  --text-xl: 16px;
+  --text-xl--line-height: 1.3;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-2xl: 12px;
+
+  /*
+   * The overlay-in / dialog-in / toast-in @keyframes are defined once in
+   * components.css (legacy layer) and asserted by name in
+   * e2e/release-evidence.spec.ts. Only the animation shorthands live here so
+   * the keyframes are never double-defined.
+   */
+  --animate-overlay-in: overlay-in 130ms ease-out;
+  --animate-dialog-in: dialog-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-menu-in: dialog-in 120ms ease-out;
+  --animate-toast-in: toast-in 160ms ease-out;
+}
+
+/* Stacking order, kept out of @theme because it has no utility namespace. */
+:root {
+  --z-day-header: 2;
+  --z-header: 6;
+  --z-safe-area: 8;
+  --z-composer: 10;
+  --z-scrim: 14;
+  --z-menu: 15;
+  --z-dialog: 30;
+  --z-toast: 50;
+}
+
+/* Coarse-pointer / narrow-viewport branch used by the legacy CSS media query. */
+@custom-variant touch {
+  @media (max-width: 679px), (pointer: coarse) {
+    @slot;
+  }
+}
+
+/* Mirrors the `html.keyboard-open` class toggled by use-viewport-layout. */
+@custom-variant keyboard-open (&:where(html.keyboard-open, html.keyboard-open *));

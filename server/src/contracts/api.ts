@@ -26,6 +26,7 @@ import {
   IdempotencyKeySchema,
   IsoTimestampSchema,
   MutationIdSchema,
+  TagSchema,
   TimeZoneSchema,
   UlidSchema,
 } from './primitives.js';
@@ -205,6 +206,16 @@ export const CollectionListResponseSchema = z.strictObject({
   items: z.array(CollectionSchema),
   today: CalendarDateSchema,
   timezone: TimeZoneSchema,
+});
+
+export const TagUsageSchema = z.strictObject({
+  tag: TagSchema,
+  uses: z.number().int().positive(),
+  lastUsedAt: IsoTimestampSchema,
+});
+
+export const TagListResponseSchema = z.strictObject({
+  items: z.array(TagUsageSchema),
 });
 
 export const SettingsResponseSchema = z.strictObject({
@@ -401,6 +412,8 @@ export type SettingsPatch = z.infer<typeof SettingsPatchSchema>;
 export type BootstrapResponse = z.infer<typeof BootstrapResponseSchema>;
 export type EntryListResponse = z.infer<typeof EntryListResponseSchema>;
 export type CollectionListResponse = z.infer<typeof CollectionListResponseSchema>;
+export type TagUsage = z.infer<typeof TagUsageSchema>;
+export type TagListResponse = z.infer<typeof TagListResponseSchema>;
 export type ActivityListResponse = z.infer<typeof ActivityListResponseSchema>;
 export type SettingsResponse = z.infer<typeof SettingsResponseSchema>;
 export type ChangeOrigin = z.infer<typeof ChangeOriginSchema>;

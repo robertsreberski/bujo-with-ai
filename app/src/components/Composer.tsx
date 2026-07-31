@@ -19,6 +19,7 @@ interface ComposerProps {
   onDraftChange: (draft: string) => void;
   onDefaultTypeChange: (type: EntryType) => void;
   onSubmit: (parsed: ParsedDraft) => void;
+  onInputFocus?: (() => void) | undefined;
 }
 
 export function Composer({
@@ -27,6 +28,7 @@ export function Composer({
   onDraftChange,
   onDefaultTypeChange,
   onSubmit,
+  onInputFocus,
 }: ComposerProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -68,12 +70,6 @@ export function Composer({
   };
 
   const keepComposerFocus = (event: PointerEvent) => event.preventDefault();
-  const revealNewestDay = () => {
-    const day = document.querySelector<HTMLElement>('.day-section');
-    if (typeof day?.scrollIntoView === 'function') {
-      day.scrollIntoView({ block: 'start', behavior: 'auto' });
-    }
-  };
 
   const handleMenuKey = (event: KeyboardEvent<HTMLDivElement>) => {
     if (
@@ -165,7 +161,7 @@ export function Composer({
             placeholder="Add an entry…"
             autoComplete="off"
             enterKeyHint="done"
-            onFocus={revealNewestDay}
+            onFocus={onInputFocus}
           />
           <button
             className="composer__submit"

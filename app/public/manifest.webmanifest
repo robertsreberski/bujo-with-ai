@@ -1,6 +1,8 @@
 {
+  "id": "/",
   "name": "Journal",
   "short_name": "Journal",
+  "lang": "en",
   "description": "A private bullet journal with owner-controlled AI access.",
   "start_url": "/",
   "scope": "/",
@@ -24,6 +26,23 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Today",
+      "short_name": "Today",
+      "url": "/"
+    },
+    {
+      "name": "This month",
+      "short_name": "Month",
+      "url": "/month"
+    },
+    {
+      "name": "Review",
+      "short_name": "Review",
+      "url": "/review"
     }
   ]
 }

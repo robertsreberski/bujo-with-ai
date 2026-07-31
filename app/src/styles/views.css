@@ -9,41 +9,6 @@
   color: var(--fg-mute);
 }
 
-.launch-screen {
-  display: flex;
-  width: 100%;
-  height: var(--app-height, 100vh);
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-page);
-  color: var(--fg);
-}
-
-.launch-screen__mark {
-  display: grid;
-  width: 44px;
-  height: 44px;
-  place-items: center;
-  border: 1px solid var(--ai-border);
-  border-radius: 12px;
-  background: var(--ai-bg);
-  color: var(--ai-fg);
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.launch-screen h1 {
-  padding-top: 10px;
-  font-size: 15px;
-}
-
-.launch-screen p {
-  padding-top: 3px;
-  color: var(--fg-mute);
-  font-size: 12.5px;
-}
-
 .leftovers-card > svg {
   flex: none;
   margin-top: 2px;

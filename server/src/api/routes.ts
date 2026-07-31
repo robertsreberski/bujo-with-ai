@@ -95,6 +95,7 @@ export interface ApiJournalOperations extends DeviceAuthenticator {
     actor: OwnerActor,
   ): unknown | Promise<unknown>;
   listCollections(actor: OwnerActor): unknown | Promise<unknown>;
+  listTags(actor: OwnerActor): unknown | Promise<unknown>;
   createCollection(
     input: Record<string, unknown>,
     actor: OwnerActor,
@@ -352,6 +353,10 @@ export function createApiRouter(options: ApiRouterOptions): Router {
   router.get(
     '/collections',
     asyncRoute((request) => options.operations.listCollections(actor(request))),
+  );
+  router.get(
+    '/tags',
+    asyncRoute((request) => options.operations.listTags(actor(request))),
   );
   router.post(
     '/collections',

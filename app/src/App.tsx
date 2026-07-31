@@ -20,7 +20,7 @@ import type {
   JournalEntry,
   ParsedDraft,
 } from './components/types';
-import { useViewportLayout } from './hooks/use-viewport-layout';
+import { isTextEntryTarget, useViewportLayout } from './hooks/use-viewport-layout';
 import { useJournalRoute } from './routes/useJournalRoute';
 import { createUlid } from './store/ids';
 import { journalActions, useJournalStore } from './store/journal-store';
@@ -203,6 +203,15 @@ export default function App() {
     },
     [navigate, run, store.today],
   );
+
+  // PWA-16: focusing the composer brings the newest day back under the
+  // shrinking visible viewport. Only the day list has a newest day to reveal.
+  const revealNewestDay = useCallback(() => {
+    const day = document.querySelector<HTMLElement>('.day-section');
+    if (typeof day?.scrollIntoView === 'function') {
+      day.scrollIntoView({ block: 'start', behavior: 'auto' });
+    }
+  }, []);
 
   const refreshTokens = useCallback(() => {
     run(() => journalActions.refreshTokens());
@@ -397,6 +406,13 @@ export default function App() {
     if (selectedTodayDate) return;
     const frame = window.requestAnimationFrame(() => {
       if (document.querySelector('[role="dialog"]')) return;
+      // Never pull focus (and the keyboard) out of an active capture.
+      if (
+        isTextEntryTarget(document.activeElement) ||
+        document.documentElement.classList.contains('keyboard-open')
+      ) {
+        return;
+      }
       const content = document.getElementById('journal-content');
       content?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
       content?.focus({ preventScroll: true });
@@ -406,10 +422,15 @@ export default function App() {
 
   if (!store.hydrated && store.loading) {
     return (
-      <main className="launch-screen" aria-live="polite">
-        <span className="launch-screen__mark">J</span>
-        <h1>Journal</h1>
-        <p>Opening your local journal…</p>
+      <main
+        className="flex h-[var(--app-height,100vh)] w-full flex-col items-center justify-center bg-bg-page text-fg"
+        aria-live="polite"
+      >
+        <span className="grid size-11 place-items-center rounded-2xl border border-ai-border bg-ai-bg text-[18px] font-semibold text-ai-fg">
+          J
+        </span>
+        <h1 className="pt-2.5 text-lg">Journal</h1>
+        <p className="pt-[3px] text-sm text-fg-mute">Opening your local journal…</p>
       </main>
     );
   }
@@ -439,6 +460,7 @@ export default function App() {
             onDraftChange={journalActions.setDraft}
             onDefaultTypeChange={journalActions.setDefaultType}
             onSubmit={submitDraft}
+            onInputFocus={route.name === 'today' ? revealNewestDay : undefined}
           />
         }
       >
