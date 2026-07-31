@@ -1,7 +1,7 @@
 # SPEC-03 — Application Logic
 
 Governs: view behavior, the capture parser, migration ritual, search,
-proposals/review, activity, and keyboard interactions. Requirement IDs:
+activity/revert review, and keyboard interactions. Requirement IDs:
 `LOG-*`. Every rule here is either lifted directly from the v2 prototype's
 component logic or marked **[ext]** where it deliberately extends it.
 
@@ -14,11 +14,12 @@ component logic or marked **[ext]** where it deliberately extends it.
 - LOG-2 Navigation surfaces by breakpoint (SPEC-04 §5): segmented tab bar
   under the header (<1024px) or sidebar (≥1024px). Both list Today, Month,
   Index, Review; the Index item stays active while a Collection is open.
-- LOG-3 The Review tab/nav item shows a count badge equal to pending
-  proposals; hidden at zero.
-- LOG-4 **[ext]** Screens map to routes (`/`, `/month`, `/index`,
-  `/c/:collectionId`, `/review`) so PWA deep links and back-button work; the
-  prototype's in-memory `view` state becomes the router state.
+- LOG-3 Review has no pending-count badge. Agent writes are immediate; Review
+  is a chronological activity/revert destination, not an inbox.
+- LOG-4 **[ext]** Screens map to routes (`/?date=YYYY-MM-DD`,
+  `/month?month=YYYY-MM`, `/index`, `/c/:collectionId`, `/review`) so day and
+  month selections deep-link and browser/PWA back navigation works; omitted
+  query values mean the server-issued current day/month.
 - LOG-5 Header: app title + date context. Wide: current view title, subtitle
   = long date (Today) or "N days logged". Narrow: "Journal" + "long date · N
   days logged", with search and settings icon buttons on the right.
@@ -33,9 +34,10 @@ Present on every screen, docked to the bottom (keyboard behavior: SPEC-05 §4).
   1. **Signifier** — first token when the draft starts with
      `<signifier><space>`: `.` task · `o` event · `-` note · `!` idea ·
      `?` question · `+` habit · `~` mood (case-insensitive `o`). Consumed
-     from the text. When present it *overrides* the type-menu selection and
+     from the text. When present it _overrides_ the type-menu selection and
      the type button renders muted (the signifier "won").
-  2. **Tags** — every `#[\w-]+` anywhere; consumed; lowercased into `tags`.
+  2. **Tags** — every `#[A-Za-z0-9-]+` anywhere; consumed; lowercased and
+     de-duplicated into `tags`. Underscore is deliberately not valid.
   3. **Time** — first `@H`, `@H:MM`, `@Ham/pm`, `@H:MMam/pm`;
      12h converts to 24h (12am → 00); consumed; result `HH:MM`.
   4. **Date shift** — `>tomorrow` (case-insensitive) sets the target date to
@@ -45,17 +47,18 @@ Present on every screen, docked to the bottom (keyboard behavior: SPEC-05 §4).
   non-empty, in order: type label, `at HH:MM`, one chip per `#tag`,
   `tomorrow`. When the draft is empty a hint line shows instead:
   `Shortcuts: . task · o event · - note · #tag · @3pm · >tomorrow`.
-- LOG-8 The type button reflects the *parsed* type (icon + label) live and
+- LOG-8 The type button reflects the _parsed_ type (icon + label) live and
   opens the type menu; picking a type there sets the default for drafts
   without a signifier.
 
 ### 2.2 Submit
 
 - LOG-9 Submit (Enter or the + button) with empty parsed text is a no-op.
-  Otherwise create the entry: parsed fields; `date` = today (or shifted);
+  Otherwise create the entry: parsed fields; date intent = today (or shifted);
   `state` = `open` for task/habit else `logged`; `author: 'me'`;
   `collection: null`; clear the draft; navigate to Today; toast
-  "Added to today".
+  "Added to today". Offline commands freeze capture time, last server today,
+  timezone, and date intent so replay after midnight preserves intent.
 - LOG-10 Creation is optimistic: the entry renders immediately from the local
   store and reconciles through the outbox (SPEC-07). Capture must never block
   on the network.
@@ -105,7 +108,8 @@ Present on every screen, docked to the bottom (keyboard behavior: SPEC-05 §4).
   entry's `source` verbatim.
 - LOG-20 Actions (2-column grid):
   - task/habit: **Mark done/not done** (primary), **Move to today**
-    (migration copy per DM-6), **To monthly log** (state → scheduled),
+    (migration copy per DM-6), **To monthly log** (original → scheduled and
+    monthly copy created atomically per DM-4),
     **Drop** (state → cancelled, danger).
   - other types: **Move to today** (sets `date` = today; primary),
     **File in ideas** → **[ext]** generalized to **File in collection…**
@@ -113,8 +117,9 @@ Present on every screen, docked to the bottom (keyboard behavior: SPEC-05 §4).
     (soft delete, danger).
   - every action closes the dialog and toasts its result ("Moved to today",
     "Dropped", "Deleted"…).
-- LOG-21 **[ext]** An Edit affordance (P1, FR-23) switches fields to inputs
-  (text, type, date, time, tags) and saves via the same domain update path.
+- LOG-21 **[ext, included]** An Edit affordance switches fields to inputs
+  (text, type, date, nullable time, tags) and saves via the same domain update
+  path. Type/state are normalized and the final merged row is validated.
 
 ## 5. Migration dialog
 
@@ -134,26 +139,27 @@ Present on every screen, docked to the bottom (keyboard behavior: SPEC-05 §4).
   cell per day with the day number and a dot when the day has ≥1
   non-collection entry. Today's cell is outlined/raised. Prev/next chevrons
   shift the month; the label formats as "July 2026".
-- LOG-26 Cell tap: v1 toasts "<Mon D>: N entries / nothing logged" and
-  returns to Today (prototype behavior); P1 **[ext]** scrolls Today to that
-  date. Cell tooltip: "<long date> — N entries".
+- LOG-26 Cell tap navigates to `/?date=YYYY-MM-DD` and scrolls Today to that
+  day; empty days render a named empty section. Cell tooltip: "<long date> —
+  N entries".
 - LOG-27 Monthly log section: entries in `month:<displayed-month>`
   (newest-first), heading meta "N items", explainer "Things that belong to
   the month, not to a day.", standard entry rows.
 - LOG-28 Weekly summary card: sparkle icon + "Weekly summary · generated
-  automatically", the current summary text, and actions **Save to today** /
-  **Rewrite** (semantics: DM-17). Card hides when no summary exists **[ext:**
-  prototype always had one**]**.
-- LOG-29 Habit grid (P1, FR-37): per habit, a 31-cell month strip; a cell is
+  automatically", the greatest-weekStart Summary assigned to the displayed
+  month (DM-17), and actions **Save to today** / **Rewrite**. Card hides when
+  that month has no summary **[ext:** prototype always had one**]**.
+- LOG-29 Habit grid (P1 included, FR-37): per habit, a one-cell-per-day month
+  strip; a cell is
   filled when a `habit` entry with that text is `done` on that day; count
-  label "K / 31". (Designed and fully styled in the prototype, shipped
-  hidden.)
+  label "K / N" where N is the number of days in the displayed month.
 
-## 7. Index, collections, review
+## 7. Index, collections, activity review
 
 - LOG-30 Index groups (in order):
   1. **Collections** — non-month, non-archived collections; row = name +
-     "N items" + chevron → Collection view.
+     "N items" + chevron → Collection view. Create, rename, and archive
+     controls live here; month collections cannot be archived.
   2. **Monthly spreads** — one row per month having entries ("July 2026",
      "N entries") → Month view of that month.
   3. **Saved views** — "Open tasks" (`type=task ∧ state=open`), "Added by
@@ -162,16 +168,19 @@ Present on every screen, docked to the bottom (keyboard behavior: SPEC-05 §4).
      release; v1 ships exactly these three.
 - LOG-31 Collection view: back-to-Index button, title, meta "N items · M
   done", entry rows with date prefixes (`showDate`).
-- LOG-32 Review view:
-  - "Waiting for you" intro: "N suggested changes. New entries are added
-    automatically; edits and deletions wait for you." or "Nothing waiting."
-  - Proposal cards: kind chip (sparkle + kind), title, detail, optional
-    bullet lines, **Approve** / **Dismiss** (semantics: DM-13). Both toast
-    ("Approved and applied" / "Dismissed").
-  - "Recent activity" list: "Changes made automatically. All reversible.";
-    rows = `HH:MM` (mono) + sentence, newest-first (DM-16).
-- LOG-33 Proposals older than 7 days auto-expire (status `expired`) with an
-  activity note — keeps the queue honest (PRD risk table).
+- LOG-32 Review is the activity/revert center:
+  - Intro: "Automatic changes" and a concise explanation that agent writes
+    apply immediately with attribution and snapshots.
+  - Activity cards show time, sentence, MCP token/tool, affected-row summary,
+    and before/after detail on expansion.
+  - **Revert** renders only when `revert.eligible` is true. Ineligible cards
+    expose the server-derived reason (already reverted, newer row mismatch, or
+    not reversible) accessibly without offering a blind action. Success toasts
+    "Change reverted"; a race-time `409 revert_conflict` keeps the card and
+    explains that newer changes were preserved.
+- LOG-33 Activity is newest-first, grouped by day, and paged as the user
+  scrolls. A revert appends a linked activity item rather than deleting
+  history. Empty state: "No automatic changes yet."
 
 ## 8. Search
 
@@ -194,8 +203,8 @@ Present on every screen, docked to the bottom (keyboard behavior: SPEC-05 §4).
 
 - LOG-38 One toast at a time, bottom-anchored above the composer,
   auto-dismisses ≈2.4s, replaced by newer toasts. Toasts confirm: capture,
-  entry actions, migration completion, proposal outcomes, summary save,
-  demo reset.
+  entry actions, migration completion, activity revert, summary save,
+  and token-management actions.
 - LOG-39 **[ext]** Live changes arriving over SSE while the app is open
   (e.g. an agent adds an entry) render within 1s without user action; agent
   additions to today may toast once per burst ("Assistant added 2 entries")
@@ -204,10 +213,10 @@ Present on every screen, docked to the bottom (keyboard behavior: SPEC-05 §4).
 ## 10. Settings ("Assistant access")
 
 - LOG-40 Dialog shows: MCP endpoint row (mono URL + Connected/Offline pill
-  with status dot), explainer ("New entries are added automatically and
-  marked with an icon. Edits and deletions go to Review first."), the
-  seven-tool permission table (mono tool names + mode badges; `needs
-  approval` badges visually distinct), and token management (SPEC-06 §3).
+  with status dot), explainer ("Agent writes apply automatically, are
+  attributed, and can be reverted safely from Review."), the seven-tool
+  permission table (five `automatic`, two `read only`), the AI-provider data
+  boundary, and token management (SPEC-06 §3).
 - LOG-41 Connected state = server reachable ∧ ≥1 active MCP session in the
   last 5 minutes; otherwise show "Ready" (reachable, no agents) or
   "Offline". **[ext]** — the prototype hard-coded "Connected".

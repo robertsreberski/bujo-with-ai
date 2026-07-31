@@ -10,10 +10,11 @@ used demo shortcuts.
 ```
 Entry ────────── the atom of the journal (one line, one type, one date or collection)
 Collection ───── a flat, dateless list (plus the implicit per-month "monthly log")
-Proposal ─────── an agent-suggested change awaiting Approve/Dismiss
-ActivityItem ─── an audit record of an automatic (agent) or approval-applied change
+ActivityItem ─── an audit record + reversible snapshot of an automatic change
 Summary ──────── a weekly reflection written by an agent
 AgentToken ───── credential for one MCP client (SPEC-06)
+DeviceToken ──── cookie credential for one PWA installation (SPEC-07)
+ProcessedMutation ─ idempotency record for replayable REST/MCP commands
 ```
 
 ## 2. Entry
@@ -21,31 +22,32 @@ AgentToken ───── credential for one MCP client (SPEC-06)
 The prototype's entry object, verbatim, is the contract:
 
 ```ts
-type EntryType  = 'task' | 'event' | 'note' | 'idea' | 'question' | 'habit' | 'mood';
+type EntryType = 'task' | 'event' | 'note' | 'idea' | 'question' | 'habit' | 'mood';
 type EntryState = 'open' | 'done' | 'logged' | 'migrated' | 'scheduled' | 'cancelled';
-type Author     = 'me' | 'ai';
+type Author = 'me' | 'ai';
 
 interface Entry {
-  id: string;              // ULID
-  date: string;            // 'YYYY-MM-DD' — the day it belongs to (or filing date for collection entries)
+  id: string; // ULID
+  date: string; // 'YYYY-MM-DD' — the day it belongs to (or filing date for collection entries)
   type: EntryType;
-  text: string;            // single line, plain text, 1..500 chars
+  text: string; // single line, plain text, 1..500 chars
   state: EntryState;
-  time: string | null;     // 'HH:MM' 24h, display + sort hint; not a scheduler
-  tags: string[];          // lowercase, no '#', [a-z0-9-]+
+  time: string | null; // 'HH:MM' 24h, display + sort hint; not a scheduler
+  tags: string[]; // lowercase, no '#', [a-z0-9-]+
   author: Author;
-  source: string | null;   // human-readable provenance; REQUIRED when author === 'ai'
-  migrations: number;      // times this task has been carried forward (0..n)
+  source: string | null; // human-readable provenance; REQUIRED when author === 'ai'
+  migrations: number; // times this task has been carried forward (0..n)
   collection: string | null; // null = daily log; 'month:YYYY-MM' = monthly log; else collection id
-  createdAt: string;       // ISO 8601, server clock
+  createdAt: string; // ISO 8601, server clock
   updatedAt: string;
+  revision: number; // increments on every committed mutation
   deletedAt: string | null; // soft delete (DM-14)
 }
 ```
 
-- DM-1 **Actionable vs logged types.** `task` and `habit` are *actionable*:
+- DM-1 **Actionable vs logged types.** `task` and `habit` are _actionable_:
   they start in state `open` and use the checkbox lifecycle. All other types
-  are *logged*: they start and remain in state `logged` (their lifecycle is
+  are _logged_: they start and remain in state `logged` (their lifecycle is
   positional — moved, filed, or deleted — not completable).
 - DM-2 **Provenance invariant.** `author === 'ai'` ⇒ `source` is a non-empty
   string. Enforced at the domain layer for every write path (REST and MCP).
@@ -55,8 +57,9 @@ interface Entry {
   in collection rows).
 - DM-4 **Monthly log** is modeled as a collection id `month:YYYY-MM`
   (the prototype's `collection: 'month'` normalized to be month-specific).
-  Migrating a task "to monthly log" sets the *original's* state to
-  `scheduled`; approving/inspecting monthly items uses the same entry row UI.
+  "To monthly log" atomically marks the original `scheduled` and creates an
+  `open` copy in the selected `month:YYYY-MM`; the original remains in its
+  daily log as the paper trail. Monthly collections auto-create on first use.
 - DM-5 `time` is presentation metadata (sorted, monospaced display). The
   system schedules nothing; there are no reminders in v1.
 
@@ -67,18 +70,19 @@ task | habit:                     event | note | idea | question | mood:
   open ──✓──▶ done                  logged (terminal; only position changes)
   open ◀──✓── done   (toggle)
   open ──migrate──▶ migrated   (a copy is created on today with migrations+1)
-  open ──to month──▶ scheduled (entry now lives conceptually in the monthly log)
+  open ──to month──▶ scheduled (a monthly-log copy is created atomically)
   open ──drop──▶ cancelled
 ```
 
-- DM-6 **Migration copies, never moves.** "Move to today" creates a *new*
+- DM-6 **Migration copies, never moves.** "Move to today" creates a _new_
   entry (today's date, state `open`, `migrations = original.migrations + 1`,
   same text/tags/type/author/source) and sets the original to `migrated`.
   The paper-BuJo trail — the task visibly re-written day after day — is the
   point; `migrations` powers the "Moved 4×" honesty nudge.
 - DM-7 `done ⇄ open` is freely toggleable. `migrated`, `scheduled`, and
-  `cancelled` are exited only via an explicit edit (update proposal or owner
-  edit), not via the checkbox.
+  `cancelled` are exited only via an explicit owner/agent edit, not via the
+  checkbox. Every final merged entity must satisfy DM-1; a patch cannot create
+  `note/open` or `task/logged`.
 - DM-8 Derived display labels (used by UI and MCP responses):
   `migrated` → "Moved forward", `scheduled` → "In monthly log",
   `cancelled` → "Dropped", `migrations > 1` → "Moved N×".
@@ -87,8 +91,8 @@ task | habit:                     event | note | idea | question | mood:
 
 ```ts
 interface Collection {
-  id: string;          // slug: [a-z0-9-]+ ('books', 'ideas') or 'month:YYYY-MM'
-  name: string;        // 'Books to read'
+  id: string; // slug: [a-z0-9-]+ ('books', 'ideas') or 'month:YYYY-MM'
+  name: string; // 'Books to read'
   note: string | null; // one-line description
   createdAt: string;
   archivedAt: string | null;
@@ -104,85 +108,126 @@ interface Collection {
 
 ## 4. Identifiers
 
-- DM-11 All ids are ULIDs generated **by the writer** (client or server), so
-  offline captures have stable ids before sync (SPEC-07). Server rejects
-  duplicate ids idempotently (returns the existing row — makes outbox replay
-  and MCP retries safe).
+- DM-11 Entity ids are ULIDs generated by the command writer when offline
+  identity is needed, otherwise by the server. Every queueable REST command
+  also has a distinct `mutationId`. Reusing a mutation id with the identical
+  canonical payload returns its stored result; reusing it with a different
+  payload returns `409 mutation_id_reused`. MCP write tools accept an optional
+  `idempotencyKey` with the same rule. An absent MCP key is intentionally not
+  retry-safe after an indeterminate response.
 - DM-12 The prototype's id prefixes (`e1`, `u<ts>`, `m<ts>`…) are demo
   artifacts; ULID replaces them.
 
-## 5. Proposal
+## 5. Automatic mutation commands
 
-Generalizes the prototype's three hard-coded proposal kinds (split / drop /
-retag) into an operations list the server can apply atomically:
+The prototype's proposal-card vocabulary is retained only as explanatory
+metadata on `propose_migration`; no Proposal entity or queue exists.
 
 ```ts
-type ProposalKind = 'split' | 'drop' | 'retag' | 'edit' | 'delete' | 'migrate' | 'other';
+type MigrationKind = 'split' | 'drop' | 'retag' | 'move' | 'other';
+type ExpectedRow = { id: string; expectedRevision: number };
 
-interface Proposal {
-  id: string;                 // ULID
-  kind: ProposalKind;         // drives the card badge label
-  title: string;              // '“Plan the launch” is too vague to start'
-  detail: string;             // one/two sentences of rationale
-  lines: string[];            // optional display bullets (e.g. the split-out tasks)
-  ops: ProposalOp[];          // what Approve actually executes, in order, atomically
-  origin: { tokenId: string; tool: string };  // which agent, via which tool
-  status: 'pending' | 'approved' | 'dismissed' | 'expired';
-  createdAt: string;
-  resolvedAt: string | null;
-}
-
-type ProposalOp =
-  | { op: 'create'; entry: Omit<Entry, 'createdAt'|'updatedAt'|'deletedAt'> }
-  | { op: 'update'; id: string; patch: Partial<Pick<Entry,'text'|'type'|'date'|'time'|'tags'|'state'|'collection'>> }
-  | { op: 'delete'; id: string }
-  | { op: 'retag';  from: string; to: string };   // journal-wide tag rename/merge
+type MigrationOperation =
+  | { op: 'create'; entry: AgentEntryCreate }
+  | { op: 'update'; id: string; expectedRevision: number; patch: EntryPatch }
+  | { op: 'delete'; id: string; expectedRevision: number }
+  | { op: 'retag'; from: string; to: string };
 ```
 
-- DM-13 Approve executes all `ops` in one SQLite transaction; any failure
-  (e.g. target entry since deleted) fails the whole proposal, which returns
-  to `pending` with an error note surfaced on the card. Dismiss touches
-  nothing. Both outcomes write an ActivityItem.
+`AgentEntryCreate` exposes only text/type/date/time/tags/collection/source;
+the domain stamps id, state, `author: 'ai'`, timestamps, revision, migration
+history, and deletion fields. `EntryPatch` accepts nullable `time` and
+`collection`, then validates the fully merged Entry.
+
+- DM-13 **Superseded approval semantics.** `propose_migration` validates and
+  applies its 1..10 operations immediately in one SQLite transaction. Every
+  target carries an expected revision obtained from `list_day`/`search`; any
+  missing, deleted, or changed target fails the entire command with no partial
+  Activity or SSE event. Success records one ActivityItem with all pre/post
+  images and emits one post-commit change batch.
 
 ## 6. Soft delete & reversibility
 
 - DM-14 Deletion sets `deletedAt`; rows purge after 30 days via a daily
   sweep. All queries exclude soft-deleted rows unless explicitly asked
   (`includeDeleted` is internal-only).
-- DM-15 Every mutation performed by an agent tool or an approved proposal
-  stores a JSON snapshot of each affected entry (pre-image) on its
-  ActivityItem — this is what makes "All reversible" true and enables the
-  P1 revert feature.
+- DM-15 Every agent mutation stores ordered pre- and post-images for each
+  affected row. Revert is compare-and-swap: it succeeds in one transaction
+  only while every current row matches the recorded post-image (including
+  revision/deletion state). A mismatch returns `409 revert_conflict` and
+  never overwrites later owner or agent work. Reverting appends its own
+  ActivityItem and stamps only the original record's revert-link metadata;
+  its text, origin, refs, and snapshots remain unchanged.
 
 ## 7. ActivityItem & Summary
 
 ```ts
+type ActivitySnapshot = {
+  entity: 'entry' | 'summary' | 'collection';
+  id: string;
+  row: Entry | Summary | Collection | null; // null = row absent
+};
+
 interface ActivityItem {
   id: string;
-  at: string;                       // ISO 8601
-  text: string;                     // human sentence: 'Added “Book flights for Lisbon” from an email'
-  kind: 'auto-add' | 'proposal-created' | 'proposal-approved' | 'proposal-dismissed'
-      | 'proposal-expired' | 'summary-filed' | 'revert';
-  refs: { entryIds: string[]; proposalId?: string; tokenId?: string };
-  preImages: Entry[];               // snapshots per DM-15 (empty for pure adds)
+  at: string; // ISO 8601
+  text: string; // human sentence: 'Added “Book flights for Lisbon” from an email'
+  kind:
+    | 'agent-add'
+    | 'agent-update'
+    | 'agent-delete'
+    | 'agent-migration'
+    | 'summary-filed'
+    | 'summary-saved'
+    | 'revert';
+  origin: {
+    actor: 'mcp' | 'app' | 'system';
+    tokenId?: string;
+    deviceId?: string;
+    tool?: string;
+    tailscaleUserLogin?: string;
+  };
+  refs: { entryIds: string[]; summaryId?: string; activityId?: string };
+  preImages: ActivitySnapshot[];
+  postImages: ActivitySnapshot[];
+  revertedAt: string | null;
+  revertedByActivityId: string | null;
+  // Derived at read time; not stored as authoritative state.
+  revert: {
+    eligible: boolean;
+    reason: 'already_reverted' | 'post_image_mismatch' | 'not_reversible' | null;
+  };
 }
 
 interface Summary {
   id: string;
-  weekStart: string;                // 'YYYY-MM-DD' (Monday)
+  weekStart: string; // 'YYYY-MM-DD' (Monday)
   text: string;
-  status: 'current' | 'stale' | 'saved';  // stale = owner hit Rewrite
+  status: 'current' | 'stale' | 'saved'; // stale = owner hit Rewrite
+  source: string; // human-readable MCP provenance
+  tokenId: string;
+  savedEntryId: string | null;
   createdAt: string;
+  updatedAt: string;
+  revision: number;
 }
 ```
 
 - DM-16 The Review view's feed renders ActivityItems newest-first with
-  `HH:MM` timestamps (Geist Mono), grouped by day.
-- DM-17 "Save to today" on a summary creates a `note` entry
-  (`tags: ['summary']`, `author: 'ai'`, `source: 'Weekly summary, saved by
-  you on <date>.'`) and marks the summary `saved`. "Rewrite" marks it
-  `stale`; the scheduled summary agent replaces stale/old summaries on its
-  next run (SPEC-06 §6).
+  `HH:MM` timestamps (Geist Mono), grouped by day. Bootstrap/activity reads
+  derive `revert` by comparing current rows with post-images. The UI never
+  offers a blind or repeat revert; the transaction re-check remains decisive.
+- DM-17 Exactly one Summary row exists per `weekStart`. A new filing for that
+  week creates or atomically replaces the stale/current row while preserving
+  activity provenance; concurrent filings resolve through the uniqueness
+  constraint and command idempotency. A Summary belongs to the month containing
+  its Monday `weekStart`; Month renders the greatest `weekStart` in that month,
+  while `latest` means the greatest week start globally. "Save to today" creates a `note` entry
+  with tag `summary`, assistant authorship, and source text "Weekly summary,
+  saved by you on <date>." It marks the summary `saved` and links
+  `savedEntryId`. "Rewrite" marks it
+  `stale`; the next owner-invoked or externally scheduled MCP run may replace
+  it (SPEC-06 §6). Journal itself schedules no agent run.
 
 ## 8. SQLite schema
 
@@ -201,8 +246,11 @@ CREATE TABLE entries (
   collection  TEXT,                       -- NULL | collection id
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL,
+  revision    INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
   deleted_at  TEXT,
-  CHECK (author = 'me' OR (source IS NOT NULL AND length(source) > 0))
+  CHECK (author = 'me' OR (source IS NOT NULL AND length(source) > 0)),
+  CHECK ((type IN ('task','habit') AND state IN ('open','done','migrated','scheduled','cancelled'))
+      OR (type NOT IN ('task','habit') AND state = 'logged'))
 );
 CREATE INDEX idx_entries_date       ON entries(date)       WHERE deleted_at IS NULL;
 CREATE INDEX idx_entries_collection ON entries(collection) WHERE deleted_at IS NULL;
@@ -213,31 +261,52 @@ CREATE TABLE collections (
   created_at TEXT NOT NULL, archived_at TEXT
 );
 
-CREATE TABLE proposals (
-  id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL,
-  detail TEXT NOT NULL DEFAULT '', lines TEXT NOT NULL DEFAULT '[]',
-  ops TEXT NOT NULL,                       -- JSON ProposalOp[]
-  origin_token TEXT NOT NULL, origin_tool TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending','approved','dismissed','expired')),
-  created_at TEXT NOT NULL, resolved_at TEXT
-);
-
 CREATE TABLE activity (
   id TEXT PRIMARY KEY, at TEXT NOT NULL, kind TEXT NOT NULL,
-  text TEXT NOT NULL, refs TEXT NOT NULL DEFAULT '{}',
-  pre_images TEXT NOT NULL DEFAULT '[]'
+  text TEXT NOT NULL, origin TEXT NOT NULL, refs TEXT NOT NULL DEFAULT '{}',
+  pre_images TEXT NOT NULL DEFAULT '[]', post_images TEXT NOT NULL DEFAULT '[]',
+  reverted_at TEXT, reverted_by_activity_id TEXT
 );
 
 CREATE TABLE summaries (
-  id TEXT PRIMARY KEY, week_start TEXT NOT NULL, text TEXT NOT NULL,
+  id TEXT PRIMARY KEY, week_start TEXT NOT NULL UNIQUE, text TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'current' CHECK (status IN ('current','stale','saved')),
-  created_at TEXT NOT NULL
+  source TEXT NOT NULL, token_id TEXT NOT NULL,
+  saved_entry_id TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1)
 );
 
 CREATE TABLE agent_tokens (                -- details in SPEC-06 §3
-  id TEXT PRIMARY KEY, label TEXT NOT NULL, token_hash TEXT NOT NULL,
-  created_at TEXT NOT NULL, last_used_at TEXT, revoked_at TEXT
+  id TEXT PRIMARY KEY, label TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+  scopes TEXT NOT NULL DEFAULT '["journal:full"]',
+  created_at TEXT NOT NULL, last_used_at TEXT, revoked_at TEXT,
+  rate_window_start TEXT,
+  rate_write_count INTEGER NOT NULL DEFAULT 0 CHECK (rate_write_count >= 0)
+);
+
+CREATE TABLE device_tokens (               -- opaque value is hashed; API-2
+  id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL, expires_at TEXT NOT NULL, last_used_at TEXT
+);
+
+CREATE TABLE settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  density TEXT NOT NULL DEFAULT 'comfortable',
+  show_type_badges INTEGER NOT NULL DEFAULT 1,
+  highlight_ai_entries INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE processed_mutations (
+  actor_type TEXT NOT NULL, actor_id TEXT NOT NULL, mutation_id TEXT NOT NULL,
+  request_hash TEXT NOT NULL, status_code INTEGER NOT NULL, result TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (actor_type, actor_id, mutation_id)
+);
+
+CREATE TABLE schema_migrations (
+  version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL
 );
 
 CREATE VIRTUAL TABLE entries_fts USING fts5(
@@ -246,8 +315,8 @@ CREATE VIRTUAL TABLE entries_fts USING fts5(
 -- kept in sync via entry INSERT/UPDATE/DELETE triggers
 ```
 
-- DM-18 Tags are stored denormalized (JSON array) *and* indexed in FTS5;
-  search semantics live in SPEC-03 §6. A tag-rename op rewrites all affected
+- DM-18 Tags are stored denormalized (JSON array) _and_ indexed in FTS5;
+  search semantics live in SPEC-03 §8. A tag-rename op rewrites all affected
   rows in one transaction.
 - DM-19 Schema migrations are numbered SQL files applied at boot inside a
   transaction, tracked in a `schema_migrations` table; a backup is taken
@@ -256,14 +325,15 @@ CREATE VIRTUAL TABLE entries_fts USING fts5(
 ## 9. Export format
 
 - DM-20 `journald export` emits
-  `{ version: 1, exportedAt, entries[], collections[], proposals[], activity[], summaries[] }`
-  with soft-deleted rows excluded. This file re-imports losslessly with
-  `journald import` (id collisions resolved by skip + report).
+  `{ version: 1, exportedAt, entries[], collections[], activity[], summaries[], settings }`
+  with soft-deleted rows excluded and no credentials or mutation replay data.
+  `journald import` validates the entire document before a transaction: equal
+  id/equal payload rows skip and report; equal id/different payload fails the
+  import. A clean-database export/import round-trip is lossless.
 
 ## 10. Seed data
 
-- DM-21 Dev builds ship the prototype's demo seed (the July 2026 dataset:
-  Lisbon tasks, Anders call, Books/Ideas collections, three proposals, the
-  activity trio) behind `journald seed --demo`, and the settings dialog's
-  "Reset demo data" button appears only in dev builds. Production builds
-  start empty.
+- DM-21 The prototype's July 2026 dataset (Lisbon tasks, Anders call,
+  Books/Ideas collections, summaries, and activity) is available only through
+  the explicit operator command `journald seed --demo`. No UI reset or seed
+  endpoint exists. Production starts empty and never seeds automatically.

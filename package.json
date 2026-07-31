@@ -1,0 +1,56 @@
+{
+  "name": "bujo-with-ai",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.19.0 <23"
+  },
+  "workspaces": [
+    "server",
+    "app"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @journal/server",
+    "build": "npm run build --workspace @journal/app && npm run build --workspace @journal/server",
+    "start": "npm run start --workspace @journal/server",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run test --workspaces --if-present",
+    "test:integration": "npm run test:integration --workspace @journal/server",
+    "test:e2e": "playwright test",
+    "test:release-tools": "node --test scripts/release-tools.test.mjs scripts/release-live-evidence.test.mjs scripts/release-runtime-contract.test.mjs scripts/release-deployed-tree.test.mjs scripts/release-cutover-transaction.test.mjs scripts/release-atomic-file.test.mjs",
+    "release:manifest": "node scripts/release-manifest.mjs",
+    "release:archive": "node scripts/release-archive.mjs",
+    "release:benchmark": "node scripts/benchmark-release.mjs",
+    "release:ledger": "node scripts/release-ledger.mjs",
+    "release:prepare": "zsh scripts/release-prepare.zsh",
+    "release:stage": "zsh scripts/release-stage.zsh",
+    "release:cutover": "zsh scripts/release-cutover.zsh",
+    "release:runtime": "node scripts/release-verify-runtime.mjs",
+    "release:tailnet": "node scripts/release-verify-runtime.mjs --origin-only",
+    "release:lifecycle": "zsh scripts/release-lifecycle.zsh",
+    "release:backup-drill": "node scripts/release-backup-drill.mjs",
+    "release:device-evidence": "node scripts/release-device-evidence.mjs",
+    "release:promote": "node scripts/release-promote.mjs",
+    "check": "npm run format:check && npm run typecheck && npm run lint && npm run test && npm run build && npm run test:release-tools",
+    "install-service": "npm run install-service --workspace @journal/server"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.62.1",
+    "@types/node": "22.18.6",
+    "eslint": "10.8.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.3",
+    "globals": "16.3.0",
+    "prettier": "3.6.2",
+    "tsx": "4.20.5",
+    "typescript": "5.9.2",
+    "typescript-eslint": "8.65.0",
+    "vite": "7.3.6",
+    "vitest": "4.1.10"
+  }
+}

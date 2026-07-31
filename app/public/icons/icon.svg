@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Journal">
+  <rect width="512" height="512" fill="#16130F"/>
+  <rect x="112" y="82" width="288" height="348" rx="38" fill="#211C17" stroke="#3A312A" stroke-width="12"/>
+  <circle cx="168" cy="168" r="17" fill="#E9864A"/>
+  <rect x="215" y="158" width="121" height="20" rx="10" fill="#F0E8E0"/>
+  <rect x="168" y="230" width="168" height="20" rx="10" fill="#F0E8E0"/>
+  <rect x="168" y="302" width="117" height="20" rx="10" fill="#F0E8E0"/>
+  <polygon points="307,330 321,316 337,332 376,287 391,301 338,363" fill="#E9864A"/>
+</svg>

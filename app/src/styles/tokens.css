@@ -1,0 +1,37 @@
+:root {
+  color-scheme: dark;
+  --bg-page: #16130f;
+  --bg: #1e1a17;
+  --bg-hover: #241f1b;
+  --bg-line: #2b2521;
+  --bg-raised: #3a322c;
+  --border: #352e28;
+  --border-strong: #574d45;
+  --border-check: #5c5148;
+  --border-control: #7b6d63;
+  --fg: #f5efea;
+  --fg-body: #d6ccc4;
+  --fg-mid: #b3a79e;
+  --fg-mute: #9c8f85;
+  --fg-faint: #968a81;
+  --primary: #e4652e;
+  --primary-hover: #f0773d;
+  --primary-fg: #1b1310;
+  --ai-bg: rgb(228 101 46 / 15%);
+  --ai-fg: #f09a70;
+  --ai-border: rgb(228 101 46 / 42%);
+  --danger: #f3978b;
+  --danger-bg-hover: #3a211c;
+  --danger-border: #704238;
+  --ok: #4ade80;
+  --warning: #f2b56d;
+  --overlay: rgb(0 0 0 / 70%);
+  --shadow-menu: 0 10px 30px -10px rgb(0 0 0 / 55%);
+  --shadow-dialog: 0 24px 60px -20px rgb(0 0 0 / 70%);
+  --shadow-toast: 0 12px 30px -12px rgb(0 0 0 / 70%);
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --content-width: 720px;
+}

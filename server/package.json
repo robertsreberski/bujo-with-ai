@@ -1,0 +1,38 @@
+{
+  "name": "@journal/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "journald": "dist/cli.js"
+  },
+  "exports": {
+    "./contracts": "./src/contracts/index.ts",
+    "./contracts/app": "./src/contracts/app.ts"
+  },
+  "scripts": {
+    "dev": "JOURNAL_CONFIG=../.journal-dev/config.json JOURNAL_DATA_DIR=../.journal-dev JOURNAL_PORT=5179 NODE_ENV=development tsx watch src/cli.ts serve --dev",
+    "build": "node scripts/build-output.mjs clean && tsc -p tsconfig.json && node scripts/build-output.mjs finalize",
+    "start": "NODE_ENV=production node dist/cli.js serve",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:integration": "vitest run test/integration",
+    "install-service": "node dist/cli.js install-service"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "better-sqlite3": "13.0.2",
+    "cookie": "1.0.2",
+    "express": "5.2.1",
+    "pino": "10.3.1",
+    "rotating-file-stream": "3.2.7",
+    "ulid": "3.0.2",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
+    "@types/express": "5.0.3",
+    "@types/supertest": "6.0.3",
+    "supertest": "7.1.4"
+  }
+}

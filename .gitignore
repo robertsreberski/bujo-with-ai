@@ -3,3 +3,13 @@ node_modules/
 dist/
 *.log
 .env
+.env.*
+!.env.example
+coverage/
+playwright-report/
+test-results/
+*.db
+*.db-shm
+*.db-wal
+.journal-test/
+.journal-dev/

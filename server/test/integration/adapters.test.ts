@@ -1,0 +1,433 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { ulid } from 'ulid';
+import { createDomainAdapters } from '../../src/adapters.js';
+import type { OwnerActor } from '../../src/api/routes.js';
+import type { JournalConfig } from '../../src/config.js';
+import type { ActivityView, Collection, Entry } from '../../src/contracts/index.js';
+import { JournalDatabase } from '../../src/db/database.js';
+import { JournalDomain } from '../../src/domain/journal.js';
+
+const roots: string[] = [];
+const domains: JournalDomain[] = [];
+
+afterEach(() => {
+  for (const domain of domains.splice(0)) domain.close();
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+function fixture(onStatement?: (sql: string) => void) {
+  const root = mkdtempSync(join(tmpdir(), 'journal-adapter-test-'));
+  roots.push(root);
+  let instant = new Date('2026-07-31T10:00:00.000Z');
+  const config: JournalConfig = {
+    port: 5_178,
+    bindHost: '127.0.0.1',
+    dataDir: root,
+    databasePath: join(root, 'journal.db'),
+    backupDir: join(root, 'backups'),
+    logDir: join(root, 'logs'),
+    hostAllowlist: ['localhost:5178'],
+    timezone: 'UTC',
+    dayBoundaryOffsetMin: 0,
+    deviceCookieName: 'journal_device',
+    deviceCredentialTtlDays: 365,
+    isDevelopment: true,
+    version: 'test',
+  };
+  const database = new JournalDatabase({
+    path: config.databasePath,
+    now: () => instant,
+    ...(onStatement === undefined ? {} : { onStatement }),
+  });
+  const domain = new JournalDomain({ database, config, now: () => instant });
+  domains.push(domain);
+  const owner: OwnerActor = { kind: 'owner', deviceId: ulid() };
+  return {
+    database,
+    domain,
+    owner,
+    adapters: createDomainAdapters(domain, config),
+    advance(milliseconds = 1_000) {
+      instant = new Date(instant.getTime() + milliseconds);
+    },
+  };
+}
+
+function createdEntry(
+  domain: JournalDomain,
+  owner: OwnerActor,
+  input: Parameters<JournalDomain['createEntry']>[0],
+): Entry {
+  const result = domain.createEntry(input, owner);
+  if (result.kind !== 'entry') throw new Error('Expected an entry result.');
+  return result.entry;
+}
+
+describe('HTTP and MCP domain adapters', () => {
+  it('selects summaries by month and mutates an explicitly selected older summary', async () => {
+    const { domain, owner, adapters } = fixture();
+    const agent = {
+      kind: 'agent' as const,
+      tokenId: ulid(),
+      tokenLabel: 'summary-agent',
+      tool: 'add_entry',
+    };
+    const june = domain.fileSummary(
+      {
+        weekStart: '2026-06-29',
+        text: 'June weekly summary.',
+        source: 'From the adapter integration test.',
+      },
+      agent,
+    ).summary;
+    const july = domain.fileSummary(
+      {
+        weekStart: '2026-07-06',
+        text: 'July weekly summary.',
+        source: 'From the adapter integration test.',
+      },
+      agent,
+    ).summary;
+    const august = domain.fileSummary(
+      {
+        weekStart: '2026-08-03',
+        text: 'August weekly summary.',
+        source: 'From the adapter integration test.',
+      },
+      agent,
+    ).summary;
+
+    const julyResponse = (await adapters.api.latestSummary(owner, '2026-07')) as {
+      summary: { id: string } | null;
+    };
+    const globalResponse = (await adapters.api.latestSummary(owner)) as {
+      summary: { id: string } | null;
+    };
+    expect(julyResponse.summary?.id).toBe(july.id);
+    expect(globalResponse.summary?.id).toBe(august.id);
+
+    const rewritten = (await adapters.api.rewriteLatestSummary(june.id, 1, owner)) as {
+      summary: { id: string; status: string };
+    };
+    expect(rewritten.summary).toMatchObject({ id: june.id, status: 'stale' });
+    expect(domain.getSummary(august.id)?.status).toBe('current');
+
+    const saved = (await adapters.api.saveLatestSummary(july.id, 1, owner)) as {
+      summary: { id: string; status: string };
+      entry: Entry;
+    };
+    expect(saved.summary).toMatchObject({ id: july.id, status: 'saved' });
+    expect(saved.entry.tags).toContain('summary');
+    expect(domain.getSummary(august.id)?.status).toBe('current');
+  });
+
+  it('persists the original REST and MCP success status with idempotency records', async () => {
+    const { database, owner, adapters } = fixture();
+    const restKey = ulid();
+    const entryId = ulid();
+    const createInput = {
+      id: entryId,
+      text: 'Created through REST adapter',
+      type: 'note' as const,
+      tags: [],
+      dateIntent: {
+        kind: 'today' as const,
+        capturedAt: '2026-07-31T10:00:00.000Z',
+        baseToday: '2026-07-31',
+        timezone: 'UTC',
+      },
+    };
+    await adapters.api.createEntry(createInput, owner, { id: restKey, statusCode: 201 });
+    await adapters.api.createEntry(createInput, owner, { id: restKey, statusCode: 201 });
+
+    const tokenId = ulid();
+    await adapters.mcp.addEntry(
+      {
+        text: 'Created through MCP adapter',
+        type: 'note',
+        tags: [],
+        source: 'From the adapter integration test.',
+      },
+      { kind: 'agent', tokenId, tokenLabel: 'integration', tool: 'add_entry' },
+      'mcp-persist-key',
+    );
+
+    const rows = database.raw
+      .prepare(
+        'SELECT actor_type, actor_id, mutation_id, status_code FROM processed_mutations ORDER BY actor_type',
+      )
+      .all() as Array<{
+      actor_type: string;
+      actor_id: string;
+      mutation_id: string;
+      status_code: number;
+    }>;
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        { actor_type: 'device', actor_id: owner.deviceId, mutation_id: restKey, status_code: 201 },
+        {
+          actor_type: 'token',
+          actor_id: tokenId,
+          mutation_id: 'mcp-persist-key',
+          status_code: 200,
+        },
+      ]),
+    );
+  });
+
+  it('resolves stale offline date intents from their frozen base without rebasing at sync time', () => {
+    const { owner, adapters } = fixture();
+    const staleContext = {
+      capturedAt: '2026-08-01T00:30:00.000+02:00',
+      baseToday: '2026-07-31',
+      timezone: 'Europe/Amsterdam',
+    } as const;
+    const tomorrow = adapters.api.createEntry(
+      {
+        id: ulid(),
+        text: 'Captured offline before midnight',
+        type: 'note',
+        dateIntent: { kind: 'tomorrow', ...staleContext },
+      },
+      owner,
+      { id: ulid(), statusCode: 201 },
+    ) as { entry: Entry };
+    const absolute = adapters.api.createEntry(
+      {
+        id: ulid(),
+        text: 'Absolute date remains absolute',
+        type: 'note',
+        dateIntent: {
+          kind: 'absolute',
+          date: '2026-09-15',
+          ...staleContext,
+        },
+      },
+      owner,
+      { id: ulid(), statusCode: 201 },
+    ) as { entry: Entry };
+
+    expect(tomorrow.entry.date).toBe('2026-08-01');
+    expect(absolute.entry.date).toBe('2026-09-15');
+  });
+
+  it('uses the frozen absolute capture intent instead of recomputing a parser date token', () => {
+    const { owner, adapters } = fixture();
+    const captured = adapters.api.capture(
+      {
+        draft: '- Offline follow-up >tomorrow',
+        defaultType: 'note',
+        dateIntent: {
+          kind: 'absolute',
+          date: '2026-08-02',
+          baseToday: '2026-07-31',
+          capturedAt: '2026-08-01T00:30:00.000+02:00',
+          timezone: 'Europe/Amsterdam',
+        },
+      },
+      owner,
+      { id: ulid(), statusCode: 201 },
+    ) as { entry: Entry; parsed: { dateShift: number } };
+
+    expect(captured.parsed.dateShift).toBe(1);
+    expect(captured.entry).toMatchObject({
+      date: '2026-08-02',
+      text: 'Offline follow-up',
+      type: 'note',
+    });
+  });
+
+  it('hashes the full canonical capture request instead of only its reduced entry', () => {
+    const { owner, adapters } = fixture();
+    const key = ulid();
+    const dateIntent = {
+      kind: 'today' as const,
+      capturedAt: '2026-07-31T10:00:00.000Z',
+      baseToday: '2026-07-31',
+      timezone: 'UTC',
+    };
+    const first = adapters.api.capture(
+      { draft: '. same', defaultType: 'idea', dateIntent },
+      owner,
+      { id: key, statusCode: 201 },
+    ) as { entry: Entry };
+    expect(first.entry).toMatchObject({ text: 'same', type: 'task' });
+    expect(() =>
+      adapters.api.capture({ draft: 'same', defaultType: 'task', dateIntent }, owner, {
+        id: key,
+        statusCode: 201,
+      }),
+    ).toThrowError(/different request/i);
+  });
+
+  it('replays an undated MCP add after midnight from the canonical tool input', async () => {
+    const { adapters, advance } = fixture();
+    const input = {
+      text: 'Midnight-safe MCP retry',
+      type: 'note' as const,
+      tags: [],
+      source: 'From the midnight retry integration test.',
+    };
+    const actor = { kind: 'agent' as const, tokenId: ulid(), tokenLabel: 'integration' };
+    const first = await adapters.mcp.addEntry(input, actor, 'midnight-safe-key');
+    advance(86_400_000);
+    expect(await adapters.mcp.addEntry(input, actor, 'midnight-safe-key')).toEqual(first);
+  });
+
+  it('uses a tuple cursor that remains stable when a newer entry is inserted', async () => {
+    const { domain, owner, adapters, advance } = fixture();
+    const oldest = createdEntry(domain, owner, { text: 'Oldest', type: 'note' });
+    advance();
+    const middle = createdEntry(domain, owner, { text: 'Middle', type: 'note' });
+    advance();
+    const newest = createdEntry(domain, owner, { text: 'Newest', type: 'note' });
+
+    const first = (await adapters.api.listEntries({ limit: 2 }, owner)) as {
+      items: Entry[];
+      nextCursor: string | null;
+    };
+    expect(first.items.map((entry) => entry.id)).toEqual([newest.id, middle.id]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    if (!first.nextCursor) throw new Error('Expected a second entries page.');
+
+    advance();
+    const insertedAtHead = createdEntry(domain, owner, { text: 'New head', type: 'note' });
+    const second = (await adapters.api.listEntries(
+      { limit: 2, cursor: first.nextCursor },
+      owner,
+    )) as { items: Entry[]; nextCursor: string | null };
+
+    expect(second.items.map((entry) => entry.id)).toEqual([oldest.id]);
+    expect(second.items.map((entry) => entry.id)).not.toContain(insertedAtHead.id);
+    expect(second.nextCursor).toBeNull();
+  });
+
+  it('pages a large entry fixture with one bounded SQL query per page', async () => {
+    const statements: string[] = [];
+    const { database, owner, adapters } = fixture((sql) => statements.push(sql));
+    const insert = database.raw.prepare(
+      `INSERT INTO entries(
+        id,date,type,text,state,time,tags,author,source,migrations,collection,
+        created_at,updated_at,deleted_at,revision
+      ) VALUES (?,?,'note',?,'logged',NULL,'[]','me',NULL,0,NULL,?,?,NULL,1)`,
+    );
+    database.raw.transaction(() => {
+      for (let index = 0; index < 2_000; index += 1) {
+        const timestamp = '2026-07-31T09:00:00.000Z';
+        insert.run(ulid(), '2026-07-31', `Large fixture ${index}`, timestamp, timestamp);
+      }
+    })();
+
+    statements.length = 0;
+    const first = (await adapters.api.listEntries({ limit: 100 }, owner)) as {
+      items: Entry[];
+      nextCursor: string | null;
+    };
+    expect(first.items).toHaveLength(100);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    expect(statements.filter((sql) => /^SELECT\b/i.test(sql.trim()))).toHaveLength(1);
+    expect(statements.join('\n')).not.toMatch(/count\s*\(/i);
+
+    statements.length = 0;
+    const second = (await adapters.api.listEntries(
+      { limit: 100, cursor: first.nextCursor! },
+      owner,
+    )) as { items: Entry[]; nextCursor: string | null };
+    expect(second.items).toHaveLength(100);
+    expect(statements.filter((sql) => /^SELECT\b/i.test(sql.trim()))).toHaveLength(1);
+    expect(new Set([...first.items, ...second.items].map((entry) => entry.id)).size).toBe(200);
+  });
+
+  it('indexes months with data and returns every entry in a collection resource', async () => {
+    const statements: string[] = [];
+    const { domain, owner, adapters } = fixture((sql) => statements.push(sql));
+    domain.createCollection({ id: 'ideas', name: 'Ideas' }, owner);
+    for (let index = 0; index < 105; index += 1) {
+      createdEntry(domain, owner, {
+        text: `Idea ${index + 1}`,
+        type: 'note',
+        collection: 'ideas',
+      });
+    }
+    createdEntry(domain, owner, {
+      text: 'August plan',
+      type: 'task',
+      collection: 'month:2026-08',
+    });
+    const emptyMonthEntry = createdEntry(domain, owner, {
+      text: 'September plan',
+      type: 'task',
+      collection: 'month:2026-09',
+    });
+    domain.deleteEntry(emptyMonthEntry.id, owner);
+
+    const index = (await adapters.mcp.index()) as {
+      collections: Array<Collection & { count: number }>;
+      months: Array<Collection & { count: number }>;
+    };
+    expect(index.collections.find((collection) => collection.id === 'ideas')?.count).toBe(105);
+    expect(index.months.map((month) => ({ id: month.id, count: month.count }))).toEqual([
+      { id: 'month:2026-08', count: 1 },
+    ]);
+
+    statements.length = 0;
+    const collection = (await adapters.mcp.collection('ideas')) as {
+      total: number;
+      entries: Entry[];
+    };
+    expect(collection.total).toBe(105);
+    expect(collection.entries).toHaveLength(105);
+    const reads = statements.filter((sql) => /^SELECT\b/i.test(sql.trim()));
+    expect(reads).toHaveLength(3);
+    expect(reads.join('\n')).not.toMatch(/\bOFFSET\b|count\s*\(/i);
+  });
+
+  it('pages through more than 500 same-timestamp activity rows without skips', async () => {
+    const statements: string[] = [];
+    const { domain, owner, adapters } = fixture((sql) => statements.push(sql));
+    const agent = {
+      kind: 'agent' as const,
+      tokenId: ulid(),
+      tokenLabel: 'activity-pager',
+      tool: 'add_entry',
+    };
+    for (let index = 0; index < 505; index += 1) {
+      domain.createEntry(
+        {
+          text: `Paged activity ${index + 1}`,
+          type: 'note',
+          source: 'From the activity pagination integration test.',
+        },
+        agent,
+      );
+    }
+
+    statements.length = 0;
+    const legacyPage = (await adapters.api.listActivity(
+      { before: '2026-07-31T10:00:00.000Z', limit: 50 },
+      owner,
+    )) as { items: ActivityView[]; nextCursor: string | null };
+    expect(legacyPage.items).toHaveLength(50);
+    expect(legacyPage.nextCursor).toEqual(expect.any(String));
+    const selects = statements.filter((sql) => /^SELECT\b/i.test(sql.trim()));
+    expect(selects).toHaveLength(2);
+    expect(selects.some((sql) => sql.includes('json_each'))).toBe(true);
+
+    const ids: string[] = [];
+    let before: string | undefined;
+    do {
+      const page = (await adapters.api.listActivity(
+        { ...(before === undefined ? {} : { before }), limit: 50 },
+        owner,
+      )) as { items: ActivityView[]; nextCursor: string | null };
+      ids.push(...page.items.map((item) => item.id));
+      before = page.nextCursor ?? undefined;
+    } while (before !== undefined);
+
+    expect(ids).toHaveLength(505);
+    expect(new Set(ids).size).toBe(505);
+  });
+});

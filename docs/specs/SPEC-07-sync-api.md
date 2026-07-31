@@ -1,116 +1,216 @@
 # SPEC-07 — App API & Sync
 
-Governs: the REST + SSE interface between the PWA and the server, the
-offline outbox, and reconciliation. Requirement IDs: `API-*`. Agents never
-use this API (they use MCP, SPEC-06); both funnel into the same domain layer
-(ARC-5).
+Governs the REST/SSE interface between the PWA and server, the IndexedDB
+mirror/outbox, and reconciliation. Requirement IDs: `API-*`. Agents use MCP;
+REST and MCP converge on the same transactional domain commands (ARC-5).
 
-## 1. Conventions
+## 1. Conventions and authentication
 
-- API-1 Base path `/api`; JSON bodies; Zod-validated; errors as
-  `{ error: { code, message } }` with proper status codes (400 validation,
-  404 unknown id, 409 conflict, 401 unauthenticated where applicable).
-- API-2 Authentication: the tailnet is the perimeter for the app UI (NFR-3,
-  PRD open question 2 resolved: the *app* rides on network trust; *MCP*
-  always requires tokens). `/api` additionally requires a device cookie
-  issued on first visit (`POST /api/pair` sets it; no password in v1 —
-  it exists so a future PIN can slot in without API changes) — except
-  `/healthz`, which is open.
-- API-3 All timestamps ISO 8601 with offset; all dates `YYYY-MM-DD`;
-  "today" is always computed server-side (ARC-16) and returned in list
-  responses so clients can detect rollover.
-- API-4 Mutations are idempotent by client-generated ULID (DM-11): retrying
-  a `POST /api/entries` with an id the server already has returns `200` with
-  the existing row instead of duplicating.
+- API-1 `/api` uses JSON and canonical shared Zod schemas. Errors are
+  `{ error: { code, message, details? } }` with accurate HTTP status: `400`
+  invalid input, `401` unauthenticated, `403` Origin/Host rejection, `404`
+  unknown row, `409` revision/idempotency/revert conflict, `429` rate limit,
+  and `5xx` server failure. Dates are `YYYY-MM-DD`; timestamps are ISO 8601
+  with offset.
+- API-2 All `/api` routes require a device cookie except `POST /api/pair`.
+  `/healthz` is outside `/api` and public. Pairing is allowed only through an
+  accepted Host and same-origin request; it sets a random device credential
+  whose hash is stored server-side. Cookie attributes: `HttpOnly`,
+  `SameSite=Strict`, `Path=/`, one-year expiry, and `Secure` in production
+  (omitted only on loopback HTTP development). Unsafe cookie-authenticated
+  methods require an exact allowed `Origin`; CORS is disabled. Losing/expiring
+  the cookie requires pairing again. MCP bearer tokens never authenticate REST.
+- API-3 List/bootstrap payloads include server `today` and `timezone`. Offline
+  creation carries an explicit date-intent context:
 
-## 2. Endpoints
+  ```ts
+  type DateIntent = {
+    kind: 'today' | 'tomorrow' | 'absolute';
+    date?: string; // required only for absolute
+    capturedAt: string; // ISO timestamp from the device
+    baseToday: string; // last server-issued YYYY-MM-DD
+    timezone: string; // last server-issued IANA zone
+  };
+  ```
 
-| Method & path | Purpose |
-|---|---|
-| `GET /api/bootstrap` | One-shot app load: settings, collections, pending proposals, latest summary, activity (last 50), entries for the last 14 days + all open tasks + current month's monthly log, `today`, and the current SSE cursor. |
-| `GET /api/entries?from&to&collection&state&type&author&tag&q&limit` | Entry queries (search shares this). |
-| `POST /api/entries` | Create (capture, migration copies). Body = full entry with client ULID. |
-| `PATCH /api/entries/:id` | Owner edit / state change (toggle, drop, move, file). |
-| `DELETE /api/entries/:id` | Owner soft-delete. |
-| `POST /api/capture` | Raw-text capture: `{ draft, defaultType }` → runs the LOG-6 parser server-side → created entry. Used by non-UI surfaces (Shortcuts, CLI); the PWA parses client-side for live chips but submits the parsed entry via `POST /api/entries`. |
-| `GET /api/collections` / `POST /api/collections` / `PATCH /api/collections/:id` | List / create / rename-archive. |
-| `GET /api/proposals?status=` | Review queue. |
-| `POST /api/proposals/:id/approve` · `POST /api/proposals/:id/dismiss` | Resolve (DM-13). 409 if already resolved. |
-| `GET /api/activity?before&limit` | Activity feed, newest-first, paged. |
-| `POST /api/activity/:id/revert` | P1 — apply stored pre-images (DM-15). |
-| `GET /api/summary/latest` · `POST /api/summary/latest/save` · `POST /api/summary/latest/rewrite` | Weekly summary read / Save-to-today / mark-stale (DM-17). |
-| `GET /api/settings` / `PATCH /api/settings` | Display prefs (LOG-17), MCP status block for the settings dialog. |
-| `GET /api/tokens` / `POST /api/tokens` / `DELETE /api/tokens/:id` | Agent token management (MCP-8). Create returns the secret once. |
-| `GET /api/events?cursor=` | SSE stream (§3). |
+  Replay preserves the intended day across midnight; the server validates the
+  context and never silently rebases it to receipt time.
+
+- API-4 Every offline-queueable command requires
+  `Idempotency-Key: <client ULID>`. The server persists actor device, canonical
+  request hash, status, and result atomically with the domain transaction.
+  Same key + same request returns the stored response; same key + different
+  request returns `409 mutation_id_reused`. The key is exposed as `mutationId`
+  in SSE. Pairing/token creation are not idempotency-key or outbox operations.
+
+## 2. REST endpoints
+
+Server-owned fields (`author`, `source`, initial state, migrations, revision,
+timestamps, deletion state) never appear in owner creation DTOs.
+
+| Method and path                                                            | Request / response contract                                                                                                                                                                                                               |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/pair`                                                           | Cookie-exempt same-origin pairing. `201 { deviceId, expiresAt }`.                                                                                                                                                                         |
+| `GET /api/bootstrap`                                                       | Consistent snapshot: `{ entries, collections, latestSummary, activity, settings, today, timezone, deviceId, cursor }`. Entries = last 14 days + all open tasks + displayed/current monthly log; activity = latest 50. No proposal field.  |
+| `GET /api/entries?from&to&collection&state&type&author&tag&q&limit&cursor` | Stable order `(date DESC, createdAt DESC, id DESC)`; max 100; `{ items, nextCursor, today, timezone }`.                                                                                                                                   |
+| `POST /api/entries`                                                        | Queueable safe `OwnerEntryCreate` below; `201 { entry }` or replayed original status/result.                                                                                                                                              |
+| `PATCH /api/entries/:id`                                                   | Queueable `{ patch, expectedRevision? }`; nullable `time`/`collection`; final merged row validation; `200 { entry }`.                                                                                                                     |
+| `DELETE /api/entries/:id`                                                  | Queueable soft delete; optional `If-Match: "<revision>"`; `200 { entry }` post-image.                                                                                                                                                     |
+| `POST /api/entries/:id/migrate`                                            | Queueable semantic daily migration `{ newEntryId: <client ULID>, target: "YYYY-MM-DD", expectedRevision? }`; atomically mark original migrated + create that stable-id copy; `200 { original, copy }`.                                    |
+| `POST /api/entries/:id/schedule`                                           | Queueable semantic monthly scheduling `{ copyId: <client ULID>, month: "YYYY-MM", expectedRevision? }`; atomically mark original scheduled + auto-create month collection + create that stable-id monthly copy; `200 { original, copy }`. |
+| `POST /api/entries/:id/restore`                                            | Online-only owner restore within 30 days, revision guarded; `200 { entry }`.                                                                                                                                                              |
+| `POST /api/capture`                                                        | Queueable non-UI capture `{ draft, defaultType, dateIntent }`; server runs LOG-6; `201 { entry, parsed }`.                                                                                                                                |
+| `GET /api/collections`                                                     | `{ items, today, timezone }`.                                                                                                                                                                                                             |
+| `POST /api/collections`                                                    | Queueable `{ id, name, note? }`; `201 { collection }`.                                                                                                                                                                                    |
+| `PATCH /api/collections/:id`                                               | Queueable rename/note/archive command; `200 { collection }`. Month collections reject archive.                                                                                                                                            |
+| `GET /api/activity?before&limit`                                           | Newest-first page `{ items, nextCursor }`; every item includes server-derived `revert: { eligible, reason }`.                                                                                                                             |
+| `POST /api/activity/:id/revert`                                            | Online-only compare-and-swap revert (DM-15); `200 { activity, rows }` or `409 revert_conflict`. It re-checks eligibility even if the preceding read said true.                                                                            |
+| `GET /api/summary/latest?month=YYYY-MM`                                    | `{ summary }`, where summary is a Summary row or `null`. Without `month`, returns the greatest week globally; with it, returns the greatest `weekStart` in that displayed month.                                                          |
+| `POST /api/summary/latest/save`                                            | Online-only Save-to-today; optional `{ summaryId, expectedRevision }` targets the displayed historical Summary, otherwise the global latest; `200 { summary, entry }`.                                                                    |
+| `POST /api/summary/latest/rewrite`                                         | Online-only mark stale; optional `{ summaryId, expectedRevision }` targets the displayed historical Summary, otherwise the global latest; `200 { summary }`; does not start an agent or scheduler.                                        |
+| `GET /api/settings` / `PATCH /api/settings`                                | Display preferences and MCP connection-status block. Settings changes require online success.                                                                                                                                             |
+| `GET /api/tokens` / `POST /api/tokens` / `DELETE /api/tokens/:id`          | Online-only MCP token management. Create returns secret once; list never does.                                                                                                                                                            |
+| `GET /api/events?cursor=`                                                  | Authenticated SSE stream (§3); `Last-Event-ID` is also accepted.                                                                                                                                                                          |
+
+Activity `nextCursor` values are opaque keyset cursors over `(at, id)` and
+must be sent back unchanged as `before`. For compatibility, `before` also
+accepts the earlier ISO-timestamp boundary without making older same-timestamp
+rows permanently unreachable.
+
+```ts
+type OwnerEntryCreate = {
+  id: string; // client ULID
+  text: string;
+  type?: EntryType; // defaults to task
+  time?: string | null;
+  tags?: string[];
+  collection?: string | null;
+  dateIntent: DateIntent;
+};
+```
+
+Capture/parser and semantic migration endpoints are domain commands, not a way
+for a client to submit forged full Entry rows. The client-generated
+`newEntryId`/`copyId` gives an optimistic copy stable identity before sync and
+across a lost-response replay.
 
 ## 3. Live updates (SSE)
 
-- API-5 `GET /api/events` is a server-sent-events stream. Every domain
-  mutation (any writer: PWA, MCP tool, proposal approval, sweep jobs)
-  broadcasts one event:
+- API-5 Every successful domain transaction emits exactly one post-commit
+  `change` batch (never an event before commit):
 
-  ```
+  ```text
   event: change
-  id: <monotonic cursor>
-  data: { "kind": "entry.created" | "entry.updated" | "entry.deleted"
-                | "proposal.created" | "proposal.resolved"
-                | "activity.appended" | "summary.changed" | "collection.changed",
-          "payload": <the changed row>, "origin": "app" | "mcp:<tokenLabel>" | "system" }
+  id: <serverEpoch>:<sequence>
+  data: {
+    "transactionId": "<ULID>",
+    "mutationId": "<Idempotency-Key or MCP key or null>",
+    "origin": {
+      "kind": "app" | "mcp" | "system",
+      "deviceId"?: "...", "tokenId"?: "...",
+      "tokenLabel"?: "...", "tool"?: "..."
+    },
+    "changes": [
+      { "kind": "entry.created" | "entry.updated" | "entry.deleted"
+              | "activity.appended" | "summary.changed"
+              | "collection.changed" | "settings.changed"
+              | "token.changed", "payload": <changed row> }
+    ]
+  }
   ```
 
-- API-6 Events are journaled in a ring buffer (last 1000, with cursor ids)
-  so a reconnecting client sends `?cursor=<last-seen>` (or
-  `Last-Event-ID`) and replays what it missed. A cursor older than the
-  buffer returns `event: reset`, telling the client to refetch via
-  `/api/bootstrap` — this is the iOS-resume path (PWA-25).
-- API-7 `origin` lets the UI toast agent-driven changes (LOG-39) and skip
-  echo-toasting the client's own writes.
+  Change order is the domain transaction's deterministic row order. The app
+  applies a complete batch before rendering.
 
-## 4. Client store & offline mirror
+- API-6 Cursors are opaque epoch-qualified values. The server retains the last
+  1,000 batches for replay. Epoch mismatch, eviction, or an unknown cursor
+  returns `event: reset` with a reason/current cursor. Restart creates a new
+  epoch. Bootstrap rows and cursor are taken at one mutation-sequencer boundary;
+  connecting with that cursor replays every later commit and closes the
+  snapshot-to-stream gap. Each batch is serialized once; per-connection output
+  buffering is bounded, and a client that applies backpressure is disconnected
+  to resume through replay or reset instead of delaying mutations. Comment
+  heartbeats do not advance the cursor. After every replay sequence (including
+  a `reset` response), the server emits exactly one explicit boundary frame:
 
-- API-8 The PWA keeps a normalized store (entries by id, indexes by
-  date/collection; proposals; activity; settings) hydrated from
-  `/api/bootstrap`, updated by SSE, persisted to IndexedDB (`idb-keyval`
-  snapshot per store slice, debounced) for offline reads and instant cold
-  starts. localStorage is not used for journal data (the prototype's
-  localStorage persistence was a demo shortcut).
-- API-9 History depth offline: the mirror retains everything ever loaded;
-  bootstrap's 14-day + open-tasks + current-month window means a fresh
-  device is fully usable offline for the BuJo working set, and older days
-  lazy-load (and then persist) when scrolled to.
+  ```text
+  event: replay-ready
+  id: <serverEpoch>:<sequence>
+  data: { "cursor": "<same serverEpoch:sequence>" }
+  ```
 
-## 5. Outbox & reconciliation
+  Its cursor is captured at the replay boundary. All replay/reset frames precede
+  it; commits racing the replay-to-live handoff are buffered within the same
+  per-client cap and delivered after it in cursor order.
 
-- API-10 Every mutation is written to the local store optimistically **and**
-  appended to a durable outbox (IndexedDB) as the HTTP request descriptor
-  (`method, path, body, ulid, enqueuedAt`). A flusher sends the outbox
-  strictly in order; on success, entries clear; on network failure it backs
-  off (1s → 2s → … max 60s) and retries on `online`, resume (PWA-23), and
-  SSE reconnect.
-- API-11 Conflict policy: last-write-wins by server receipt order, which is
-  safe here because there is exactly one human writer and agent writes are
-  either inserts (new ULIDs — conflict-free) or proposals (applied only
-  through Review). The one real race — owner edits an entry that has a
-  pending proposal, then approves — resolves per DM-13: ops re-validate at
-  approve time and the proposal fails visibly rather than clobbering.
-- API-12 4xx outbox responses (validation, 404 on a since-deleted entry) are
-  not retried: the item moves to a dead-letter list, the optimistic change
-  rolls back from the store, and a toast reports it ("Couldn't sync 1
-  change — entry was deleted"). Silent drop is forbidden.
-- API-13 Reconnect sequence (single code path for cold start, `online`, and
-  iOS resume): flush outbox → SSE connect with cursor → on `reset`,
-  re-bootstrap → recompute `today`. Each step idempotent.
+- API-7 `deviceId` + `mutationId` suppress only the originating client's echo
+  toast; a second PWA device still applies and surfaces the owner change. MCP
+  origin drives coalesced assistant toasts and Activity attribution.
 
-## 6. Testing requirements
+## 4. Client store and IndexedDB
 
-- API-14 Domain-layer tests cover: provenance invariant (DM-2), migration
-  copy semantics (DM-6), proposal atomicity incl. mid-flight entry deletion
-  (DM-13), signature-based summary filing (MCP-19), idempotent ULID replay
-  (API-4).
-- API-15 Parser golden tests: the LOG-6 grammar table, including
-  `. Reply to Mira #work @4pm >tomorrow`, `o Design review @11`,
-  `12am`/`12pm` conversion, signifier-overrides-menu, and no-signifier
-  drafts.
-- API-16 An end-to-end test drives capture → agent `add_entry` → SSE
-  delivery → `update_entry` proposal → approve → activity pre-image revert,
-  against a real server + SQLite in a temp dir.
+- API-8 The PWA uses a normalized Zustand store (entries by id plus
+  date/collection indexes, activity, summaries by month, collections, settings) backed by
+  one versioned IndexedDB database. Journal data, current draft, last cursor,
+  optimistic command log, and outbox are persisted there; localStorage is not
+  used. The service-worker HTTP cache is only a fallback, never the journal
+  mirror.
+- API-9 The mirror retains all loaded history. Bootstrap provides the working
+  set; older days use the paged entry endpoint and then remain offline. Draft
+  changes are persisted promptly enough to survive iOS process eviction.
+
+## 5. Outbox and reconciliation
+
+- API-10 Only deterministic entry/capture/migration/scheduling and collection
+  commands enter the outbox. One IndexedDB transaction persists the optimistic
+  state, semantic command, `Idempotency-Key`, date context, and enqueue time.
+  FIFO flush uses exponential backoff from 1 to 60 seconds. Token, pairing,
+  summary, settings, restore, and revert actions are online-only.
+- API-11 The server serializes commits by receipt order. Optional revision
+  preconditions turn stale intent into `409`; without one, the last committed
+  owner command wins. Automatic MCP mutations arrive through the same domain
+  layer and SSE batches. Two devices converge by applying server rows/batches,
+  never by merging client-authored full entities.
+- API-12 Response handling:
+  - network, `429`, and `5xx`: keep queued and retry with backoff;
+  - `401`: pause, prompt re-pair, and retain the outbox;
+  - same-key replay: success using the stored result;
+  - genuine `400`/`404`/`409`: move to dead letter, show a specific toast,
+    re-bootstrap the affected scope, then reapply remaining semantic optimistic
+    commands in order.
+
+  The client never rolls back by applying a stale inverse over later changes.
+
+- API-13 One reconnect algorithm serves cold start, `online`, and iOS resume:
+  load the mirror/draft; pair if required; bootstrap if there is no valid
+  cursor; establish SSE and await the validated `replay-ready` marker for that
+  exact connection generation; only then flush the FIFO outbox while SSE is
+  listening. A timer or quiet network window cannot substitute for the marker.
+  On `reset`, that stream generation is terminal: its following boundary marker
+  cannot unblock the outbox. The client closes it, bootstrap/refetches and
+  reapplies remaining optimistic commands, then waits for the replacement
+  stream's `replay-ready`; permanent failure also retains the outbox. Finally it
+  recomputes server-context today. Every phase is idempotent and cancelable if a
+  newer reconnect begins.
+
+## 6. Verification requirements
+
+- API-14 Domain/contract tests cover legal type/state combinations, canonical
+  tags, provenance, migration and monthly-copy atomicity under injected
+  failure, soft delete/restore/purge, Summary uniqueness and stale replacement,
+  activity pre/post images, revert success/conflict, FTS behavior, import/export
+  round-trip, backup restore, and mutation-id equal/mismatched replay.
+- API-15 Parser goldens cover `. Reply to Mira #work @4pm >tomorrow`,
+  `o Design review @11`, `12am`/`12pm`, signifier override, no signifier,
+  tag case/de-duplication, and rejection of `#foo_bar`. Client/server parser
+  results must be byte-equivalent canonical DTOs.
+- API-16 End-to-end and security tests cover pairing/cookie/Host/Origin,
+  unauthorized REST/SSE, lost-response replay, dependent outbox recovery,
+  atomic IndexedDB state+outbox, offline capture across midnight, two-device
+  convergence, 1,001-event reset, server-restart epoch reset, bootstrap/SSE
+  gap, multi-row batches, and the complete flow:
+
+  `capture → MCP add_entry → SSE → automatic update_entry → Activity → revert`.
+
+  The flow runs against the real server and a temporary SQLite database; no
+  proposal approval step or scheduled AI process exists.
