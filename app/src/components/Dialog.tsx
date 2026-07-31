@@ -1,17 +1,14 @@
-import {
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  type PropsWithChildren,
-  type RefObject,
-} from 'react';
+import { useLayoutEffect, useRef, type PropsWithChildren, type RefObject } from 'react';
 import { Icon } from './Icon';
-
-const FOCUSABLE =
-  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-const dialogStack: symbol[] = [];
+import {
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogRoot,
+  AlertDialogTitle,
+} from './ui/alert-dialog';
+import { Button } from './ui/button';
+import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from './ui/dialog';
 
 interface DialogProps extends PropsWithChildren {
   title: string;
@@ -20,6 +17,26 @@ interface DialogProps extends PropsWithChildren {
   initialFocusRef?: RefObject<HTMLElement> | undefined;
   size?: 'normal' | 'wide' | undefined;
   labelledBy?: string | undefined;
+}
+
+/*
+ * Radix owns the focus trap, the nested-dialog Escape routing, the background
+ * scroll lock, and the aria wiring. Both content components are modal, so their
+ * built-in close-autofocus targets a `Trigger` this app never renders — the
+ * dialogs mount from state instead. Each adapter therefore records the element
+ * that had focus on mount and restores it itself.
+ */
+function useRestoreFocus(): (event: Event) => void {
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }, []);
+  return (event: Event) => {
+    event.preventDefault();
+    const previous = previousFocusRef.current;
+    if (previous?.isConnected) previous.focus();
+  };
 }
 
 export function Dialog({
@@ -31,132 +48,50 @@ export function Dialog({
   size = 'normal',
   labelledBy,
 }: DialogProps) {
-  const panelRef = useRef<HTMLDivElement>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef(onClose);
-  const dialogIdRef = useRef(Symbol('journal-dialog'));
-  const generatedTitleId = useId();
-  const descriptionId = useId();
-  const titleId = labelledBy ?? generatedTitleId;
+  const restoreFocus = useRestoreFocus();
 
   useLayoutEffect(() => {
     closeRef.current = onClose;
   }, [onClose]);
 
-  useLayoutEffect(() => {
-    const dialogId = dialogIdRef.current;
-    previousFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    dialogStack.push(dialogId);
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (dialogStack.at(-1) !== dialogId) return;
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        closeRef.current();
-        return;
-      }
-      if (event.key !== 'Tab' || !panelRef.current) return;
-      const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE));
-      if (focusable.length === 0) {
-        event.preventDefault();
-        panelRef.current.focus();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (!first || !last) return;
-      const active = document.activeElement;
-      const focusIsOutsideSequence =
-        active === panelRef.current || !panelRef.current.contains(active);
-      if (event.shiftKey && (focusIsOutsideSequence || active === first)) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (focusIsOutsideSequence || active === last)) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    document.documentElement.classList.add('dialog-open');
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      const index = dialogStack.lastIndexOf(dialogId);
-      if (index >= 0) dialogStack.splice(index, 1);
-      if (dialogStack.length === 0) document.documentElement.classList.remove('dialog-open');
-      if (previousFocusRef.current?.isConnected) previousFocusRef.current.focus();
-    };
-  }, []);
-
-  useLayoutEffect(() => {
-    const target =
-      initialFocusRef?.current ?? panelRef.current?.querySelector<HTMLElement>(FOCUSABLE);
-    target?.focus();
-  }, [initialFocusRef]);
-
-  useEffect(() => {
-    const overlay = overlayRef.current;
-    if (!overlay) return;
-    let startY = 0;
-    let scroller: HTMLElement | null = null;
-    const onTouchStart = (event: TouchEvent) => {
-      startY = event.touches[0]?.clientY ?? 0;
-      const target = event.target instanceof Element ? event.target : null;
-      scroller = target?.closest<HTMLElement>('.scrollable') ?? null;
-    };
-    const onTouchMove = (event: TouchEvent) => {
-      if (!scroller || scroller.scrollHeight <= scroller.clientHeight) {
-        event.preventDefault();
-        return;
-      }
-      const currentY = event.touches[0]?.clientY ?? startY;
-      const movingDown = currentY > startY;
-      const atTop = scroller.scrollTop <= 0;
-      const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1;
-      if ((atTop && movingDown) || (atBottom && !movingDown)) event.preventDefault();
-    };
-    overlay.addEventListener('touchstart', onTouchStart, { passive: true });
-    overlay.addEventListener('touchmove', onTouchMove, { passive: false });
-    return () => {
-      overlay.removeEventListener('touchstart', onTouchStart);
-      overlay.removeEventListener('touchmove', onTouchMove);
-    };
-  }, []);
-
   return (
-    <div
-      ref={overlayRef}
-      className="dialog-overlay"
-      onPointerDown={(event) => event.target === event.currentTarget && onClose()}
+    <DialogRoot
+      open
+      onOpenChange={(open) => {
+        if (!open) closeRef.current();
+      }}
     >
-      <div
-        ref={panelRef}
-        className={`dialog-panel${size === 'wide' ? ' dialog-panel--wide' : ''}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={description ? descriptionId : undefined}
-        tabIndex={-1}
+      <DialogContent
+        size={size}
+        onCloseAutoFocus={restoreFocus}
+        onOpenAutoFocus={(event) => {
+          const target = initialFocusRef?.current;
+          if (!target) return;
+          event.preventDefault();
+          target.focus();
+        }}
+        {...(labelledBy ? { 'aria-labelledby': labelledBy } : {})}
+        {...(description ? {} : { 'aria-describedby': undefined })}
       >
         <header className="dialog-header">
           <div className="dialog-heading">
-            <h2 id={titleId}>{title}</h2>
-            {description ? <p id={descriptionId}>{description}</p> : null}
+            <DialogTitle>{title}</DialogTitle>
+            {description ? <DialogDescription>{description}</DialogDescription> : null}
           </div>
-          <button
-            className="icon-button icon-button--ghost"
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-[26px] touch:size-10"
             onClick={onClose}
             aria-label="Close dialog"
           >
             <Icon name="close" size={15} />
-          </button>
+          </Button>
         </header>
         <div className="dialog-body scrollable">{children}</div>
-      </div>
-    </div>
+      </DialogContent>
+    </DialogRoot>
   );
 }
 
@@ -175,22 +110,49 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  const cancelRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef(onCancel);
+  const restoreFocus = useRestoreFocus();
+
+  useLayoutEffect(() => {
+    cancelRef.current = onCancel;
+  }, [onCancel]);
+
   return (
-    <Dialog title={title} description={description} onClose={onCancel} initialFocusRef={cancelRef}>
-      <div className="dialog-actions dialog-actions--end">
-        <button
-          ref={cancelRef}
-          className="button button--secondary"
-          type="button"
-          onClick={onCancel}
-        >
-          Cancel
-        </button>
-        <button className="button button--danger-filled" type="button" onClick={onConfirm}>
-          {confirmLabel}
-        </button>
-      </div>
-    </Dialog>
+    <AlertDialogRoot
+      open
+      onOpenChange={(open) => {
+        if (!open) cancelRef.current();
+      }}
+    >
+      <AlertDialogContent onCloseAutoFocus={restoreFocus}>
+        <header className="dialog-header">
+          <div className="dialog-heading">
+            <AlertDialogTitle>{title}</AlertDialogTitle>
+            <AlertDialogDescription>{description}</AlertDialogDescription>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-[26px] touch:size-10"
+            onClick={onCancel}
+            aria-label="Close dialog"
+          >
+            <Icon name="close" size={15} />
+          </Button>
+        </header>
+        <div className="dialog-body scrollable">
+          <div className="dialog-actions dialog-actions--end">
+            {/* Cancel carries no handler of its own: Radix closes through
+                `onOpenChange`, which already reports the cancellation. */}
+            <AlertDialogCancel asChild>
+              <Button variant="secondary">Cancel</Button>
+            </AlertDialogCancel>
+            <Button variant="dangerFilled" onClick={onConfirm}>
+              {confirmLabel}
+            </Button>
+          </div>
+        </div>
+      </AlertDialogContent>
+    </AlertDialogRoot>
   );
 }

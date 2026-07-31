@@ -2,6 +2,8 @@ import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import { useChromeGeometry } from '../hooks/use-chrome-geometry';
 import type { JournalRoute } from '../routes/useJournalRoute';
 import { Icon, type IconName } from './Icon';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
 import { formatLongDate } from './dates';
 
 interface ShellProps {
@@ -116,22 +118,24 @@ export function Shell({
                 <p className="app-header__mobile-title">{mobileSubtitle}</p>
               </div>
               <div className="app-header__actions">
-                <button
-                  className="icon-button"
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="text-fg-mid"
                   onClick={onSearch}
                   aria-label="Search entries"
                 >
                   <Icon name="search" size={15} />
-                </button>
-                <button
-                  className="icon-button"
-                  type="button"
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="text-fg-mid"
                   onClick={onSettings}
                   aria-label="Assistant access"
                 >
                   <Icon name="settings" size={15} />
-                </button>
+                </Button>
               </div>
             </div>
             <nav className="tab-list content-column" aria-label="Primary navigation">
@@ -150,24 +154,22 @@ export function Shell({
             {!online || syncing || deadLetterCount > 0 ? (
               <div className="status-strip content-column" aria-live="polite">
                 {!online ? (
-                  <span className="status-pill status-pill--offline">
+                  <Badge variant="statusOffline">
                     <Icon name="wifiOff" size={12} /> Offline — changes will sync
-                  </span>
+                  </Badge>
                 ) : syncing || outboxCount > 0 ? (
-                  <span className="status-pill">
+                  <Badge variant="status">
                     <Icon name="refresh" size={12} /> Syncing{' '}
                     {outboxCount > 0 ? `${outboxCount} changes` : ''}
-                  </span>
+                  </Badge>
                 ) : null}
                 {deadLetterCount > 0 ? (
-                  <button
-                    className="status-pill status-pill--error"
-                    type="button"
-                    onClick={onDeadLetters}
-                  >
-                    <Icon name="warning" size={12} /> {deadLetterCount} change
-                    {deadLetterCount === 1 ? '' : 's'} need attention
-                  </button>
+                  <Badge asChild variant="statusError" className="min-h-8 touch:min-h-10">
+                    <button type="button" onClick={onDeadLetters}>
+                      <Icon name="warning" size={12} /> {deadLetterCount} change
+                      {deadLetterCount === 1 ? '' : 's'} need attention
+                    </button>
+                  </Badge>
                 ) : null}
               </div>
             ) : null}

@@ -1,5 +1,6 @@
 import { EntryRow } from '../components/EntryRow';
 import { Icon } from '../components/Icon';
+import { Button } from '../components/ui/button';
 import type { DisplayPreferences, JournalCollection, JournalEntry } from '../components/types';
 
 interface CollectionViewProps {
@@ -25,9 +26,9 @@ export function CollectionView({
         <Icon name="folder" size={20} />
         <h2>Collection not found</h2>
         <p>It may have been archived or renamed.</p>
-        <button className="button button--secondary" type="button" onClick={onBack}>
+        <Button variant="secondary" className="mt-[9px]" onClick={onBack}>
           <Icon name="chevronLeft" size={14} /> Back to Index
-        </button>
+        </Button>
       </section>
     );
   }
@@ -38,9 +39,9 @@ export function CollectionView({
   return (
     <section className="screen collection-screen" aria-labelledby="collection-title">
       <header className="collection-header">
-        <button className="button button--secondary button--small" type="button" onClick={onBack}>
+        <Button variant="secondary" size="sm" onClick={onBack}>
           <Icon name="chevronLeft" size={14} /> Index
-        </button>
+        </Button>
         <h2 id="collection-title">{collection.name}</h2>
         <p>
           {collectionEntries.length} items · {doneCount} done

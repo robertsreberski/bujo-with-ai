@@ -29,96 +29,6 @@
   }
 }
 
-.icon-button {
-  display: inline-grid;
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
-  place-items: center;
-  border: 1px solid var(--border-control);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--fg-mid);
-}
-
-.icon-button--ghost {
-  width: 34px;
-  min-width: 34px;
-  height: 34px;
-  border: 0;
-  background: transparent;
-}
-
-.button {
-  display: inline-flex;
-  min-height: 40px;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  border-radius: 6px;
-  padding: 0 12px;
-  font-size: 12.5px;
-  font-weight: 500;
-}
-
-.button--small {
-  min-height: 34px;
-  padding-inline: 10px;
-  font-size: 12px;
-}
-
-.button--primary {
-  border: 1px solid var(--primary);
-  background: var(--primary);
-  color: var(--primary-fg);
-}
-
-.button--secondary {
-  border: 1px solid var(--border-control);
-  background: var(--bg);
-  color: var(--fg);
-}
-
-.button--danger {
-  border: 1px solid var(--border-control);
-  background: var(--bg);
-  color: var(--danger);
-}
-
-.button--danger-filled {
-  border: 1px solid var(--danger-border);
-  background: var(--danger-bg-hover);
-  color: var(--danger);
-}
-
-.status-pill {
-  display: inline-flex;
-  min-height: 24px;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg-line);
-  padding: 2px 8px;
-  color: var(--fg-body);
-  font-size: 11px;
-  font-weight: 500;
-}
-
-button.status-pill {
-  min-height: 32px;
-  border-color: var(--border-control);
-}
-
-.status-pill--offline {
-  color: var(--warning);
-}
-
-.status-pill--error {
-  border-color: var(--danger-border);
-  color: var(--danger);
-}
-
 .entry-row {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) auto;
@@ -403,37 +313,6 @@ button.status-pill {
   text-align: left;
 }
 
-.dialog-overlay {
-  position: fixed;
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  inset: var(--vv-offset, 0px) 0 auto;
-  height: var(--vv-height, 100%);
-  background: var(--overlay);
-  padding: max(16px, var(--sat)) max(16px, var(--sar)) max(16px, var(--sab)) max(16px, var(--sal));
-  animation: overlay-in 130ms ease-out;
-}
-
-.dialog-panel {
-  display: flex;
-  width: 100%;
-  max-width: 400px;
-  max-height: min(86vh, calc(var(--vv-height, 100vh) - 32px));
-  flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  outline: none;
-  background: var(--bg);
-  box-shadow: var(--shadow-dialog);
-  animation: dialog-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.dialog-panel--wide {
-  max-width: 520px;
-}
-
 .dialog-header {
   display: flex;
   flex: none;
@@ -713,29 +592,6 @@ button.status-pill {
   padding-top: 14px;
 }
 
-.entry-file-control {
-  display: flex;
-  min-width: 0;
-  height: 40px;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--border-control);
-  border-radius: 6px;
-  background: var(--bg);
-  padding-left: 10px;
-  color: var(--fg);
-}
-
-.entry-file-control select {
-  min-width: 0;
-  height: 38px;
-  flex: 1;
-  border: 0;
-  background: transparent;
-  padding: 0 8px 0 0;
-  font-size: 12.5px;
-}
-
 .migration-card {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -811,37 +667,6 @@ button.status-pill {
   white-space: nowrap;
 }
 
-.connection-pill {
-  display: inline-flex;
-  height: 24px;
-  flex: none;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg-line);
-  padding: 0 8px;
-  color: var(--fg);
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.connection-pill i {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--ok);
-}
-
-.connection-pill--offline i {
-  background: var(--danger);
-}
-
-.connection-pill--connecting i,
-.connection-pill--ready i {
-  background: var(--warning);
-}
-
 .settings-explainer {
   padding: 11px 0 8px;
   color: var(--fg-mute);
@@ -879,27 +704,6 @@ button.status-pill {
   font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.mode-badge {
-  display: inline-flex;
-  height: 20px;
-  align-items: center;
-  border-radius: 4px;
-  padding: 0 6px;
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.mode-badge--auto {
-  border: 1px solid var(--ai-border);
-  background: var(--ai-bg);
-  color: var(--ai-fg);
-}
-
-.mode-badge--read {
-  background: var(--bg-line);
-  color: var(--fg-mid);
 }
 
 .settings-section__heading {
@@ -1023,72 +827,6 @@ button.status-pill {
 .preferences-card small {
   color: var(--fg-mute);
   font-size: 11.5px;
-}
-
-.preferences-card select {
-  max-width: 135px;
-}
-
-.preferences-card label > .preference-toggle {
-  position: relative;
-  display: grid;
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
-  flex: none;
-  place-items: center;
-}
-
-.preference-toggle input[type='checkbox'] {
-  position: absolute;
-  inset: 0;
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
-  min-height: 40px;
-  margin: 0;
-  appearance: none;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  opacity: 0;
-}
-
-.preference-toggle__track {
-  position: relative;
-  display: block;
-  width: 40px;
-  height: 24px;
-  border: 1px solid var(--border-control);
-  border-radius: 999px;
-  background: var(--bg-line);
-  padding: 2px;
-  pointer-events: none;
-}
-
-.preference-toggle__track::before {
-  display: block;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--fg-mute);
-  content: '';
-  transition: transform 120ms ease;
-}
-
-.preference-toggle input[type='checkbox']:checked + .preference-toggle__track {
-  border-color: var(--primary);
-  background: var(--primary);
-}
-
-.preference-toggle input[type='checkbox']:checked + .preference-toggle__track::before {
-  transform: translateX(16px);
-  background: var(--primary-fg);
-}
-
-.preference-toggle input[type='checkbox']:focus-visible + .preference-toggle__track {
-  outline: 2px solid var(--primary-hover);
-  outline-offset: 2px;
 }
 
 .settings-section--privacy {
@@ -1221,23 +959,15 @@ html.keyboard-open .toast {
 }
 
 @media (hover: hover) {
-  .icon-button:hover,
-  .button--secondary:hover,
   .type-menu__option:hover,
   .search-shortcuts button:hover {
     background: var(--bg-line);
     color: var(--fg);
   }
 
-  .button--primary:hover,
   .composer__submit:hover {
     border-color: var(--primary-hover);
     background: var(--primary-hover);
-  }
-
-  .button--danger:hover {
-    border-color: var(--danger-border);
-    background: var(--danger-bg-hover);
   }
 
   .entry-row:hover {
@@ -1262,28 +992,21 @@ html.keyboard-open .toast {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dialog-overlay,
-  .dialog-panel,
   .type-menu,
   .toast,
-  .entry-row,
-  .preference-toggle__track::before {
+  .entry-row {
     animation: none;
     transition: none;
   }
 }
 
 @media (max-width: 679px), (pointer: coarse) {
-  .button--small,
-  .icon-button--ghost,
   .search-field button,
   .search-shortcuts button,
-  .token-secret__dismiss,
-  button.status-pill {
+  .token-secret__dismiss {
     min-height: 40px;
   }
 
-  .icon-button--ghost,
   .search-field button {
     width: 40px;
     min-width: 40px;

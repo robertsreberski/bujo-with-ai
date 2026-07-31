@@ -11,6 +11,7 @@ import {
   SettingsResponseSchema,
   SseReplayReadySchema,
   SseResetSchema,
+  TagListResponseSchema,
   type ActivityView,
   type ActivityItem,
   type AgentToken,
@@ -27,6 +28,7 @@ import {
   type OwnerEntryCreate,
   type Settings,
   type Summary,
+  type TagUsage,
 } from '@journal/server/contracts/app';
 import type { z } from 'zod';
 
@@ -47,9 +49,11 @@ export type {
   OwnerEntryCreate,
   Settings,
   Summary,
+  TagUsage,
 };
 
 export type PairResponse = z.infer<typeof PairResponseSchema>;
+export type TagListResponse = z.infer<typeof TagListResponseSchema>;
 export type EntryListResponse = z.infer<typeof EntryListResponseSchema>;
 export type CollectionListResponse = z.infer<typeof CollectionListResponseSchema>;
 export type ActivityListResponse = z.infer<typeof ActivityListResponseSchema>;
@@ -71,4 +75,5 @@ export {
   SettingsResponseSchema as SettingsPayloadSchema,
   SseReplayReadySchema,
   SseResetSchema as ResetEventSchema,
+  TagListResponseSchema,
 };

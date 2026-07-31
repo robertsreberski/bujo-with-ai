@@ -15,6 +15,7 @@ import type {
   DateIntent,
   Settings,
   Summary,
+  TagUsage,
 } from '../api/types';
 import {
   calendarDateInTimeZone,
@@ -77,6 +78,7 @@ export type {
   McpStatus,
   Settings,
   Summary,
+  TagUsage,
 } from '../api/types';
 
 const EPOCH = '1970-01-01T00:00:00.000Z';
@@ -158,6 +160,9 @@ export interface JournalState extends MirrorData {
   activityLoading: boolean;
   activityHasMore: boolean;
   activityNextCursor: string | null;
+  /** Capture tag vocabulary; in-memory only, never part of the persisted record. */
+  tagSuggestions: TagUsage[];
+  tagsFetchedAt: string | null;
   initialize(): Promise<void>;
   shutdown(): void;
   setDraft(draft: string): void;
@@ -185,6 +190,7 @@ export interface JournalState extends MirrorData {
   loadMonth(month: string): Promise<Entry[]>;
   loadCollection(id: string): Promise<Entry[]>;
   loadMoreActivity(): Promise<void>;
+  loadTagSuggestions(): Promise<void>;
   retryDeadLetter(id: string): Promise<void>;
   discardDeadLetter(id: string): Promise<void>;
   dismissNotice(id: string): void;
@@ -2070,6 +2076,62 @@ function shutdownJournal(): void {
   useJournalStore.setState({ syncing: false, activityLoading: false, tokensLoading: false });
 }
 
+/** Tag suggestions refresh at most this often; the mirror covers the gap. */
+const TAG_SUGGESTION_TTL_MS = 5 * 60 * 1000;
+
+const sortTagUsage = (usage: TagUsage[]): TagUsage[] =>
+  usage.sort((left, right) => right.uses - left.uses || left.tag.localeCompare(right.tag));
+
+/**
+ * Counts the tag vocabulary already in the mirror. `lastUsedAt` approximates the
+ * server's MAX(created_at) with the newest touching entry's updatedAt, which is
+ * close enough to rank suggestions while offline.
+ */
+export function deriveTagUsage(entriesById: Record<string, Entry>): TagUsage[] {
+  const counts = new Map<string, { uses: number; lastUsedAt: string }>();
+  for (const entry of Object.values(entriesById)) {
+    if (entry.deletedAt !== null) continue;
+    for (const tag of new Set(entry.tags)) {
+      const current = counts.get(tag);
+      if (current === undefined) {
+        counts.set(tag, { uses: 1, lastUsedAt: entry.updatedAt });
+        continue;
+      }
+      current.uses += 1;
+      if (entry.updatedAt > current.lastUsedAt) current.lastUsedAt = entry.updatedAt;
+    }
+  }
+  return sortTagUsage(
+    [...counts].map(([tag, usage]) => ({ tag, uses: usage.uses, lastUsedAt: usage.lastUsedAt })),
+  );
+}
+
+/**
+ * Unions both vocabularies by tag. The server owns `uses` for tags it knows —
+ * the mirror only holds downloaded slices — while tags it has never seen (an
+ * optimistic capture still in the outbox) keep their local counts.
+ */
+export function mergeTagUsage(
+  mirrorUsage: readonly TagUsage[],
+  serverUsage: readonly TagUsage[],
+): TagUsage[] {
+  const merged = new Map<string, TagUsage>(mirrorUsage.map((usage) => [usage.tag, usage]));
+  for (const row of serverUsage) {
+    const local = merged.get(row.tag);
+    merged.set(
+      row.tag,
+      local === undefined
+        ? row
+        : {
+            tag: row.tag,
+            uses: row.uses,
+            lastUsedAt: local.lastUsedAt > row.lastUsedAt ? local.lastUsedAt : row.lastUsedAt,
+          },
+    );
+  }
+  return sortTagUsage([...merged.values()]);
+}
+
 export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<JournalState>()(
   (set, get) => ({
     ...initialMirror(),
@@ -2093,6 +2155,8 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
     activityLoading: false,
     activityHasMore: false,
     activityNextCursor: null,
+    tagSuggestions: [],
+    tagsFetchedAt: null,
     initialize: initializeJournal,
     shutdown: shutdownJournal,
     setDraft: (draft) => {
@@ -2443,6 +2507,29 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
         if (lifecycle === lifecycleGeneration) set({ activityLoading: false });
       }
     },
+    loadTagSuggestions: async () => {
+      const state = get();
+      // The mirror answers instantly and offline; the server refresh is a bonus.
+      set({ tagSuggestions: deriveTagUsage(state.entriesById) });
+      const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+      const fresh =
+        state.tagsFetchedAt !== null &&
+        Date.parse(new Date().toISOString()) - Date.parse(state.tagsFetchedAt) <
+          TAG_SUGGESTION_TTL_MS;
+      if (!online || fresh) return;
+      const lifecycle = lifecycleGeneration;
+      try {
+        const response = await journalApi.listTags();
+        if (lifecycle !== lifecycleGeneration) return;
+        set((current) => ({
+          // Re-derive: captures may have landed while the request was in flight.
+          tagSuggestions: mergeTagUsage(deriveTagUsage(current.entriesById), response.items),
+          tagsFetchedAt: new Date().toISOString(),
+        }));
+      } catch {
+        // Suggestions are best-effort; the mirror-derived list already shipped.
+      }
+    },
     retryDeadLetter: async (id) => {
       const lifecycle = lifecycleGeneration;
       const deadLetter = get().deadLetters.find((item) => item.id === id);
@@ -2577,6 +2664,7 @@ export const journalActions = {
   loadMonth: (month: string): Promise<Entry[]> => useJournalStore.getState().loadMonth(month),
   loadCollection: (id: string): Promise<Entry[]> => useJournalStore.getState().loadCollection(id),
   loadMoreActivity: (): Promise<void> => useJournalStore.getState().loadMoreActivity(),
+  loadTagSuggestions: (): Promise<void> => useJournalStore.getState().loadTagSuggestions(),
   retryDeadLetter: (id: string): Promise<void> => useJournalStore.getState().retryDeadLetter(id),
   discardDeadLetter: (id: string): Promise<void> =>
     useJournalStore.getState().discardDeadLetter(id),
@@ -2593,6 +2681,12 @@ export const selectEntries = (state: JournalState): Entry[] =>
   Object.values(state.entriesById).filter((entry) => entry.deletedAt === null);
 export const selectCollections = (state: JournalState): Collection[] =>
   Object.values(state.collectionsById);
+/** Collections a capture can file into: no archives, no server-owned monthly logs. */
+export const selectActiveCollections = (state: JournalState): Collection[] =>
+  Object.values(state.collectionsById)
+    .filter((collection) => !collection.archivedAt && !collection.id.startsWith('month:'))
+    .sort((left, right) => left.name.localeCompare(right.name));
+export const selectTagSuggestions = (state: JournalState): TagUsage[] => state.tagSuggestions;
 export const selectActivity = (state: JournalState): ActivityView[] =>
   state.activityOrder.flatMap((id) => {
     const activity = state.activityById[id];

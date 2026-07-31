@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { EntryRow } from '../components/EntryRow';
 import { Icon } from '../components/Icon';
+import { Button } from '../components/ui/button';
 import { formatLongDate } from '../components/dates';
 import type { DisplayPreferences, JournalEntry } from '../components/types';
 
@@ -159,13 +160,13 @@ export function TodayView({
               {leftovers.length === 1 ? 'is' : 'are'} still open
             </h2>
             <p>Decide what to do with each one: move it to today, finish it, or drop it.</p>
-            <button
-              className="button button--primary"
-              type="button"
+            <Button
+              variant="primary"
+              className="mt-[9px]"
               onClick={() => onStartMigration(leftovers)}
             >
               Review them
-            </button>
+            </Button>
           </div>
         </aside>
       ) : null}

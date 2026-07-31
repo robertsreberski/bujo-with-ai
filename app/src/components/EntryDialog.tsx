@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { ConfirmDialog, Dialog } from './Dialog';
 import { Icon } from './Icon';
+import { Button } from './ui/button';
+import { NativeSelect } from './ui/native-select';
 import { entryIcon } from './entry-icons';
 import { formatLongDate } from './dates';
 import {
@@ -133,7 +135,8 @@ export function EntryDialog({
           <div className="form-grid">
             <label className="field">
               <span>Type</span>
-              <select
+              <NativeSelect
+                className="w-full"
                 value={type}
                 onChange={(event) => setType(event.currentTarget.value as EntryType)}
               >
@@ -142,7 +145,7 @@ export function EntryDialog({
                     {TYPE_LABELS[option]}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </label>
             <label className="field">
               <span>Date</span>
@@ -184,20 +187,12 @@ export function EntryDialog({
             </label>
           </div>
           <div className="dialog-actions dialog-actions--end">
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={() => setEditing(false)}
-            >
+            <Button variant="secondary" onClick={() => setEditing(false)}>
               Cancel
-            </button>
-            <button
-              className="button button--primary"
-              type="submit"
-              disabled={!text.trim() || Boolean(tagError)}
-            >
+            </Button>
+            <Button variant="primary" type="submit" disabled={!text.trim() || Boolean(tagError)}>
               Save changes
-            </button>
+            </Button>
           </div>
         </form>
       ) : (
@@ -252,17 +247,12 @@ export function EntryDialog({
             </aside>
           ) : null}
           <div className="entry-detail-actions">
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={() => setEditing(true)}
-            >
+            <Button variant="secondary" onClick={() => setEditing(true)}>
               <Icon name="edit" size={14} /> Edit
-            </button>
+            </Button>
             {actionable && (open || done) ? (
-              <button
-                className="button button--primary"
-                type="button"
+              <Button
+                variant="primary"
                 onClick={() => {
                   onUpdate(
                     entry,
@@ -273,12 +263,11 @@ export function EntryDialog({
                 }}
               >
                 <Icon name="check" size={14} /> {done ? 'Mark not done' : 'Mark done'}
-              </button>
+              </Button>
             ) : null}
             {!actionable || open ? (
-              <button
-                className={actionable ? 'button button--secondary' : 'button button--primary'}
-                type="button"
+              <Button
+                variant={actionable ? 'secondary' : 'primary'}
                 disabled={entry.date === today && entry.collection === null && !actionable}
                 onClick={() => {
                   if (actionable) onMigrate(entry);
@@ -287,25 +276,25 @@ export function EntryDialog({
                 }}
               >
                 <Icon name="arrowRight" size={14} /> Move to today
-              </button>
+              </Button>
             ) : null}
             {actionable && open ? (
-              <button
-                className="button button--secondary"
-                type="button"
+              <Button
+                variant="secondary"
                 onClick={() => {
                   onSchedule(entry);
                   onClose();
                 }}
               >
                 <Icon name="calendar" size={14} /> To monthly log
-              </button>
+              </Button>
             ) : null}
             {!actionable ? (
-              <label className="entry-file-control">
+              <label className="flex min-h-[34px] min-w-0 items-center gap-1.5 rounded-md border border-border-control bg-bg pl-2.5 text-fg touch:min-h-10">
                 <span className="sr-only">File in collection</span>
                 <Icon name="folder" size={14} />
-                <select
+                <NativeSelect
+                  className="h-8 min-w-0 flex-1 rounded-none border-0 bg-transparent pr-2 pl-0 text-sm"
                   value={entry.collection?.startsWith('month:') ? '' : (entry.collection ?? '')}
                   aria-label="File in collection"
                   onChange={(event) => {
@@ -323,28 +312,23 @@ export function EntryDialog({
                       {collection.name}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               </label>
             ) : null}
             {actionable && open ? (
-              <button
-                className="button button--danger"
-                type="button"
+              <Button
+                variant="danger"
                 onClick={() => {
                   onUpdate(entry, { state: 'cancelled' }, 'Dropped');
                   onClose();
                 }}
               >
                 <Icon name="trash" size={14} /> Drop
-              </button>
+              </Button>
             ) : !actionable ? (
-              <button
-                className="button button--danger"
-                type="button"
-                onClick={() => setConfirmDelete(true)}
-              >
+              <Button variant="danger" onClick={() => setConfirmDelete(true)}>
                 <Icon name="trash" size={14} /> Delete
-              </button>
+              </Button>
             ) : null}
           </div>
         </>

@@ -17,6 +17,7 @@ import {
   PairResponseSchema,
   RewriteSummaryResponseSchema,
   SaveSummaryResponseSchema,
+  TagListResponseSchema,
   type ActivityView,
   type AgentToken,
   type BootstrapResponse,
@@ -30,6 +31,7 @@ import {
   type Settings,
   type SettingsPayload,
   type Summary,
+  type TagListResponse,
 } from './types';
 
 interface ApiErrorBody {
@@ -174,6 +176,14 @@ export class JournalApiClient {
   listCollections(signal?: AbortSignal): Promise<CollectionListResponse> {
     return this.request('/api/collections', {
       schema: CollectionListResponseSchema,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  /** Tag vocabulary ranked by use; feeds best-effort capture suggestions. */
+  listTags(signal?: AbortSignal): Promise<TagListResponse> {
+    return this.request('/api/tags', {
+      schema: TagListResponseSchema,
       ...(signal === undefined ? {} : { signal }),
     });
   }

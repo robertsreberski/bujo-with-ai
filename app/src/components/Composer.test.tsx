@@ -15,6 +15,7 @@ describe('parseDraft', () => {
       text: 'Reply to Mira',
       time: '16:00',
       tags: ['work'],
+      collection: null,
       dateShift: 'tomorrow',
       signifierWon: true,
       error: null,

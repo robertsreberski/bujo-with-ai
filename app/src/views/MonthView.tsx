@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { EntryRow } from '../components/EntryRow';
 import { Icon } from '../components/Icon';
+import { Button } from '../components/ui/button';
 import { daysInMonth, formatLongDate, formatMonth, mondayStartOffset } from '../components/dates';
 import type { DisplayPreferences, JournalEntry, JournalSummary } from '../components/types';
 
@@ -94,23 +95,25 @@ export function MonthView({
     <section className="screen month-screen" aria-label={`${formatMonth(month)} monthly log`}>
       <div className="month-calendar">
         <header className="month-calendar__header">
-          <button
-            className="icon-button"
-            type="button"
+          <Button
+            variant="secondary"
+            size="icon"
+            className="text-fg-mid"
             aria-label="Previous month"
             onClick={() => onMonthChange(shiftMonth(month, -1))}
           >
             <Icon name="chevronLeft" size={14} />
-          </button>
+          </Button>
           <h2>{formatMonth(month)}</h2>
-          <button
-            className="icon-button"
-            type="button"
+          <Button
+            variant="secondary"
+            size="icon"
+            className="text-fg-mid"
             aria-label="Next month"
             onClick={() => onMonthChange(shiftMonth(month, 1))}
           >
             <Icon name="chevronRight" size={14} />
-          </button>
+          </Button>
         </header>
         <div className="calendar-grid" role="group" aria-label={`${formatMonth(month)} calendar`}>
           {WEEKDAYS.map((weekday) => (
@@ -220,22 +223,20 @@ export function MonthView({
             <p>{summary.text}</p>
           </div>
           <footer>
-            <button
-              className="button button--primary"
-              type="button"
+            <Button
+              variant="primary"
               disabled={summary.status === 'saved'}
               onClick={() => onSaveSummary(summary)}
             >
               {summary.status === 'saved' ? 'Saved to today' : 'Save to today'}
-            </button>
-            <button
-              className="button button--secondary"
-              type="button"
+            </Button>
+            <Button
+              variant="secondary"
               disabled={summary.status === 'stale'}
               onClick={() => onRewriteSummary(summary)}
             >
               {summary.status === 'stale' ? 'Rewrite requested' : 'Rewrite'}
-            </button>
+            </Button>
           </footer>
         </section>
       ) : null}

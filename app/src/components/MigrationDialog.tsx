@@ -1,6 +1,7 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Dialog } from './Dialog';
 import { Icon } from './Icon';
+import { Button } from './ui/button';
 import { formatLongDate } from './dates';
 import type { JournalEntry } from './types';
 
@@ -65,9 +66,9 @@ export function MigrationDialog({
     return (
       <Dialog title="Migration" description="Nothing is waiting for a decision." onClose={onClose}>
         <div className="dialog-actions dialog-actions--end">
-          <button className="button button--primary" type="button" onClick={onComplete}>
+          <Button variant="primary" onClick={onComplete}>
             Done
-          </button>
+          </Button>
         </div>
       </Dialog>
     );
@@ -102,40 +103,36 @@ export function MigrationDialog({
         ) : null}
       </article>
       <div className="migration-actions" aria-busy={pending !== null}>
-        <button
-          className="button button--primary"
-          type="button"
+        <Button
+          variant="primary"
           disabled={pending !== null}
           onClick={() => void decide('migrate', () => onMigrate(current))}
         >
           <Icon name="arrowRight" size={14} />
           {pending === 'migrate' ? 'Moving…' : 'Move to today'}
-        </button>
-        <button
-          className="button button--secondary"
-          type="button"
+        </Button>
+        <Button
+          variant="secondary"
           disabled={pending !== null}
           onClick={() => void decide('done', () => onUpdate(current, 'done'))}
         >
           <Icon name="check" size={14} /> {pending === 'done' ? 'Saving…' : 'Mark done'}
-        </button>
-        <button
-          className="button button--secondary"
-          type="button"
+        </Button>
+        <Button
+          variant="secondary"
           disabled={pending !== null}
           onClick={() => void decide('schedule', () => onSchedule(current))}
         >
           <Icon name="calendar" size={14} />
           {pending === 'schedule' ? 'Scheduling…' : 'To monthly log'}
-        </button>
-        <button
-          className="button button--danger"
-          type="button"
+        </Button>
+        <Button
+          variant="danger"
           disabled={pending !== null}
           onClick={() => void decide('drop', () => onUpdate(current, 'cancelled'))}
         >
           <Icon name="trash" size={14} /> {pending === 'drop' ? 'Dropping…' : 'Drop it'}
-        </button>
+        </Button>
       </div>
     </Dialog>
   );

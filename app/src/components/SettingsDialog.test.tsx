@@ -58,4 +58,40 @@ describe('SettingsDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Reload' }));
     expect(onActivateUpdate).toHaveBeenCalledTimes(1);
   });
+
+  it('exposes the display preferences as switches and reports each change', async () => {
+    const user = userEvent.setup();
+    const onUpdatePreferences = vi.fn();
+    render(
+      <SettingsDialog
+        assistantStatus="connected"
+        mcpEndpoint="https://journal.example/mcp"
+        activeSessions={1}
+        tokens={[]}
+        tokensLoading={false}
+        preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: false }}
+        updateReady={false}
+        onClose={vi.fn()}
+        onUpdatePreferences={onUpdatePreferences}
+        onRefreshTokens={vi.fn()}
+        onCreateToken={vi.fn()}
+        onRevokeToken={vi.fn()}
+        onActivateUpdate={vi.fn()}
+      />,
+    );
+
+    const typeBadges = screen.getByRole('switch', { name: 'Type badges' });
+    const highlighting = screen.getByRole('switch', { name: 'Assistant highlighting' });
+    expect(typeBadges).toBeChecked();
+    expect(highlighting).not.toBeChecked();
+
+    await user.click(typeBadges);
+    expect(onUpdatePreferences).toHaveBeenCalledWith({ showTypeBadges: false });
+
+    await user.click(highlighting);
+    expect(onUpdatePreferences).toHaveBeenCalledWith({ highlightAiEntries: true });
+
+    await user.selectOptions(screen.getByRole('combobox'), 'compact');
+    expect(onUpdatePreferences).toHaveBeenCalledWith({ density: 'compact' });
+  });
 });

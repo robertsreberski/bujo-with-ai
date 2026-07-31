@@ -1,5 +1,6 @@
 import { Dialog } from './Dialog';
 import { Icon } from './Icon';
+import { Button } from './ui/button';
 import type { DeadLetter } from '../store/models';
 
 interface DeadLetterDialogProps {
@@ -37,20 +38,12 @@ export function DeadLetterDialog({
                 </time>
               </div>
               <footer>
-                <button
-                  className="button button--secondary button--small"
-                  type="button"
-                  onClick={() => onRetry(letter.id)}
-                >
+                <Button variant="secondary" size="sm" onClick={() => onRetry(letter.id)}>
                   <Icon name="refresh" size={12} /> Retry
-                </button>
-                <button
-                  className="button button--danger button--small"
-                  type="button"
-                  onClick={() => onDiscard(letter.id)}
-                >
+                </Button>
+                <Button variant="danger" size="sm" onClick={() => onDiscard(letter.id)}>
                   Discard
-                </button>
+                </Button>
               </footer>
             </article>
           ))}

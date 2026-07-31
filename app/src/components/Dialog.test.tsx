@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef, useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -31,8 +31,30 @@ describe('Dialog', () => {
     await user.click(trigger);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     await user.keyboard('{Escape}');
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(trigger).toHaveFocus();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it('moves initial focus to the requested control', async () => {
+    function Harness() {
+      const inputRef = useRef<HTMLInputElement>(null);
+      return (
+        <Dialog title="Search" onClose={() => undefined} initialFocusRef={inputRef}>
+          <input ref={inputRef} aria-label="Search" />
+        </Dialog>
+      );
+    }
+    render(<Harness />);
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Search' })).toHaveFocus());
+  });
+
+  it('falls back to the first control in the panel when no initial focus is requested', async () => {
+    render(
+      <Dialog title="Settings" onClose={() => undefined}>
+        <button type="button">Save</button>
+      </Dialog>,
+    );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close dialog' })).toHaveFocus());
   });
 
   it('keeps the current focus when its parent rerenders', async () => {
@@ -50,13 +72,11 @@ describe('Dialog', () => {
       );
     }
     render(<Harness />);
-    const refresh = screen.getByRole('button', { name: 'Refresh 0' });
-    await user.click(refresh);
-    await new Promise((resolve) => window.requestAnimationFrame(resolve));
-    expect(screen.getByRole('button', { name: 'Refresh 1' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Refresh 0' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh 1' })).toHaveFocus());
   });
 
-  it('keeps Tab navigation inside when focus starts on the panel or background', async () => {
+  it('traps Tab navigation inside the panel', async () => {
     const user = userEvent.setup();
     render(
       <>
@@ -68,16 +88,20 @@ describe('Dialog', () => {
       </>,
     );
 
-    const dialog = screen.getByRole('dialog', { name: 'Settings' });
     const close = screen.getByRole('button', { name: 'Close dialog' });
+    const first = screen.getByRole('button', { name: 'First action' });
     const last = screen.getByRole('button', { name: 'Last action' });
-    dialog.focus();
-    await user.tab({ shift: true });
-    expect(last).toHaveFocus();
 
-    screen.getByRole('textbox', { name: 'Background composer' }).focus();
+    last.focus();
     await user.tab();
     expect(close).toHaveFocus();
+
+    await user.tab();
+    expect(first).toHaveFocus();
+
+    close.focus();
+    await user.tab({ shift: true });
+    expect(last).toHaveFocus();
   });
 
   it('closes only the topmost dialog on Escape', async () => {
@@ -101,9 +125,15 @@ describe('Dialog', () => {
       );
     }
     render(<Harness />);
-    expect(screen.getAllByRole('dialog')).toHaveLength(2);
+    // The topmost modal hides every other subtree from assistive technology, so
+    // the outer dialog is only reachable through a hidden-inclusive query while
+    // the inner one is open.
+    expect(screen.getAllByRole('dialog', { hidden: true })).toHaveLength(2);
+
     await user.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Inner', hidden: true })).not.toBeInTheDocument(),
+    );
     expect(screen.getByRole('dialog', { name: 'Outer' })).toBeInTheDocument();
-    expect(screen.queryByRole('dialog', { name: 'Inner' })).not.toBeInTheDocument();
   });
 });

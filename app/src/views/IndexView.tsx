@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { Dialog, ConfirmDialog } from '../components/Dialog';
 import { Icon } from '../components/Icon';
+import { Button } from '../components/ui/button';
 import { formatMonth, monthKey } from '../components/dates';
 import type { JournalCollection, JournalEntry } from '../components/types';
 
@@ -79,24 +80,16 @@ function CollectionEditor({ collection, onSave, onClose, onArchive }: Collection
         ) : null}
         <div className="dialog-actions dialog-actions--end">
           {collection && onArchive ? (
-            <button
-              className="button button--danger dialog-actions__leading"
-              type="button"
-              onClick={onArchive}
-            >
+            <Button variant="danger" className="dialog-actions__leading" onClick={onArchive}>
               Archive
-            </button>
+            </Button>
           ) : null}
-          <button className="button button--secondary" type="button" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose}>
             Cancel
-          </button>
-          <button
-            className="button button--primary"
-            type="submit"
-            disabled={!name.trim() || !slugify(name)}
-          >
+          </Button>
+          <Button variant="primary" type="submit" disabled={!name.trim() || !slugify(name)}>
             {collection ? 'Save changes' : 'Create collection'}
-          </button>
+          </Button>
         </div>
       </form>
     </Dialog>
@@ -149,13 +142,9 @@ export function IndexView({
             <h2 id="collections-heading">Collections</h2>
             <p>Focused lists for ideas, books, projects, and anything worth returning to.</p>
           </div>
-          <button
-            className="button button--secondary button--small"
-            type="button"
-            onClick={() => setEditing('new')}
-          >
+          <Button variant="secondary" size="sm" onClick={() => setEditing('new')}>
             <Icon name="plus" size={13} /> New
-          </button>
+          </Button>
         </header>
         <div className="index-card">
           {visibleCollections.length > 0 ? (

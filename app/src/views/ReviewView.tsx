@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ConfirmDialog } from '../components/Dialog';
 import { Icon } from '../components/Icon';
+import { Button } from '../components/ui/button';
 import { activityDateKey, formatActivityDay, formatTime } from '../components/dates';
 import type { ActivityItem } from '../components/types';
 
@@ -215,13 +216,14 @@ export function ReviewView({
                           ) : null}
                         </div>
                         {item.revert.eligible ? (
-                          <button
-                            className="button button--secondary button--small"
-                            type="button"
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="max-[480px]:col-start-2 max-[480px]:justify-self-start"
                             onClick={() => setReverting(item)}
                           >
                             <Icon name="undo" size={13} /> Revert
-                          </button>
+                          </Button>
                         ) : resolvedReason ? (
                           <span className="activity-row__resolved">{resolvedReason}</span>
                         ) : null}
@@ -232,15 +234,15 @@ export function ReviewView({
               </section>
             ))}
             {hasMore ? (
-              <button
+              <Button
                 ref={loadMoreRef}
-                className="button button--secondary activity-load-more"
-                type="button"
+                variant="secondary"
+                className="activity-load-more"
                 disabled={loadingMore}
                 onClick={onLoadMore}
               >
                 {loadingMore ? 'Loading older activity…' : 'Load older activity'}
-              </button>
+              </Button>
             ) : null}
           </div>
         ) : (

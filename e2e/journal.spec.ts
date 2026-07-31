@@ -245,7 +245,7 @@ test('Assistant access reports a live session and persists display preferences',
     await expect(dialog.locator('.connection-pill')).toContainText('Connected');
 
     const density = dialog.getByRole('combobox');
-    const typeBadges = dialog.getByRole('checkbox', { name: /Type badges/ });
+    const typeBadges = dialog.getByRole('switch', { name: /Type badges/ });
     const initialDensity = await density.inputValue();
     const targetDensity = initialDensity === 'compact' ? 'comfortable' : 'compact';
     const targetBadges = !(await typeBadges.isChecked());
@@ -268,9 +268,9 @@ test('Assistant access reports a live session and persists display preferences',
         response.request().method() === 'PATCH' &&
         response.status() === 200,
     );
-    await dialog.getByRole('checkbox', { name: /Type badges/ }).click();
+    await dialog.getByRole('switch', { name: /Type badges/ }).click();
     await badgesUpdated;
-    await expect(dialog.getByRole('checkbox', { name: /Type badges/ })).toBeChecked({
+    await expect(dialog.getByRole('switch', { name: /Type badges/ })).toBeChecked({
       checked: targetBadges,
     });
     await page.keyboard.press('Escape');
@@ -282,7 +282,7 @@ test('Assistant access reports a live session and persists display preferences',
     await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
     const reopened = page.getByRole('dialog', { name: 'Assistant access' });
     await expect(reopened.getByRole('combobox')).toHaveValue(targetDensity);
-    await expect(reopened.getByRole('checkbox', { name: /Type badges/ })).toBeChecked({
+    await expect(reopened.getByRole('switch', { name: /Type badges/ })).toBeChecked({
       checked: targetBadges,
     });
   } finally {

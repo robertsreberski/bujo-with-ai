@@ -28,10 +28,6 @@
   line-height: 1.5;
 }
 
-.leftovers-card .button {
-  margin-top: 9px;
-}
-
 .day-section {
   outline: none;
   scroll-margin-top: 4px;
@@ -96,12 +92,6 @@
 .month-calendar__header h2 {
   font-size: 13.5px;
   font-weight: 500;
-}
-
-.month-calendar__header .icon-button {
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
 }
 
 .calendar-grid {
@@ -462,10 +452,6 @@
   font-size: 12.5px;
 }
 
-.collection-missing .button {
-  margin-top: 9px;
-}
-
 .review-intro {
   display: flex;
   align-items: flex-start;
@@ -685,7 +671,6 @@
     grid-template-columns: 40px minmax(0, 1fr);
   }
 
-  .activity-row > .button,
   .activity-row__resolved {
     grid-column: 2;
     justify-self: start;

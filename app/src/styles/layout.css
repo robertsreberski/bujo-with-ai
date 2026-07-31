@@ -138,11 +138,6 @@
   scrollbar-gutter: stable;
 }
 
-/* interim — remove when Radix Dialog owns scroll locking (Phase 2) */
-html.dialog-open .app-main {
-  overflow: hidden;
-}
-
 .screen {
   min-height: 100%;
 }

@@ -30,6 +30,8 @@ export interface ParsedDraft {
   text: string;
   time: string | null;
   tags: string[];
+  /** Collection slug from a `/slug` token, before destination precedence runs. */
+  collection: string | null;
   dateShift: 'tomorrow' | null;
   signifierWon: boolean;
   error: string | null;

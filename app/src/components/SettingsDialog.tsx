@@ -1,7 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import type { AgentToken } from '@journal/server/contracts/app';
 import { ConfirmDialog, Dialog } from './Dialog';
 import { Icon } from './Icon';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
+import { NativeSelect } from './ui/native-select';
+import { Switch } from './ui/switch';
 import type { DisplayPreferences } from './types';
 
 export type AgentTokenView = AgentToken;
@@ -53,6 +57,8 @@ export function SettingsDialog({
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [revoking, setRevoking] = useState<AgentTokenView | null>(null);
   const labelRef = useRef<HTMLInputElement>(null);
+  const typeBadgesLabelId = useId();
+  const highlightLabelId = useId();
   const statusLabel =
     assistantStatus === 'connected' && activeSessions > 0
       ? 'Connected'
@@ -118,9 +124,18 @@ export function SettingsDialog({
             <strong>MCP server</strong>
             <code>{mcpEndpoint}</code>
           </div>
-          <span className={`connection-pill connection-pill--${statusLabel.toLowerCase()}`}>
-            <i /> {statusLabel}
-          </span>
+          <Badge variant="connection" className="connection-pill">
+            <i
+              className={`size-[5px] flex-none rounded-full ${
+                statusLabel === 'Offline'
+                  ? 'bg-danger'
+                  : statusLabel === 'Ready'
+                    ? 'bg-warning'
+                    : 'bg-ok'
+              }`}
+            />{' '}
+            {statusLabel}
+          </Badge>
         </div>
         <p className="settings-explainer">
           All five write tools apply immediately. Every assistant mutation is attributed,
@@ -130,9 +145,12 @@ export function SettingsDialog({
           {tools.map(([name, mode]) => (
             <div className="tool-row" key={name}>
               <code>{name}</code>
-              <span className={`mode-badge mode-badge--${mode === 'automatic' ? 'auto' : 'read'}`}>
+              <Badge
+                variant={mode === 'automatic' ? 'modeAuto' : 'modeRead'}
+                className="mode-badge"
+              >
                 {mode}
-              </span>
+              </Badge>
             </div>
           ))}
         </div>
@@ -153,17 +171,13 @@ export function SettingsDialog({
             <p>This secret is shown once and cannot be recovered.</p>
             <div>
               <code>{secret}</code>
-              <button
-                className="button button--secondary button--small"
-                type="button"
-                onClick={copySecret}
-              >
+              <Button variant="secondary" size="sm" onClick={copySecret}>
                 {copyState === 'copied'
                   ? 'Copied'
                   : copyState === 'failed'
                     ? 'Select manually'
                     : 'Copy'}
-              </button>
+              </Button>
             </div>
             <button className="token-secret__dismiss" type="button" onClick={() => setSecret(null)}>
               I have saved it
@@ -182,13 +196,9 @@ export function SettingsDialog({
             placeholder="e.g. Claude Desktop"
             onChange={(event) => setLabel(event.currentTarget.value)}
           />
-          <button
-            className="button button--primary"
-            type="submit"
-            disabled={!label.trim() || creating}
-          >
+          <Button variant="primary" type="submit" disabled={!label.trim() || creating}>
             {creating ? 'Creating…' : 'Create token'}
-          </button>
+          </Button>
         </form>
         <div className="token-list" aria-busy={tokensLoading}>
           {tokens.filter((token) => !token.revokedAt).length > 0 ? (
@@ -204,13 +214,9 @@ export function SettingsDialog({
                         : 'Never used'}
                     </span>
                   </div>
-                  <button
-                    className="button button--danger button--small"
-                    type="button"
-                    onClick={() => setRevoking(token)}
-                  >
+                  <Button variant="danger" size="sm" onClick={() => setRevoking(token)}>
                     Revoke
-                  </button>
+                  </Button>
                 </div>
               ))
           ) : (
@@ -234,7 +240,8 @@ export function SettingsDialog({
               <strong>Row density</strong>
               <small>Choose more breathing room or more entries on screen.</small>
             </span>
-            <select
+            <NativeSelect
+              className="max-w-[135px]"
               value={preferences.density}
               onChange={(event) =>
                 onUpdatePreferences({
@@ -244,39 +251,29 @@ export function SettingsDialog({
             >
               <option value="comfortable">Comfortable</option>
               <option value="compact">Compact</option>
-            </select>
+            </NativeSelect>
           </label>
           <label>
             <span>
-              <strong>Type badges</strong>
+              <strong id={typeBadgesLabelId}>Type badges</strong>
               <small>Show type labels below entries.</small>
             </span>
-            <span className="preference-toggle">
-              <input
-                type="checkbox"
-                checked={preferences.showTypeBadges}
-                onChange={(event) =>
-                  onUpdatePreferences({ showTypeBadges: event.currentTarget.checked })
-                }
-              />
-              <span className="preference-toggle__track" aria-hidden="true" />
-            </span>
+            <Switch
+              aria-labelledby={typeBadgesLabelId}
+              checked={preferences.showTypeBadges}
+              onCheckedChange={(checked) => onUpdatePreferences({ showTypeBadges: checked })}
+            />
           </label>
           <label>
             <span>
-              <strong>Assistant highlighting</strong>
+              <strong id={highlightLabelId}>Assistant highlighting</strong>
               <small>Tint entries written by an agent.</small>
             </span>
-            <span className="preference-toggle">
-              <input
-                type="checkbox"
-                checked={preferences.highlightAiEntries}
-                onChange={(event) =>
-                  onUpdatePreferences({ highlightAiEntries: event.currentTarget.checked })
-                }
-              />
-              <span className="preference-toggle__track" aria-hidden="true" />
-            </span>
+            <Switch
+              aria-labelledby={highlightLabelId}
+              checked={preferences.highlightAiEntries}
+              onCheckedChange={(checked) => onUpdatePreferences({ highlightAiEntries: checked })}
+            />
           </label>
         </div>
       </section>
@@ -298,9 +295,9 @@ export function SettingsDialog({
               <small>Reload when you have finished this thought.</small>
             </span>
           </div>
-          <button className="button button--primary" type="button" onClick={onActivateUpdate}>
+          <Button variant="primary" onClick={onActivateUpdate}>
             Reload
-          </button>
+          </Button>
         </section>
       ) : null}
     </Dialog>
