@@ -1778,7 +1778,7 @@ function bounded_command {
   esac
 }
 ${launchdAbsence}
-if wait_launchctl_job_absent 0.6; then
+if wait_launchctl_job_absent 1.2; then
   print -- launchd-absence-pass
   exit 0
 fi
@@ -1800,7 +1800,11 @@ exit 1
           TEST_ABSENCE_MODE: mode,
         },
       });
-      assert.ok(Date.now() - startedAt < 1_500, `${mode} absence probe was not bounded`);
+      // The flap path needs four probes across three external `sleep 0.1`
+      // spawns; at 0.6s the budget sat on the edge of macOS process-spawn
+      // latency and the suite coin-flipped on busy machines. 1.2s keeps the
+      // boundedness claim (the real cutover allows 5.0s) without the flake.
+      assert.ok(Date.now() - startedAt < 3_000, `${mode} absence probe was not bounded`);
       assert.equal(result.status === 0, shouldPass, `${mode}: ${result.stderr}`);
       if (shouldPass) assert.match(result.stdout, /launchd-absence-pass/);
     }
