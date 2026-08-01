@@ -349,7 +349,7 @@ async function measureOptimisticVisibility(page, warmupCount, sampleCount, runId
   const total = warmupCount + sampleCount;
   for (let index = 0; index < total; index += 1) {
     const text = `Release benchmark optimistic ${runId}-${index}`;
-    const input = page.getByRole('textbox', { name: 'Add an entry' });
+    const input = page.getByRole('combobox', { name: 'Add an entry' });
     await input.fill(`- ${text} #benchmark`);
     const duration = await page.evaluate(async (expectedText) => {
       const form = globalThis.document.querySelector('.composer__form');
@@ -497,7 +497,7 @@ async function runBenchmark({ baseUrl, mcpUrl, samples, warmup }) {
       { timeout: 15_000 },
     );
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    await page.getByRole('textbox', { name: 'Add an entry' }).waitFor({ timeout: 15_000 });
+    await page.getByRole('combobox', { name: 'Add an entry' }).waitFor({ timeout: 15_000 });
     await paired;
 
     const moduleSources = await page
