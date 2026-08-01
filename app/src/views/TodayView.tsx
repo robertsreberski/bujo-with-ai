@@ -150,16 +150,18 @@ export function TodayView({
   }, [selectedDate, selectedDateFocusKey]);
 
   return (
-    <section className="screen" aria-label="Daily log">
+    <section className="min-h-full" aria-label="Daily log">
       {leftovers.length > 0 ? (
-        <aside className="leftovers-card">
-          <Icon name="info" size={16} />
+        <aside className="mx-4 mt-3.5 mb-1 flex items-start gap-[11px] rounded-lg border border-border px-[14px] py-[13px] text-fg-mute">
+          <Icon name="info" size={16} className="mt-0.5 flex-none" />
           <div>
-            <h2>
+            <h2 className="text-base font-medium text-fg">
               {leftovers.length} {leftovers.length === 1 ? 'task' : 'tasks'} from an earlier day{' '}
               {leftovers.length === 1 ? 'is' : 'are'} still open
             </h2>
-            <p>Decide what to do with each one: move it to today, finish it, or drop it.</p>
+            <p className="pt-0.5 text-sm leading-[1.5] text-fg-mute">
+              Decide what to do with each one: move it to today, finish it, or drop it.
+            </p>
             <Button
               variant="primary"
               className="mt-[9px]"
@@ -179,18 +181,25 @@ export function TodayView({
           : `${sectionEntries.length} ${sectionEntries.length === 1 ? 'entry' : 'entries'}`;
         return (
           <section
-            className="day-section"
+            className="day-section scroll-mt-1 outline-none"
             data-day={date}
             key={date}
             tabIndex={-1}
             aria-labelledby={`day-${date}`}
           >
-            <header className="day-section__header">
-              <div>
-                <h2 id={`day-${date}`}>{date === today ? 'Today' : formatLongDate(date)}</h2>
-                {date === today ? <span>{formatLongDate(date)}</span> : null}
+            <header className="sticky top-0 z-(--z-day-header) flex min-h-[42px] items-baseline justify-between gap-2.5 bg-bg px-4 pt-3.5 pb-1.5">
+              <div className="flex min-w-0 items-baseline gap-2">
+                <h2
+                  className="overflow-hidden text-base font-semibold tracking-[-0.005em] text-ellipsis whitespace-nowrap"
+                  id={`day-${date}`}
+                >
+                  {date === today ? 'Today' : formatLongDate(date)}
+                </h2>
+                {date === today ? (
+                  <span className="flex-none text-xs text-fg-mute">{formatLongDate(date)}</span>
+                ) : null}
               </div>
-              <span>{count}</span>
+              <span className="flex-none text-xs text-fg-mute">{count}</span>
             </header>
             {sectionEntries.length > 0 ? (
               sectionEntries.map((entry) => (
@@ -203,14 +212,14 @@ export function TodayView({
                 />
               ))
             ) : (
-              <div className="empty-day">
+              <div className="border-b border-bg-line px-4 pt-[13px] pb-4 text-sm text-fg-mute">
                 <p>No entries yet. The composer is ready when you are.</p>
               </div>
             )}
           </section>
         );
       })}
-      <div className="screen-end" aria-hidden="true" />
+      <div className="h-6" aria-hidden="true" />
     </section>
   );
 }

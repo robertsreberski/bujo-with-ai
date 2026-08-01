@@ -9,6 +9,14 @@ import {
 } from './ui/alert-dialog';
 import { Button } from './ui/button';
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from './ui/dialog';
+import {
+  DIALOG_ACTIONS_END,
+  DIALOG_BODY,
+  DIALOG_DESCRIPTION,
+  DIALOG_HEADER,
+  DIALOG_HEADING,
+  DIALOG_TITLE,
+} from './ui/dialog-classes';
 
 interface DialogProps extends PropsWithChildren {
   title: string;
@@ -74,10 +82,12 @@ export function Dialog({
         {...(labelledBy ? { 'aria-labelledby': labelledBy } : {})}
         {...(description ? {} : { 'aria-describedby': undefined })}
       >
-        <header className="dialog-header">
-          <div className="dialog-heading">
-            <DialogTitle>{title}</DialogTitle>
-            {description ? <DialogDescription>{description}</DialogDescription> : null}
+        <header className={DIALOG_HEADER}>
+          <div className={DIALOG_HEADING}>
+            <DialogTitle className={DIALOG_TITLE}>{title}</DialogTitle>
+            {description ? (
+              <DialogDescription className={DIALOG_DESCRIPTION}>{description}</DialogDescription>
+            ) : null}
           </div>
           <Button
             variant="ghost"
@@ -89,7 +99,7 @@ export function Dialog({
             <Icon name="close" size={15} />
           </Button>
         </header>
-        <div className="dialog-body scrollable">{children}</div>
+        <div className={DIALOG_BODY}>{children}</div>
       </DialogContent>
     </DialogRoot>
   );
@@ -125,10 +135,12 @@ export function ConfirmDialog({
       }}
     >
       <AlertDialogContent onCloseAutoFocus={restoreFocus}>
-        <header className="dialog-header">
-          <div className="dialog-heading">
-            <AlertDialogTitle>{title}</AlertDialogTitle>
-            <AlertDialogDescription>{description}</AlertDialogDescription>
+        <header className={DIALOG_HEADER}>
+          <div className={DIALOG_HEADING}>
+            <AlertDialogTitle className={DIALOG_TITLE}>{title}</AlertDialogTitle>
+            <AlertDialogDescription className={DIALOG_DESCRIPTION}>
+              {description}
+            </AlertDialogDescription>
           </div>
           <Button
             variant="ghost"
@@ -140,8 +152,8 @@ export function ConfirmDialog({
             <Icon name="close" size={15} />
           </Button>
         </header>
-        <div className="dialog-body scrollable">
-          <div className="dialog-actions dialog-actions--end">
+        <div className={DIALOG_BODY}>
+          <div className={DIALOG_ACTIONS_END}>
             {/* Cancel carries no handler of its own: Radix closes through
                 `onOpenChange`, which already reports the cancellation. */}
             <AlertDialogCancel asChild>

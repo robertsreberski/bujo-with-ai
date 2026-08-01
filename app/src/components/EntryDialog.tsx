@@ -1,25 +1,20 @@
-import { useMemo, useRef, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { ConfirmDialog, Dialog } from './Dialog';
+import { EntryDetailFields } from './EntryDetailFields';
+import { EntryEditForm } from './EntryEditForm';
 import { Icon } from './Icon';
-import { Button } from './ui/button';
+import { Button, type ButtonVariant } from './ui/button';
 import { NativeSelect } from './ui/native-select';
-import { entryIcon } from './entry-icons';
-import { formatLongDate } from './dates';
-import {
-  ENTRY_TYPES,
-  TYPE_LABELS,
-  isActionable,
-  type EntryPatch,
-  type EntryState,
-  type EntryType,
-  type JournalCollection,
-  type JournalEntry,
-} from './types';
+import { ACTION_GRID } from './ui/dialog-classes';
+import { buildEntryActions, type EntryAction, type EntryActionId } from './entry-actions';
+import { isActionable, type EntryPatch, type JournalCollection, type JournalEntry } from './types';
 
 interface EntryDialogProps {
   entry: JournalEntry;
   collections: JournalCollection[];
   today: string;
+  /** The month the surrounding view is showing, or null outside the month log. */
+  contextMonth: string | null;
   onClose: () => void;
   onUpdate: (entry: JournalEntry, patch: EntryPatch, message: string) => void;
   onDelete: (entry: JournalEntry) => void;
@@ -27,16 +22,25 @@ interface EntryDialogProps {
   onSchedule: (entry: JournalEntry) => void;
 }
 
-const normalizeStateForType = (type: EntryType, state: EntryState): EntryState => {
-  const actionable = type === 'task' || type === 'habit';
-  if (!actionable) return 'logged';
-  return state === 'logged' ? 'open' : state;
+const FILE_CONTROL =
+  'flex min-h-[34px] min-w-0 items-center gap-1.5 rounded-md border border-border-control bg-bg pl-2.5 text-fg touch:min-h-10';
+
+const variantFor = (action: EntryAction): ButtonVariant => {
+  if (action.destructive) return 'danger';
+  return action.primary ? 'primary' : 'secondary';
 };
 
+/**
+ * The pointer-fine surface for one entry: facts, actions, edit form, and the
+ * delete confirmation. The action row renders straight from
+ * `buildEntryActions`, so a coarse-pointer sheet built on the same descriptors
+ * offers exactly the same set.
+ */
 export function EntryDialog({
   entry,
   collections,
   today,
+  contextMonth,
   onClose,
   onUpdate,
   onDelete,
@@ -45,11 +49,6 @@ export function EntryDialog({
 }: EntryDialogProps) {
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [text, setText] = useState(entry.text);
-  const [type, setType] = useState<EntryType>(entry.type);
-  const [date, setDate] = useState(entry.date);
-  const [time, setTime] = useState(entry.time ?? '');
-  const [tags, setTags] = useState(entry.tags.join(', '));
   const textRef = useRef<HTMLInputElement>(null);
   const visibleCollections = useMemo(
     () =>
@@ -58,43 +57,40 @@ export function EntryDialog({
       ),
     [collections],
   );
-  const actionable = isActionable(entry);
-  const open = entry.state === 'open';
-  const done = entry.state === 'done';
-  const normalizedTagTokens = useMemo(
-    () =>
-      tags
-        .split(/[\s,]+/)
-        .map((tag) => tag.replace(/^#/, '').toLowerCase())
-        .filter(Boolean),
-    [tags],
+  const actions = useMemo(
+    () => buildEntryActions(entry, { contextMonth, today }).filter((action) => action.available),
+    [contextMonth, entry, today],
   );
-  const invalidTags = useMemo(
-    () => [...new Set(normalizedTagTokens.filter((tag) => !/^[a-z0-9-]+$/.test(tag)))],
-    [normalizedTagTokens],
-  );
-  const normalizedTags = useMemo(() => [...new Set(normalizedTagTokens)], [normalizedTagTokens]);
-  const tagError =
-    invalidTags.length > 0
-      ? `Tags use letters, numbers, and hyphens only: ${invalidTags.join(', ')}`
-      : null;
 
-  const save = (event: FormEvent) => {
-    event.preventDefault();
-    const normalizedText = text.replace(/\s+/g, ' ').trim();
-    if (!normalizedText || tagError) return;
-    onUpdate(
-      entry,
-      {
-        text: normalizedText,
-        type,
-        state: normalizeStateForType(type, entry.state),
-        date,
-        time: time || null,
-        tags: normalizedTags,
-      },
-      'Entry updated',
-    );
+  const activate = (id: EntryActionId) => {
+    switch (id) {
+      case 'edit':
+        setEditing(true);
+        return;
+      case 'toggle-done':
+        onUpdate(
+          entry,
+          { state: entry.state === 'done' ? 'open' : 'done' },
+          entry.state === 'done' ? 'Marked not done' : 'Marked done',
+        );
+        break;
+      case 'move-to-today':
+        if (isActionable(entry)) onMigrate(entry);
+        else onUpdate(entry, { date: today, collection: null }, 'Moved to today');
+        break;
+      case 'schedule-month':
+        onSchedule(entry);
+        break;
+      case 'drop':
+        onUpdate(entry, { state: 'cancelled' }, 'Dropped');
+        break;
+      case 'delete':
+        setConfirmDelete(true);
+        return;
+      case 'file-collection':
+        // Filing carries a value, so the select drives it directly.
+        return;
+    }
     onClose();
   };
 
@@ -121,215 +117,56 @@ export function EntryDialog({
       initialFocusRef={editing ? textRef : undefined}
     >
       {editing ? (
-        <form className="form-stack" onSubmit={save}>
-          <label className="field">
-            <span>Text</span>
-            <input
-              ref={textRef}
-              value={text}
-              maxLength={500}
-              required
-              onChange={(event) => setText(event.currentTarget.value)}
-            />
-          </label>
-          <div className="form-grid">
-            <label className="field">
-              <span>Type</span>
-              <NativeSelect
-                className="w-full"
-                value={type}
-                onChange={(event) => setType(event.currentTarget.value as EntryType)}
-              >
-                {ENTRY_TYPES.map((option) => (
-                  <option value={option} key={option}>
-                    {TYPE_LABELS[option]}
-                  </option>
-                ))}
-              </NativeSelect>
-            </label>
-            <label className="field">
-              <span>Date</span>
-              <input
-                type="date"
-                value={date}
-                required
-                onChange={(event) => setDate(event.currentTarget.value)}
-              />
-            </label>
-          </div>
-          <div className="form-grid">
-            <label className="field">
-              <span>
-                Time <small>optional</small>
-              </span>
-              <input
-                type="time"
-                value={time}
-                onChange={(event) => setTime(event.currentTarget.value)}
-              />
-            </label>
-            <label className="field">
-              <span>
-                Tags <small>comma-separated</small>
-              </span>
-              <input
-                value={tags}
-                onChange={(event) => setTags(event.currentTarget.value)}
-                placeholder="work, design"
-                aria-invalid={tagError ? true : undefined}
-                aria-describedby={tagError ? 'entry-tags-error' : undefined}
-              />
-              {tagError ? (
-                <small className="field-error" id="entry-tags-error" role="alert">
-                  {tagError}
-                </small>
-              ) : null}
-            </label>
-          </div>
-          <div className="dialog-actions dialog-actions--end">
-            <Button variant="secondary" onClick={() => setEditing(false)}>
-              Cancel
-            </Button>
-            <Button variant="primary" type="submit" disabled={!text.trim() || Boolean(tagError)}>
-              Save changes
-            </Button>
-          </div>
-        </form>
+        <EntryEditForm
+          entry={entry}
+          textRef={textRef}
+          onCancel={() => setEditing(false)}
+          onSave={(patch) => {
+            onUpdate(entry, patch, 'Entry updated');
+            onClose();
+          }}
+        />
       ) : (
         <>
-          <div className="entry-detail-fields">
-            <div>
-              <span>Type</span>
-              <strong>
-                <Icon name={entryIcon[entry.type]} size={13} /> {TYPE_LABELS[entry.type]}
-              </strong>
-            </div>
-            <div>
-              <span>Status</span>
-              <strong>
-                {entry.state === 'logged'
-                  ? 'Logged'
-                  : entry.state.replace(/^./, (value) => value.toUpperCase())}
-              </strong>
-            </div>
-            <div>
-              <span>Date</span>
-              <strong>
-                {formatLongDate(entry.date)} {entry.time ? <small>at {entry.time}</small> : null}
-              </strong>
-            </div>
-            <div>
-              <span>Tags</span>
-              <strong>
-                {entry.tags.length ? entry.tags.map((tag) => `#${tag}`).join(' ') : '—'}
-              </strong>
-            </div>
-            <div>
-              <span>Filed in</span>
-              <strong>
-                {entry.collection?.startsWith('month:')
-                  ? 'Monthly log'
-                  : (visibleCollections.find((collection) => collection.id === entry.collection)
-                      ?.name ?? 'Daily log')}
-              </strong>
-            </div>
-            <div>
-              <span>Added by</span>
-              <strong>{entry.author === 'ai' ? 'Assistant' : 'You'}</strong>
-            </div>
-          </div>
-          {entry.author === 'ai' && entry.source ? (
-            <aside className="provenance-panel">
-              <header>
-                <Icon name="sparkle" size={12} /> <strong>Added automatically</strong>
-              </header>
-              <p>{entry.source}</p>
-            </aside>
-          ) : null}
-          <div className="entry-detail-actions">
-            <Button variant="secondary" onClick={() => setEditing(true)}>
-              <Icon name="edit" size={14} /> Edit
-            </Button>
-            {actionable && (open || done) ? (
-              <Button
-                variant="primary"
-                onClick={() => {
-                  onUpdate(
-                    entry,
-                    { state: done ? 'open' : 'done' },
-                    done ? 'Marked not done' : 'Marked done',
-                  );
-                  onClose();
-                }}
-              >
-                <Icon name="check" size={14} /> {done ? 'Mark not done' : 'Mark done'}
-              </Button>
-            ) : null}
-            {!actionable || open ? (
-              <Button
-                variant={actionable ? 'secondary' : 'primary'}
-                disabled={entry.date === today && entry.collection === null && !actionable}
-                onClick={() => {
-                  if (actionable) onMigrate(entry);
-                  else onUpdate(entry, { date: today, collection: null }, 'Moved to today');
-                  onClose();
-                }}
-              >
-                <Icon name="arrowRight" size={14} /> Move to today
-              </Button>
-            ) : null}
-            {actionable && open ? (
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  onSchedule(entry);
-                  onClose();
-                }}
-              >
-                <Icon name="calendar" size={14} /> To monthly log
-              </Button>
-            ) : null}
-            {!actionable ? (
-              <label className="flex min-h-[34px] min-w-0 items-center gap-1.5 rounded-md border border-border-control bg-bg pl-2.5 text-fg touch:min-h-10">
-                <span className="sr-only">File in collection</span>
-                <Icon name="folder" size={14} />
-                <NativeSelect
-                  className="h-8 min-w-0 flex-1 rounded-none border-0 bg-transparent pr-2 pl-0 text-sm"
-                  value={entry.collection?.startsWith('month:') ? '' : (entry.collection ?? '')}
-                  aria-label="File in collection"
-                  onChange={(event) => {
-                    onUpdate(
-                      entry,
-                      { collection: event.currentTarget.value || null },
-                      'Entry filed',
-                    );
-                    onClose();
-                  }}
+          <EntryDetailFields entry={entry} collections={visibleCollections} />
+          <div className={ACTION_GRID}>
+            {actions.map((action) =>
+              action.id === 'file-collection' ? (
+                <label className={FILE_CONTROL} key={action.id}>
+                  <span className="sr-only">{action.label}</span>
+                  <Icon name={action.icon} size={14} />
+                  <NativeSelect
+                    className="h-8 min-w-0 flex-1 rounded-none border-0 bg-transparent pr-2 pl-0 text-sm"
+                    value={entry.collection?.startsWith('month:') ? '' : (entry.collection ?? '')}
+                    aria-label={action.label}
+                    onChange={(event) => {
+                      onUpdate(
+                        entry,
+                        { collection: event.currentTarget.value || null },
+                        'Entry filed',
+                      );
+                      onClose();
+                    }}
+                  >
+                    <option value="">Daily log</option>
+                    {visibleCollections.map((collection) => (
+                      <option value={collection.id} key={collection.id}>
+                        {collection.name}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </label>
+              ) : (
+                <Button
+                  variant={variantFor(action)}
+                  disabled={action.disabled}
+                  key={action.id}
+                  onClick={() => activate(action.id)}
                 >
-                  <option value="">Daily log</option>
-                  {visibleCollections.map((collection) => (
-                    <option value={collection.id} key={collection.id}>
-                      {collection.name}
-                    </option>
-                  ))}
-                </NativeSelect>
-              </label>
-            ) : null}
-            {actionable && open ? (
-              <Button
-                variant="danger"
-                onClick={() => {
-                  onUpdate(entry, { state: 'cancelled' }, 'Dropped');
-                  onClose();
-                }}
-              >
-                <Icon name="trash" size={14} /> Drop
-              </Button>
-            ) : !actionable ? (
-              <Button variant="danger" onClick={() => setConfirmDelete(true)}>
-                <Icon name="trash" size={14} /> Delete
-              </Button>
-            ) : null}
+                  <Icon name={action.icon} size={14} /> {action.label}
+                </Button>
+              ),
+            )}
           </div>
         </>
       )}

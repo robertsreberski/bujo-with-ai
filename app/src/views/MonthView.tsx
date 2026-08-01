@@ -3,6 +3,17 @@ import { EntryRow } from '../components/EntryRow';
 import { Icon } from '../components/Icon';
 import { Button } from '../components/ui/button';
 import { daysInMonth, formatLongDate, formatMonth, mondayStartOffset } from '../components/dates';
+import { cn } from '../lib/utils';
+import {
+  CALENDAR_DAY,
+  CARD,
+  SECTION,
+  SECTION_COPY,
+  SECTION_COUNT,
+  SECTION_EMPTY,
+  SECTION_HEADING,
+  SECTION_TITLE,
+} from './view-classes';
 import type { DisplayPreferences, JournalEntry, JournalSummary } from '../components/types';
 
 interface MonthViewProps {
@@ -92,9 +103,9 @@ export function MonthView({
   }, [entries, month]);
 
   return (
-    <section className="screen month-screen" aria-label={`${formatMonth(month)} monthly log`}>
-      <div className="month-calendar">
-        <header className="month-calendar__header">
+    <section className="min-h-full" aria-label={`${formatMonth(month)} monthly log`}>
+      <div className="mx-4 mt-3.5 rounded-xl border border-border p-3 max-[350px]:px-0">
+        <header className="flex items-center justify-between px-0.5 pb-2.5">
           <Button
             variant="secondary"
             size="icon"
@@ -104,7 +115,7 @@ export function MonthView({
           >
             <Icon name="chevronLeft" size={14} />
           </Button>
-          <h2>{formatMonth(month)}</h2>
+          <h2 className="text-base font-medium">{formatMonth(month)}</h2>
           <Button
             variant="secondary"
             size="icon"
@@ -115,16 +126,28 @@ export function MonthView({
             <Icon name="chevronRight" size={14} />
           </Button>
         </header>
-        <div className="calendar-grid" role="group" aria-label={`${formatMonth(month)} calendar`}>
+        <div
+          className="grid grid-cols-7 gap-0.5 max-[350px]:gap-px"
+          role="group"
+          aria-label={`${formatMonth(month)} calendar`}
+        >
           {WEEKDAYS.map((weekday) => (
-            <div className="calendar-grid__weekday" aria-hidden="true" key={weekday}>
+            <div
+              className="grid h-[26px] place-items-center text-tag font-medium text-fg-mute"
+              aria-hidden="true"
+              key={weekday}
+            >
               {weekday}
             </div>
           ))}
           {cells.map((cell, index) =>
             cell ? (
               <button
-                className={`calendar-day${cell.date === today ? ' calendar-day--today' : ''}`}
+                className={cn(
+                  CALENDAR_DAY,
+                  cell.date === today &&
+                    'calendar-day--today border-border bg-bg-line font-semibold text-fg',
+                )}
                 type="button"
                 aria-label={`${formatLongDate(cell.date)} — ${dayCounts.get(cell.date) ?? 0} entries`}
                 title={`${formatLongDate(cell.date)} — ${dayCounts.get(cell.date) ?? 0} entries`}
@@ -134,7 +157,12 @@ export function MonthView({
               >
                 <span>{cell.day}</span>
                 {(dayCounts.get(cell.date) ?? 0) > 0 ? (
-                  <span className="calendar-day__dot" />
+                  <span
+                    className={cn(
+                      'absolute bottom-1 size-1 rounded-full',
+                      cell.date === today ? 'bg-primary' : 'bg-border-strong',
+                    )}
+                  />
                 ) : null}
               </button>
             ) : (
@@ -144,13 +172,15 @@ export function MonthView({
         </div>
       </div>
 
-      <section className="month-section" aria-labelledby="monthly-log-title">
-        <header className="section-heading">
+      <section className={SECTION} aria-labelledby="monthly-log-title">
+        <header className={SECTION_HEADING}>
           <div>
-            <h2 id="monthly-log-title">Monthly log</h2>
-            <p>Things that belong to the month, not to a day.</p>
+            <h2 className={SECTION_TITLE} id="monthly-log-title">
+              Monthly log
+            </h2>
+            <p className={SECTION_COPY}>Things that belong to the month, not to a day.</p>
           </div>
-          <span>{monthlyEntries.length} items</span>
+          <span className={SECTION_COUNT}>{monthlyEntries.length} items</span>
         </header>
         {monthlyEntries.length > 0 ? (
           monthlyEntries.map((entry) => (
@@ -163,29 +193,36 @@ export function MonthView({
             />
           ))
         ) : (
-          <div className="section-empty">Nothing belongs to this month yet.</div>
+          <div className={SECTION_EMPTY}>Nothing belongs to this month yet.</div>
         )}
       </section>
 
       {habits.length > 0 ? (
-        <section className="month-section" aria-labelledby="habits-title">
-          <header className="section-heading">
+        <section className={SECTION} aria-labelledby="habits-title">
+          <header className={SECTION_HEADING}>
             <div>
-              <h2 id="habits-title">Habits</h2>
-              <p>A quiet view of the days you showed up.</p>
+              <h2 className={SECTION_TITLE} id="habits-title">
+                Habits
+              </h2>
+              <p className={SECTION_COPY}>A quiet view of the days you showed up.</p>
             </div>
           </header>
-          <div className="habit-card">
+          <div className="rounded-xl border border-border px-[13px] py-3">
             {habits.map(({ name, done }) => (
-              <div className="habit-row" key={name}>
-                <div className="habit-row__heading">
-                  <span>{name}</span>
-                  <span>
+              <div
+                className="border-b border-bg-line pb-[11px] last:border-b-0 last:pb-0 [&:not(:first-child)]:pt-[11px]"
+                key={name}
+              >
+                <div className="flex items-baseline justify-between gap-2.5 pb-1.5">
+                  <span className="overflow-hidden text-sm font-medium text-ellipsis whitespace-nowrap">
+                    {name}
+                  </span>
+                  <span className="flex-none text-tag text-fg-mute">
                     {done.size} / {daysInMonth(month)}
                   </span>
                 </div>
                 <div
-                  className="habit-grid"
+                  className="grid grid-cols-[repeat(31,minmax(3px,1fr))] gap-0.5"
                   role="list"
                   aria-label={`${name}: ${done.size} of ${daysInMonth(month)} days completed`}
                 >
@@ -194,7 +231,10 @@ export function MonthView({
                       const date = `${month}-${String(day).padStart(2, '0')}`;
                       return (
                         <span
-                          className={done.has(day) ? 'habit-cell habit-cell--done' : 'habit-cell'}
+                          className={cn(
+                            'habit-cell aspect-square max-h-[9px] rounded-sm',
+                            done.has(day) ? 'habit-cell--done bg-primary' : 'bg-bg-line',
+                          )}
                           role="listitem"
                           aria-label={`${formatLongDate(date)}: ${done.has(day) ? 'done' : 'not done'}`}
                           title={`${date}: ${done.has(day) ? 'done' : 'not done'}`}
@@ -211,18 +251,23 @@ export function MonthView({
       ) : null}
 
       {summary && summary.weekStart.startsWith(month) ? (
-        <section className="summary-card" aria-labelledby="weekly-summary-title">
-          <div className="summary-card__body">
-            <header>
-              <Icon name="sparkle" size={13} />
-              <h2 id="weekly-summary-title">Weekly summary</h2>
-              <span>
+        <section
+          className={cn(CARD, 'summary-card mx-4 mt-[18px]')}
+          aria-labelledby="weekly-summary-title"
+        >
+          <div className="px-[14px] pt-[13px] pb-3">
+            <header className="flex items-center gap-[7px] pb-[7px]">
+              <Icon name="sparkle" size={13} className="text-ai-fg" />
+              <h2 className="text-sm font-medium" id="weekly-summary-title">
+                Weekly summary
+              </h2>
+              <span className="text-tag text-fg-mute">
                 {summary.status === 'stale' ? 'rewrite requested' : 'generated automatically'}
               </span>
             </header>
-            <p>{summary.text}</p>
+            <p className="text-base leading-[1.6] text-fg-body text-pretty">{summary.text}</p>
           </div>
-          <footer>
+          <footer className="flex gap-2 border-t border-border bg-bg-hover px-[14px] py-2.5">
             <Button
               variant="primary"
               disabled={summary.status === 'saved'}
@@ -240,7 +285,7 @@ export function MonthView({
           </footer>
         </section>
       ) : null}
-      <div className="screen-end" aria-hidden="true" />
+      <div className="h-6" aria-hidden="true" />
     </section>
   );
 }

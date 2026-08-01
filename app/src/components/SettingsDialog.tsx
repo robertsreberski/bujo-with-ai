@@ -6,7 +6,22 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { NativeSelect } from './ui/native-select';
 import { Switch } from './ui/switch';
+import { AI_PANEL, AI_PANEL_COPY, AI_PANEL_HEADER } from './ui/dialog-classes';
+import { cn } from '../lib/utils';
 import type { DisplayPreferences } from './types';
+
+const SECTION = 'mb-[18px] last:mb-0';
+/** `.mcp-status-card` / `.update-card`: one boxed row with a trailing control. */
+const STATUS_CARD =
+  'flex items-center justify-between gap-2.5 rounded-lg border border-border px-3 py-[11px]';
+/** `.tool-list` / `.token-list` / `.preferences-card`: a clipped, hairline-split list. */
+const LIST_CARD = 'overflow-hidden rounded-lg border border-border';
+const SECTION_HEADING = 'pb-2';
+const CARD_STRONG = 'text-sm font-medium';
+const CARD_SMALL = 'text-tag text-fg-mute';
+const PREFERENCE_ROW =
+  'flex min-h-[54px] items-center justify-between gap-3 border-b border-bg-line px-[11px] py-2 last:border-b-0';
+const PREFERENCE_COPY = 'flex min-w-0 flex-col';
 
 export type AgentTokenView = AgentToken;
 
@@ -118,11 +133,13 @@ export function SettingsDialog({
       onClose={onClose}
       size="wide"
     >
-      <section className="settings-section">
-        <div className="mcp-status-card">
-          <div>
-            <strong>MCP server</strong>
-            <code>{mcpEndpoint}</code>
+      <section className={SECTION}>
+        <div className={cn(STATUS_CARD, 'mcp-status-card')}>
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <strong className={CARD_STRONG}>MCP server</strong>
+            <code className="overflow-hidden text-tag text-fg-mute text-ellipsis whitespace-nowrap">
+              {mcpEndpoint}
+            </code>
           </div>
           <Badge variant="connection" className="connection-pill">
             <i
@@ -137,14 +154,19 @@ export function SettingsDialog({
             {statusLabel}
           </Badge>
         </div>
-        <p className="settings-explainer">
+        <p className="pt-[11px] pb-2 text-sm leading-[1.55] text-fg-mute">
           All five write tools apply immediately. Every assistant mutation is attributed,
           snapshotted, rate-limited, and available to revert from Review.
         </p>
-        <div className="tool-list" aria-label="MCP tool permissions">
+        <div className={LIST_CARD} aria-label="MCP tool permissions">
           {tools.map(([name, mode]) => (
-            <div className="tool-row" key={name}>
-              <code>{name}</code>
+            <div
+              className="flex min-h-[38px] items-center gap-2.5 border-b border-bg-line px-[11px] last:border-b-0"
+              key={name}
+            >
+              <code className="min-w-0 flex-1 overflow-hidden text-tag text-ellipsis whitespace-nowrap">
+                {name}
+              </code>
               <Badge
                 variant={mode === 'automatic' ? 'modeAuto' : 'modeRead'}
                 className="mode-badge"
@@ -156,21 +178,27 @@ export function SettingsDialog({
         </div>
       </section>
 
-      <section className="settings-section" aria-labelledby="tokens-title">
-        <header className="settings-section__heading">
+      <section className={SECTION} aria-labelledby="tokens-title">
+        <header className={SECTION_HEADING}>
           <div>
-            <h3 id="tokens-title">Agent tokens</h3>
-            <p>Use one token per agent so access can be revoked independently.</p>
+            <h3 className="text-base font-semibold" id="tokens-title">
+              Agent tokens
+            </h3>
+            <p className="pt-0.5 text-xs text-fg-mute">
+              Use one token per agent so access can be revoked independently.
+            </p>
           </div>
         </header>
         {secret ? (
-          <aside className="token-secret" aria-live="polite">
-            <header>
+          <aside className={cn(AI_PANEL, 'mb-2.5')} aria-live="polite">
+            <header className={AI_PANEL_HEADER}>
               <Icon name="check" size={13} /> <strong>Token created — copy it now</strong>
             </header>
-            <p>This secret is shown once and cannot be recovered.</p>
-            <div>
-              <code>{secret}</code>
+            <p className={AI_PANEL_COPY}>This secret is shown once and cannot be recovered.</p>
+            <div className="flex items-center gap-2 pt-2">
+              <code className="min-w-0 flex-1 overflow-hidden rounded-sm bg-[rgb(0_0_0/22%)] px-2 py-[7px] text-2xs text-fg text-ellipsis whitespace-nowrap">
+                {secret}
+              </code>
               <Button variant="secondary" size="sm" onClick={copySecret}>
                 {copyState === 'copied'
                   ? 'Copied'
@@ -179,18 +207,23 @@ export function SettingsDialog({
                     : 'Copy'}
               </Button>
             </div>
-            <button className="token-secret__dismiss" type="button" onClick={() => setSecret(null)}>
+            <button
+              className="mt-[5px] min-h-[34px] text-xs text-ai-fg underline underline-offset-[3px] touch:min-h-10"
+              type="button"
+              onClick={() => setSecret(null)}
+            >
               I have saved it
             </button>
           </aside>
         ) : null}
-        <form className="token-create" onSubmit={create}>
+        <form className="mb-2 flex gap-2" onSubmit={create}>
           <label className="sr-only" htmlFor="new-token-label">
             New agent token label
           </label>
           <input
             ref={labelRef}
             id="new-token-label"
+            className="min-w-0 flex-1"
             value={label}
             maxLength={80}
             placeholder="e.g. Claude Desktop"
@@ -200,15 +233,20 @@ export function SettingsDialog({
             {creating ? 'Creating…' : 'Create token'}
           </Button>
         </form>
-        <div className="token-list" aria-busy={tokensLoading}>
+        <div className={LIST_CARD} aria-busy={tokensLoading}>
           {tokens.filter((token) => !token.revokedAt).length > 0 ? (
             tokens
               .filter((token) => !token.revokedAt)
               .map((token) => (
-                <div className="token-row" key={token.id}>
-                  <div>
-                    <strong>{token.label}</strong>
-                    <span>
+                <div
+                  className="flex min-h-[55px] items-center justify-between gap-2.5 border-b border-bg-line px-2.5 py-2 last:border-b-0"
+                  key={token.id}
+                >
+                  <div className="flex min-w-0 flex-col">
+                    <strong className="overflow-hidden text-sm font-medium text-ellipsis whitespace-nowrap">
+                      {token.label}
+                    </strong>
+                    <span className={CARD_SMALL}>
                       {token.lastUsedAt
                         ? `Last used ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(token.lastUsedAt))}`
                         : 'Never used'}
@@ -220,25 +258,31 @@ export function SettingsDialog({
                 </div>
               ))
           ) : (
-            <p className="token-list__empty">
+            <p className="p-3 text-center text-tag text-fg-mute">
               {tokensLoading ? 'Loading tokens…' : 'No active agent tokens.'}
             </p>
           )}
         </div>
       </section>
 
-      <section className="settings-section" aria-labelledby="display-title">
-        <header className="settings-section__heading">
+      <section className={SECTION} aria-labelledby="display-title">
+        <header className={SECTION_HEADING}>
           <div>
-            <h3 id="display-title">Display</h3>
-            <p>These preferences apply on this journal across your devices.</p>
+            <h3 className="text-base font-semibold" id="display-title">
+              Display
+            </h3>
+            <p className="pt-0.5 text-xs text-fg-mute">
+              These preferences apply on this journal across your devices.
+            </p>
           </div>
         </header>
-        <div className="preferences-card">
-          <label>
-            <span>
-              <strong>Row density</strong>
-              <small>Choose more breathing room or more entries on screen.</small>
+        <div className={LIST_CARD}>
+          <label className={PREFERENCE_ROW}>
+            <span className={PREFERENCE_COPY}>
+              <strong className={CARD_STRONG}>Row density</strong>
+              <small className={CARD_SMALL}>
+                Choose more breathing room or more entries on screen.
+              </small>
             </span>
             <NativeSelect
               className="max-w-[135px]"
@@ -253,10 +297,12 @@ export function SettingsDialog({
               <option value="compact">Compact</option>
             </NativeSelect>
           </label>
-          <label>
-            <span>
-              <strong id={typeBadgesLabelId}>Type badges</strong>
-              <small>Show type labels below entries.</small>
+          <label className={PREFERENCE_ROW}>
+            <span className={PREFERENCE_COPY}>
+              <strong className={CARD_STRONG} id={typeBadgesLabelId}>
+                Type badges
+              </strong>
+              <small className={CARD_SMALL}>Show type labels below entries.</small>
             </span>
             <Switch
               aria-labelledby={typeBadgesLabelId}
@@ -264,10 +310,12 @@ export function SettingsDialog({
               onCheckedChange={(checked) => onUpdatePreferences({ showTypeBadges: checked })}
             />
           </label>
-          <label>
-            <span>
-              <strong id={highlightLabelId}>Assistant highlighting</strong>
-              <small>Tint entries written by an agent.</small>
+          <label className={PREFERENCE_ROW}>
+            <span className={PREFERENCE_COPY}>
+              <strong className={CARD_STRONG} id={highlightLabelId}>
+                Assistant highlighting
+              </strong>
+              <small className={CARD_SMALL}>Tint entries written by an agent.</small>
             </span>
             <Switch
               aria-labelledby={highlightLabelId}
@@ -278,21 +326,23 @@ export function SettingsDialog({
         </div>
       </section>
 
-      <section className="settings-section settings-section--privacy">
-        <Icon name="info" size={14} />
-        <p>
+      <section className="flex gap-2 border-t border-bg-line pt-[13px] text-fg-mute">
+        <Icon name="info" size={14} className="mt-0.5 flex-none" />
+        <p className="text-tag leading-[1.5]">
           The Journal server has no third-party data egress. An MCP client you authorize may
           transmit retrieved content to its configured AI provider.
         </p>
       </section>
 
       {updateReady ? (
-        <section className="update-card" aria-live="polite">
-          <div>
+        <section className={cn(STATUS_CARD, 'border-ai-border bg-ai-bg')} aria-live="polite">
+          <div className="flex items-center gap-2">
             <Icon name="download" size={14} />
-            <span>
-              <strong>Update ready</strong>
-              <small>Reload when you have finished this thought.</small>
+            <span className="flex flex-col">
+              <strong className="text-sm">Update ready</strong>
+              <small className="text-tag text-fg-mid">
+                Reload when you have finished this thought.
+              </small>
             </span>
           </div>
           <Button variant="primary" onClick={onActivateUpdate}>

@@ -1,6 +1,8 @@
 import { EntryRow } from '../components/EntryRow';
 import { Icon } from '../components/Icon';
 import { Button } from '../components/ui/button';
+import { cn } from '../lib/utils';
+import { EMPTY_PANEL } from './view-classes';
 import type { DisplayPreferences, JournalCollection, JournalEntry } from '../components/types';
 
 interface CollectionViewProps {
@@ -22,10 +24,10 @@ export function CollectionView({
 }: CollectionViewProps) {
   if (!collection) {
     return (
-      <section className="screen collection-missing">
+      <section className={cn(EMPTY_PANEL, 'min-h-[280px] flex-1 justify-center')}>
         <Icon name="folder" size={20} />
-        <h2>Collection not found</h2>
-        <p>It may have been archived or renamed.</p>
+        <h2 className="text-base font-medium text-fg">Collection not found</h2>
+        <p className="text-sm">It may have been archived or renamed.</p>
         <Button variant="secondary" className="mt-[9px]" onClick={onBack}>
           <Icon name="chevronLeft" size={14} /> Back to Index
         </Button>
@@ -37,16 +39,20 @@ export function CollectionView({
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const doneCount = collectionEntries.filter((entry) => entry.state === 'done').length;
   return (
-    <section className="screen collection-screen" aria-labelledby="collection-title">
-      <header className="collection-header">
+    <section className="collection-screen min-h-full" aria-labelledby="collection-title">
+      <header className="px-4 pt-3.5 pb-[7px]">
         <Button variant="secondary" size="sm" onClick={onBack}>
           <Icon name="chevronLeft" size={14} /> Index
         </Button>
-        <h2 id="collection-title">{collection.name}</h2>
-        <p>
+        <h2 className="pt-3 text-xl font-semibold tracking-[-0.01em]" id="collection-title">
+          {collection.name}
+        </h2>
+        <p className="pt-0.5 text-sm text-fg-mute">
           {collectionEntries.length} items · {doneCount} done
         </p>
-        {collection.note ? <p className="collection-header__note">{collection.note}</p> : null}
+        {collection.note ? (
+          <p className="pt-0.5 text-sm leading-[1.5] text-fg-mid">{collection.note}</p>
+        ) : null}
       </header>
       {collectionEntries.length > 0 ? (
         collectionEntries.map((entry) => (
@@ -60,13 +66,13 @@ export function CollectionView({
           />
         ))
       ) : (
-        <div className="collection-empty">
+        <div className={cn(EMPTY_PANEL, 'min-h-[280px]')}>
           <Icon name="folder" size={18} />
-          <h3>This collection is empty</h3>
-          <p>File an entry here from its detail dialog.</p>
+          <h3 className="text-base font-medium text-fg">This collection is empty</h3>
+          <p className="text-sm">File an entry here from its detail dialog.</p>
         </div>
       )}
-      <div className="screen-end" aria-hidden="true" />
+      <div className="h-6" aria-hidden="true" />
     </section>
   );
 }

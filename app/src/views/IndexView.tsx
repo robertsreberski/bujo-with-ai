@@ -2,8 +2,33 @@ import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { Dialog, ConfirmDialog } from '../components/Dialog';
 import { Icon } from '../components/Icon';
 import { Button } from '../components/ui/button';
+import {
+  DIALOG_ACTIONS_END,
+  FIELD,
+  FIELD_HINT,
+  FIELD_SMALL,
+  FORM_STACK,
+} from '../components/ui/dialog-classes';
 import { formatMonth, monthKey } from '../components/dates';
+import { cn } from '../lib/utils';
+import {
+  CARD,
+  SECTION,
+  SECTION_COPY,
+  SECTION_HEADING,
+  SECTION_HEADING_ACTION,
+  SECTION_TITLE,
+} from './view-classes';
 import type { JournalCollection, JournalEntry } from '../components/types';
+
+/* `.index-row__main` / `.index-row__edit`: a 46px list row with a hairline-split
+   trailing edit affordance. `--solo` rows drop the split and own the divider. */
+const INDEX_ROW_MAIN =
+  'index-row__main flex min-h-[46px] min-w-0 items-center gap-[9px] pr-[7px] pl-3 text-left hover:bg-bg-hover hover:text-fg';
+const INDEX_ROW_SOLO = cn(INDEX_ROW_MAIN, 'w-full border-b border-bg-line pr-3 last:border-b-0');
+const INDEX_ROW_LABEL =
+  'min-w-0 flex-1 overflow-hidden text-base text-fg text-ellipsis whitespace-nowrap';
+const INDEX_ROW_COUNT = 'flex-none text-xs text-fg-mute';
 
 interface IndexViewProps {
   collections: JournalCollection[];
@@ -52,8 +77,8 @@ function CollectionEditor({ collection, onSave, onClose, onArchive }: Collection
       onClose={onClose}
       initialFocusRef={nameRef}
     >
-      <form className="form-stack" onSubmit={handleSubmit}>
-        <label className="field">
+      <form className={FORM_STACK} onSubmit={handleSubmit}>
+        <label className={FIELD}>
           <span>Name</span>
           <input
             ref={nameRef}
@@ -63,9 +88,9 @@ function CollectionEditor({ collection, onSave, onClose, onArchive }: Collection
             onChange={(event) => setName(event.currentTarget.value)}
           />
         </label>
-        <label className="field">
+        <label className={FIELD}>
           <span>
-            Short description <small>optional</small>
+            Short description <small className={FIELD_SMALL}>optional</small>
           </span>
           <input
             value={note}
@@ -74,13 +99,13 @@ function CollectionEditor({ collection, onSave, onClose, onArchive }: Collection
           />
         </label>
         {!collection && name ? (
-          <p className="field-hint">
+          <p className={FIELD_HINT}>
             Address: <code>/c/{slugify(name) || '…'}</code>
           </p>
         ) : null}
-        <div className="dialog-actions dialog-actions--end">
+        <div className={DIALOG_ACTIONS_END}>
           {collection && onArchive ? (
-            <Button variant="danger" className="dialog-actions__leading" onClick={onArchive}>
+            <Button variant="danger" className="mr-auto" onClick={onArchive}>
               Archive
             </Button>
           ) : null}
@@ -135,32 +160,41 @@ export function IndexView({
   }, [entries]);
 
   return (
-    <section className="screen index-screen" aria-label="Journal index">
-      <section className="index-group" aria-labelledby="collections-heading">
-        <header className="section-heading section-heading--action">
+    <section className="min-h-full" aria-label="Journal index">
+      <section className={cn(SECTION, 'index-group pt-4')} aria-labelledby="collections-heading">
+        <header className={SECTION_HEADING_ACTION}>
           <div>
-            <h2 id="collections-heading">Collections</h2>
-            <p>Focused lists for ideas, books, projects, and anything worth returning to.</p>
+            <h2 className={SECTION_TITLE} id="collections-heading">
+              Collections
+            </h2>
+            <p className={SECTION_COPY}>
+              Focused lists for ideas, books, projects, and anything worth returning to.
+            </p>
           </div>
           <Button variant="secondary" size="sm" onClick={() => setEditing('new')}>
             <Icon name="plus" size={13} /> New
           </Button>
         </header>
-        <div className="index-card">
+        <div className={CARD}>
           {visibleCollections.length > 0 ? (
             visibleCollections.map((collection) => (
-              <div className="index-row" key={collection.id}>
+              <div
+                className="index-row grid grid-cols-[minmax(0,1fr)_42px] border-b border-bg-line last:border-b-0"
+                key={collection.id}
+              >
                 <button
-                  className="index-row__main"
+                  className={INDEX_ROW_MAIN}
                   type="button"
                   onClick={() => onOpenCollection(collection)}
                 >
-                  <span>{collection.name}</span>
-                  <small>{collectionCounts.get(collection.id) ?? 0} items</small>
-                  <Icon name="chevronRight" size={14} />
+                  <span className={INDEX_ROW_LABEL}>{collection.name}</span>
+                  <small className={INDEX_ROW_COUNT}>
+                    {collectionCounts.get(collection.id) ?? 0} items
+                  </small>
+                  <Icon name="chevronRight" size={14} className="flex-none text-fg-faint" />
                 </button>
                 <button
-                  className="index-row__edit"
+                  className="grid w-[42px] place-items-center border-l border-bg-line text-fg-mute hover:bg-bg-hover hover:text-fg"
                   type="button"
                   aria-label={`Edit ${collection.name}`}
                   onClick={() => setEditing(collection)}
@@ -170,7 +204,7 @@ export function IndexView({
               </div>
             ))
           ) : (
-            <div className="index-empty">
+            <div className="flex min-h-[62px] items-center justify-center gap-[7px] text-sm text-fg-mute">
               <Icon name="folder" size={16} />
               <span>No collections yet.</span>
             </div>
@@ -178,54 +212,58 @@ export function IndexView({
         </div>
       </section>
 
-      <section className="index-group" aria-labelledby="months-heading">
-        <header className="section-heading">
+      <section className={cn(SECTION, 'index-group pt-4')} aria-labelledby="months-heading">
+        <header className={SECTION_HEADING}>
           <div>
-            <h2 id="months-heading">Monthly spreads</h2>
-            <p>Your journal, organized one month at a time.</p>
+            <h2 className={SECTION_TITLE} id="months-heading">
+              Monthly spreads
+            </h2>
+            <p className={SECTION_COPY}>Your journal, organized one month at a time.</p>
           </div>
         </header>
-        <div className="index-card">
+        <div className={CARD}>
           {months.map(([month, count]) => (
             <button
-              className="index-row__main index-row__main--solo"
+              className={INDEX_ROW_SOLO}
               type="button"
               key={month}
               onClick={() => onOpenMonth(month)}
             >
-              <span>{formatMonth(month)}</span>
-              <small>
+              <span className={INDEX_ROW_LABEL}>{formatMonth(month)}</span>
+              <small className={INDEX_ROW_COUNT}>
                 {count} {count === 1 ? 'entry' : 'entries'}
               </small>
-              <Icon name="chevronRight" size={14} />
+              <Icon name="chevronRight" size={14} className="flex-none text-fg-faint" />
             </button>
           ))}
         </div>
       </section>
 
-      <section className="index-group" aria-labelledby="saved-heading">
-        <header className="section-heading">
+      <section className={cn(SECTION, 'index-group pt-4')} aria-labelledby="saved-heading">
+        <header className={SECTION_HEADING}>
           <div>
-            <h2 id="saved-heading">Saved views</h2>
-            <p>Useful cuts through the journal.</p>
+            <h2 className={SECTION_TITLE} id="saved-heading">
+              Saved views
+            </h2>
+            <p className={SECTION_COPY}>Useful cuts through the journal.</p>
           </div>
         </header>
-        <div className="index-card">
+        <div className={CARD}>
           {savedViews.map((view) => (
             <button
-              className="index-row__main index-row__main--solo"
+              className={INDEX_ROW_SOLO}
               type="button"
               key={view.name}
               onClick={() => onOpenSearch(view.query)}
             >
-              <span>{view.name}</span>
-              <small>{view.count}</small>
-              <Icon name="chevronRight" size={14} />
+              <span className={INDEX_ROW_LABEL}>{view.name}</span>
+              <small className={INDEX_ROW_COUNT}>{view.count}</small>
+              <Icon name="chevronRight" size={14} className="flex-none text-fg-faint" />
             </button>
           ))}
         </div>
       </section>
-      <div className="screen-end" aria-hidden="true" />
+      <div className="h-6" aria-hidden="true" />
 
       {editing ? (
         <CollectionEditor

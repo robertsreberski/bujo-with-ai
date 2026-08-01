@@ -11,7 +11,12 @@ import {
 import { Icon } from './Icon';
 import { parseDraft } from './capture';
 import { entryIcon } from './entry-icons';
+import { cn } from '../lib/utils';
 import { ENTRY_TYPES, TYPE_LABELS, type EntryType, type ParsedDraft } from './types';
+
+/** Preview chip shared by the parse result and its error variant. */
+const CHIP =
+  'parse-chip inline-flex h-5 flex-none items-center rounded-sm bg-bg-line px-[7px] text-2xs font-medium text-fg-mid';
 
 interface ComposerProps {
   draft: string;
@@ -95,31 +100,44 @@ export function Composer({
   };
 
   return (
-    <div className="composer-shell">
-      <div className="content-column composer">
-        <div className="composer__preview" aria-live="polite">
+    <div className="composer-shell relative z-(--z-composer) flex-none border-t border-border bg-bg pb-(--sab) keyboard-open:fixed keyboard-open:right-auto keyboard-open:bottom-[calc(100%_-_var(--vv-offset,0px)_-_var(--vv-height,100%))] keyboard-open:left-[var(--pane-left,var(--sal))] keyboard-open:w-[var(--pane-width,calc(100%_-_var(--sal)_-_var(--sar)))] keyboard-open:pb-0">
+      <div className="mx-auto w-full max-w-(--content-width) px-3 pt-2 pb-2.5">
+        <div
+          className="flex min-h-[22px] items-center gap-[5px] overflow-x-auto pb-1 [scrollbar-width:none]"
+          aria-live="polite"
+        >
           {parsed.error ? (
-            <span className="parse-chip parse-chip--error">{parsed.error}</span>
+            <span
+              className={cn(
+                CHIP,
+                'parse-chip--error border border-danger-border bg-danger-bg text-danger',
+              )}
+            >
+              {parsed.error}
+            </span>
           ) : draft ? (
             <>
-              <span className="parse-chip">{TYPE_LABELS[parsed.type]}</span>
-              {parsed.time ? <span className="parse-chip">at {parsed.time}</span> : null}
+              <span className={CHIP}>{TYPE_LABELS[parsed.type]}</span>
+              {parsed.time ? <span className={CHIP}>at {parsed.time}</span> : null}
               {parsed.tags.map((tag) => (
-                <span className="parse-chip" key={tag}>
+                <span className={CHIP} key={tag}>
                   #{tag}
                 </span>
               ))}
-              {parsed.dateShift ? <span className="parse-chip">tomorrow</span> : null}
+              {parsed.dateShift ? <span className={CHIP}>tomorrow</span> : null}
             </>
           ) : (
-            <span className="composer__hint">
+            <span className="overflow-hidden text-tag text-fg-mute text-ellipsis whitespace-nowrap [&>b]:font-medium">
               Shortcuts: <b>.</b> task · <b>o</b> event · <b>-</b> note · #tag · @3pm · &gt;tomorrow
             </span>
           )}
         </div>
-        <form className="composer__form" onSubmit={submit}>
+        <form className="flex items-center gap-2" onSubmit={submit}>
           <button
-            className={`composer__type${parsed.signifierWon ? ' composer__type--overridden' : ''}`}
+            className={cn(
+              'composer__type flex h-9 min-w-[104px] items-center gap-1.5 rounded-md border border-border-control bg-bg px-[9px] text-sm max-[480px]:min-w-[86px] touch:h-10',
+              parsed.signifierWon ? 'composer__type--overridden text-fg-mute' : 'text-fg-body',
+            )}
             type="button"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
@@ -146,7 +164,9 @@ export function Composer({
             }}
           >
             <Icon name={entryIcon[parsed.type]} size={14} />
-            <span>{TYPE_LABELS[parsed.type]}</span>
+            <span className="min-w-0 flex-1 text-left max-[480px]:hidden">
+              {TYPE_LABELS[parsed.type]}
+            </span>
             <Icon name="chevronDown" size={12} />
           </button>
           <label className="sr-only" id={labelId} htmlFor={`${labelId}-input`}>
@@ -155,7 +175,7 @@ export function Composer({
           <input
             ref={inputRef}
             id={`${labelId}-input`}
-            className="composer__input"
+            className="composer__input h-9 min-w-0 flex-1 touch:h-10"
             value={draft}
             onChange={(event) => onDraftChange(event.currentTarget.value)}
             placeholder="Add an entry…"
@@ -164,7 +184,7 @@ export function Composer({
             onFocus={onInputFocus}
           />
           <button
-            className="composer__submit"
+            className="composer__submit grid size-9 min-w-9 place-items-center rounded-md bg-primary text-primary-fg hover:bg-primary-hover touch:size-10 touch:min-w-10"
             type="submit"
             aria-label="Add entry"
             disabled={!parsed.text || Boolean(parsed.error)}
@@ -179,7 +199,7 @@ export function Composer({
             Choose entry type
           </span>
           <button
-            className="popover-scrim"
+            className="fixed inset-0 z-(--z-scrim) bg-transparent"
             type="button"
             aria-label="Close type menu"
             onClick={() => setMenuOpen(false)}
@@ -187,7 +207,7 @@ export function Composer({
           <div
             ref={menuRef}
             id={`${labelId}-menu`}
-            className="type-menu"
+            className="type-menu absolute bottom-[calc(100%_+_6px)] left-3 z-(--z-menu) w-[208px] rounded-lg border border-border bg-bg p-1 shadow-(--shadow-menu) animate-(--animate-menu-in) motion-reduce:animate-none"
             role="menu"
             aria-labelledby={menuLabelId}
             onKeyDown={handleMenuKey}
@@ -195,7 +215,7 @@ export function Composer({
           >
             {ENTRY_TYPES.map((type) => (
               <button
-                className="type-menu__option"
+                className="flex min-h-10 w-full items-center gap-[9px] rounded-md px-[9px] text-md text-fg-body hover:bg-bg-line hover:text-fg"
                 type="button"
                 role="menuitemradio"
                 aria-checked={defaultType === type}
@@ -207,7 +227,7 @@ export function Composer({
                 }}
               >
                 <Icon name={entryIcon[type]} size={14} />
-                <span>{TYPE_LABELS[type]}</span>
+                <span className="flex-1 text-left">{TYPE_LABELS[type]}</span>
                 {defaultType === type ? <Icon name="check" size={13} /> : null}
               </button>
             ))}

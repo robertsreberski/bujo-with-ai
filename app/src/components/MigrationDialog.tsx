@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Dialog } from './Dialog';
 import { Icon } from './Icon';
 import { Button } from './ui/button';
+import { ACTION_GRID, DIALOG_ACTIONS_END } from './ui/dialog-classes';
 import { formatLongDate } from './dates';
 import type { JournalEntry } from './types';
 
@@ -65,7 +66,7 @@ export function MigrationDialog({
   if (!current) {
     return (
       <Dialog title="Migration" description="Nothing is waiting for a decision." onClose={onClose}>
-        <div className="dialog-actions dialog-actions--end">
+        <div className={DIALOG_ACTIONS_END}>
           <Button variant="primary" onClick={onComplete}>
             Done
           </Button>
@@ -84,25 +85,30 @@ export function MigrationDialog({
         {announcement}
       </p>
       <article
-        className="migration-card"
+        className="rounded-lg border border-border px-[14px] py-[13px]"
         aria-labelledby={taskHeadingId}
         aria-busy={pending !== null}
       >
-        <h3 ref={taskHeadingRef} id={taskHeadingId} tabIndex={-1}>
+        <h3
+          className="text-card font-medium leading-[1.45] text-pretty focus:rounded-sm focus:outline-2 focus:outline-offset-[3px] focus:outline-primary-hover"
+          ref={taskHeadingRef}
+          id={taskHeadingId}
+          tabIndex={-1}
+        >
           {current.text}
         </h3>
-        <p>
+        <p className="pt-1 text-xs text-fg-mute">
           From {formatLongDate(current.date)}
           {current.tags.length ? ` · ${current.tags.map((tag) => `#${tag}`).join(' ')}` : ''}
         </p>
         {current.migrations > 1 ? (
-          <aside>
+          <aside className="mt-2.5 flex gap-[7px] border-t border-bg-line pt-[9px] text-sm leading-[1.5] text-fg-mid">
             <Icon name="sparkle" size={12} />
             <span>Moved forward {current.migrations} times already. Consider dropping it.</span>
           </aside>
         ) : null}
       </article>
-      <div className="migration-actions" aria-busy={pending !== null}>
+      <div className={ACTION_GRID} aria-busy={pending !== null}>
         <Button
           variant="primary"
           disabled={pending !== null}

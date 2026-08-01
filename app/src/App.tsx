@@ -65,6 +65,9 @@ export default function App() {
   const preferences: DisplayPreferences = store.settings;
   const displayedMonth =
     route.name === 'month' ? (route.month ?? store.today.slice(0, 7)) : store.today.slice(0, 7);
+  // The month a detail surface should file into and name in its schedule label:
+  // the browsed month while the month log is open, the current month elsewhere.
+  const contextMonth = route.name === 'month' ? displayedMonth : null;
 
   const say = useCallback((message: string, tone: 'success' | 'error' = 'success') => {
     setToast({ id: Date.now(), message, tone });
@@ -151,8 +154,11 @@ export default function App() {
 
   const scheduleEntry = useCallback(
     (entry: JournalEntry) =>
-      run(() => journalActions.scheduleEntry(entry.id), 'Added to monthly log'),
-    [run],
+      run(
+        () => journalActions.scheduleEntry(entry.id, contextMonth ?? undefined),
+        'Added to monthly log',
+      ),
+    [contextMonth, run],
   );
 
   const acceptMigration = useCallback(
@@ -472,6 +478,7 @@ export default function App() {
           entry={detailEntry}
           collections={collections}
           today={store.today}
+          contextMonth={contextMonth}
           onClose={() => setDetailId(null)}
           onUpdate={updateEntry}
           onDelete={(entry: JournalEntry) =>

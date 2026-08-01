@@ -1,15 +1,26 @@
 /*
  * Preflight-compatible reset. Tailwind's own preflight stays disabled (the
  * rules below are the app's reset and are asserted by e2e), so this mirrors
- * only the two declarations utilities depend on: border-box sizing and a
- * zeroed default border with a solid style, so `border` utilities such as
- * `border-primary` render without also needing a width.
+ * only the declarations utilities depend on: border-box sizing, a zeroed
+ * default border with a solid style so `border` utilities such as
+ * `border-primary` render without also needing a width, and a transparent
+ * button background.
  */
 *,
 ::before,
 ::after {
   box-sizing: border-box;
   border: 0 solid;
+}
+
+/*
+ * Every backgroundless control (nav rows, tab segments, the entry-row lead and
+ * content, calendar days, index rows, menu options) used to declare
+ * `background: transparent` inside its own CSS recipe. Now that those recipes
+ * are utilities, the UA's `ButtonFace` would show through instead.
+ */
+button {
+  background-color: transparent;
 }
 
 html {

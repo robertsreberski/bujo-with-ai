@@ -54,24 +54,34 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
     await expect(tabs).toBeVisible();
   }
 
+  /*
+   * DS-14 control heights. The narrow project is the only coarse-pointer one,
+   * so it is the only place the 40px touch minimum applies; the pointer-precise
+   * layouts use the tighter desk metrics — 34px sidebar nav rows on the wide
+   * layout, 30px tab segments on the mid layout, and a 36px composer trio.
+   */
+  const isNarrow = testInfo.project.name === 'chromium-narrow';
+  const primaryMinimum = isNarrow ? 40 : testInfo.project.name === 'chromium-desktop' ? 34 : 30;
+  const composerMinimum = isNarrow ? 40 : 36;
+
   const visiblePrimaryButtons = page
     .getByRole('button')
     .filter({ hasText: /^(Today|Month|Index|Review)$/ });
   await expect(visiblePrimaryButtons).toHaveCount(4);
   for (const button of await visiblePrimaryButtons.all()) {
     const box = await button.boundingBox();
-    expect(box?.height).toBeGreaterThanOrEqual(40);
+    expect(box?.height).toBeGreaterThanOrEqual(primaryMinimum);
   }
 
   for (const name of [/Task$/, 'Add entry']) {
     const box = await page.getByRole('button', { name, exact: true }).boundingBox();
-    expect(box?.height).toBeGreaterThanOrEqual(40);
+    expect(box?.height).toBeGreaterThanOrEqual(composerMinimum);
   }
 
   const input = page.getByRole('textbox', { name: 'Add an entry' });
   const inputBox = await input.boundingBox();
-  expect(inputBox?.height).toBeGreaterThanOrEqual(40);
-  if (testInfo.project.name === 'chromium-narrow') {
+  expect(inputBox?.height).toBeGreaterThanOrEqual(composerMinimum);
+  if (isNarrow) {
     await expect(input).toHaveCSS('font-size', '16px');
     await page.setViewportSize({ width: 320, height: 700 });
     await page.getByRole('button', { name: 'Month', exact: true }).click();

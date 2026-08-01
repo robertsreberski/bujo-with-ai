@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Dialog } from './Dialog';
 import { EntryRow } from './EntryRow';
 import { Icon } from './Icon';
+import { EMPTY_PANEL } from '../views/view-classes';
 import type { DisplayPreferences, JournalEntry } from './types';
+
+const RESULTS_NOTE = 'border-b border-bg-line px-2.5 py-2 text-tag text-fg-mute';
+const EMPTY = `${EMPTY_PANEL} min-h-[150px]`;
+const EMPTY_TITLE = 'text-md text-fg-body';
 
 interface SearchDialogProps {
   entries: JournalEntry[];
@@ -96,43 +101,55 @@ export function SearchDialog({
       initialFocusRef={inputRef}
       size="wide"
     >
-      <div className="search-field">
+      <div className="flex h-9 items-center gap-2 rounded-md border border-border-control px-2.5 text-fg-faint focus-within:border-primary focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-primary-hover touch:h-10">
         <Icon name="search" size={14} />
         <input
           ref={inputRef}
           type="search"
+          className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent p-0 outline-0 [&::-webkit-search-cancel-button]:appearance-none"
           value={query}
           placeholder="Search entries and tags…"
           aria-label="Search entries and tags"
           onChange={(event) => updateQuery(event.currentTarget.value)}
         />
         {query ? (
-          <button type="button" aria-label="Clear search" onClick={() => updateQuery('')}>
+          <button
+            className="grid size-[34px] place-items-center text-fg-mute touch:size-10"
+            type="button"
+            aria-label="Clear search"
+            onClick={() => updateQuery('')}
+          >
             <Icon name="close" size={13} />
           </button>
         ) : null}
       </div>
-      <div className="search-shortcuts" aria-label="Search examples">
+      <div className="flex flex-wrap gap-1.5 py-[9px]" aria-label="Search examples">
         {['is:open', 'by:assistant', '#work'].map((value) => (
-          <button type="button" key={value} onClick={() => updateQuery(value)}>
+          <button
+            className="min-h-[30px] rounded-full border border-border-control bg-bg-line px-[9px] font-mono text-2xs text-fg-mid hover:text-fg touch:min-h-10"
+            type="button"
+            key={value}
+            onClick={() => updateQuery(value)}
+          >
             {value}
           </button>
         ))}
       </div>
       <div
-        className="search-results"
+        className="overflow-hidden rounded-lg border border-border"
         aria-live="polite"
         aria-label="Search results"
         aria-busy={searching}
       >
-        {!normalizedQuery ? (
-          <p className="search-results__count">Showing your most recent entries</p>
-        ) : null}
+        {!normalizedQuery ? <p className={RESULTS_NOTE}>Showing your most recent entries</p> : null}
         {normalizedQuery && searching ? (
-          <p className="search-results__count">Searching the full journal…</p>
+          <p className={RESULTS_NOTE}>Searching the full journal…</p>
         ) : null}
         {normalizedQuery && remoteUnavailable && !searching ? (
-          <p className="search-results__notice" role="status">
+          <p
+            className="border-b border-bg-line bg-danger-bg px-2.5 py-2 text-tag text-warning"
+            role="status"
+          >
             Search unavailable — showing downloaded entries.
           </p>
         ) : null}
@@ -151,21 +168,21 @@ export function SearchDialog({
             />
           ))
         ) : searching ? null : remoteUnavailable ? (
-          <div className="search-empty">
+          <div className={EMPTY}>
             <Icon name="wifiOff" size={18} />
-            <p>No downloaded entries match “{normalizedQuery}”.</p>
-            <span>Reconnect to search the full journal.</span>
+            <p className={EMPTY_TITLE}>No downloaded entries match “{normalizedQuery}”.</p>
+            <span className="text-xs">Reconnect to search the full journal.</span>
           </div>
         ) : normalizedQuery ? (
-          <div className="search-empty">
+          <div className={EMPTY}>
             <Icon name="search" size={18} />
-            <p>No entries match “{normalizedQuery}”.</p>
-            <span>Try fewer words or search a tag such as #work.</span>
+            <p className={EMPTY_TITLE}>No entries match “{normalizedQuery}”.</p>
+            <span className="text-xs">Try fewer words or search a tag such as #work.</span>
           </div>
         ) : (
-          <div className="search-empty">
+          <div className={EMPTY}>
             <Icon name="note" size={18} />
-            <p>Your journal is ready for its first entry.</p>
+            <p className={EMPTY_TITLE}>Your journal is ready for its first entry.</p>
           </div>
         )}
       </div>
