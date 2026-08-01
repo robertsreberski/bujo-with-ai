@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import type { TagUsage } from '@journal/server/contracts/app';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -39,6 +39,8 @@ const TAGS: TagUsage[] = [
 interface HarnessProps {
   onSubmit?: (parsed: ParsedDraft) => void;
   onChipOverrideChange?: (destination: Destination | null) => void;
+  /** Spied rather than owned: it counts how many times a draft was rewritten. */
+  onDraftChange?: (draft: string) => void;
   route?: JournalRoute;
   chipOverride?: Destination | null;
   initialDraft?: string;
@@ -49,6 +51,7 @@ interface HarnessProps {
 function Harness({
   onSubmit = vi.fn(),
   onChipOverrideChange,
+  onDraftChange,
   route = { name: 'today', date: null },
   chipOverride = null,
   initialDraft = '',
@@ -61,7 +64,10 @@ function Harness({
     <Composer
       draft={draft}
       defaultType={type}
-      onDraftChange={setDraft}
+      onDraftChange={(next) => {
+        setDraft(next);
+        onDraftChange?.(next);
+      }}
       onDefaultTypeChange={setType}
       onSubmit={onSubmit}
       route={route}
@@ -80,6 +86,29 @@ function Harness({
 
 const input = () => screen.getByLabelText('Add an entry');
 
+/**
+ * jsdom ships no `PointerEvent`, and fireEvent's fallback silently drops the
+ * coordinates the row's slop guard reads. A MouseEvent wearing the two pointer
+ * fields is what React hands the handler anyway — it reads the native event's
+ * properties, not its constructor.
+ */
+const pointerEvent = (
+  type: string,
+  init: { pointerId: number; clientX: number; clientY: number },
+): MouseEvent => {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX: init.clientX,
+    clientY: init.clientY,
+  });
+  Object.defineProperties(event, {
+    pointerId: { value: init.pointerId },
+    pointerType: { value: 'touch' },
+  });
+  return event;
+};
+
 /** jsdom leaves the caret at 0 after a programmatic value set, so tests place it. */
 const caretToEnd = async (user: ReturnType<typeof userEvent.setup>) => {
   const element = input() as HTMLInputElement;
@@ -88,6 +117,9 @@ const caretToEnd = async (user: ReturnType<typeof userEvent.setup>) => {
 };
 
 afterEach(cleanup);
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeAll(() => {
   // Radix's popper measures with ResizeObserver, which jsdom does not ship.
@@ -210,6 +242,22 @@ describe('Composer', () => {
       .find((node) => node.classList.contains('parse-chip'));
     expect(typeChip?.tagName).toBe('SPAN');
     expect(screen.queryByRole('button', { name: /^Remove/ })).not.toBeInTheDocument();
+  });
+
+  it('answers to the words it shows: every removable chip names its own label', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), 'Standup @9:15 #work');
+    const chips = screen.getAllByRole('button', { name: /^Remove/ });
+    expect(chips).toHaveLength(2);
+    for (const chip of chips) {
+      // The chip's ink lives on a span inside the button, so its visible text is
+      // one level down from the element carrying the name. WCAG 2.5.3 asks that
+      // the two still agree: "remove work" has to reach the tag chip.
+      const visible = chip.textContent?.trim() ?? '';
+      expect(visible).not.toBe('');
+      expect(chip.getAttribute('aria-label')).toContain(visible);
+    }
   });
 
   it('explains a type the leading signifier already decided', async () => {
@@ -406,6 +454,134 @@ describe('Composer suggestions', () => {
     await caretToEnd(user);
     await user.click(await screen.findByRole('option', { name: /Create collection/ }));
     expect(input()).toHaveValue('Plant bulbs /garden ');
+  });
+
+  it('accepts a tapped row on pointerup, and inserts it exactly once', async () => {
+    const user = userEvent.setup();
+    const onDraftChange = vi.fn<(draft: string) => void>();
+    render(<Harness onDraftChange={onDraftChange} />);
+    await user.type(input(), 'Finish it /read');
+    await caretToEnd(user);
+    const option = await screen.findByRole('option', { name: /Reading/ });
+    onDraftChange.mockClear();
+
+    // The sequence an iPhone produces, up to the click it may never synthesize:
+    // the insert has to have landed before that click is even considered.
+    fireEvent(option, pointerEvent('pointerdown', { pointerId: 4, clientX: 40, clientY: 120 }));
+    fireEvent(option, pointerEvent('pointerup', { pointerId: 4, clientX: 43, clientY: 122 }));
+    expect(input()).toHaveValue('Finish it /reading ');
+    expect(onDraftChange).toHaveBeenCalledTimes(1);
+    expect(input()).toHaveFocus();
+
+    // And when the click does arrive, it counts the press it repeats, so the
+    // row knows it for the duplicate it is — one tap, one insert.
+    fireEvent.click(option, { detail: 1 });
+    expect(input()).toHaveValue('Finish it /reading ');
+    expect(onDraftChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a click with no press behind it, the way assistive tech sends one', async () => {
+    const user = userEvent.setup();
+    const onDraftChange = vi.fn<(draft: string) => void>();
+    render(<Harness onDraftChange={onDraftChange} />);
+    await user.type(input(), 'Finish it /read');
+    await caretToEnd(user);
+    const option = await screen.findByRole('option', { name: /Reading/ });
+    onDraftChange.mockClear();
+
+    // A VoiceOver double-tap activates the row without any pointer sequence,
+    // and `detail: 0` is how that click says so.
+    fireEvent.click(option, { detail: 0 });
+
+    expect(input()).toHaveValue('Finish it /reading ');
+    expect(onDraftChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads a finger that travelled as a scroll, not as a choice', async () => {
+    const user = userEvent.setup();
+    const onDraftChange = vi.fn<(draft: string) => void>();
+    render(<Harness onDraftChange={onDraftChange} />);
+    await user.type(input(), 'Finish it /read');
+    await caretToEnd(user);
+    const option = await screen.findByRole('option', { name: /Reading/ });
+    onDraftChange.mockClear();
+
+    fireEvent(option, pointerEvent('pointerdown', { pointerId: 4, clientX: 40, clientY: 120 }));
+    fireEvent(option, pointerEvent('pointerup', { pointerId: 4, clientX: 40, clientY: 138 }));
+    // The drag's own click must not slip past the guard the pointerup applied.
+    fireEvent.click(option, { detail: 1 });
+
+    expect(onDraftChange).not.toHaveBeenCalled();
+    expect(input()).toHaveValue('Finish it /read');
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+  });
+
+  it('never churns the popup wiring on the focused input', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    // The listbox is in the DOM from the first paint, merely hidden, so the
+    // input can name it permanently instead of pointing at nothing.
+    const controls = input().getAttribute('aria-controls');
+    expect(controls).toBe(screen.getByRole('listbox', { hidden: true }).id);
+    expect(input()).not.toHaveAttribute('aria-activedescendant');
+
+    await user.type(input(), 'Ship it #des');
+    await caretToEnd(user);
+    const listbox = await screen.findByRole('listbox');
+    expect(input()).toHaveAttribute('aria-controls', controls);
+    // Opening the panel is `aria-expanded` and nothing else: an
+    // activedescendant nobody has navigated to is churn with no news in it.
+    expect(input()).not.toHaveAttribute('aria-activedescendant');
+
+    await user.keyboard('{ArrowDown}');
+    const options = within(listbox).getAllByRole('option');
+    expect(input()).toHaveAttribute('aria-activedescendant', options[1]?.id);
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(input()).toHaveAttribute('aria-controls', controls);
+    expect(input()).not.toHaveAttribute('aria-activedescendant');
+  });
+
+  it('accepts row 0 with Enter although nothing was ever navigated', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), 'Ship it #des');
+    await caretToEnd(user);
+    const listbox = await screen.findByRole('listbox');
+    // The highlight is `activeIndex`, which defaults to row 0 with or without
+    // an activedescendant to announce it.
+    expect(within(listbox).getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'true');
+    expect(input()).not.toHaveAttribute('aria-activedescendant');
+
+    await user.keyboard('{Enter}');
+    expect(input()).toHaveValue('Ship it #design ');
+  });
+
+  it('samples the `@` clock once per panel session, not once per render', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 6, 31, 9, 59));
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), 'Standup @');
+    await caretToEnd(user);
+
+    const listbox = screen.getByRole('listbox');
+    const before = within(listbox)
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+    expect(before[4]).toMatch(/^@10:00/);
+
+    // The hour turns while the panel is up and the draft keeps moving. The rows
+    // must not renumber under a finger already reaching for one of them.
+    vi.setSystemTime(new Date(2026, 6, 31, 10, 59));
+    await user.keyboard('1{Backspace}');
+
+    expect(
+      within(listbox)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(before);
   });
 
   it('stays shut for a URL and for the // escape', async () => {

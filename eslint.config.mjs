@@ -11,6 +11,10 @@ export default tseslint.config(
       '**/coverage/**',
       'playwright-report/**',
       'test-results/**',
+      // Agent worktrees: nested checkouts of this repo at other commits, which
+      // carry their own copy of everything ignored below. Narrow on purpose —
+      // `.claude/skills/` is ours and stays linted.
+      '.claude/worktrees/**',
       'design/support.js',
       'design/*.html',
     ],

@@ -178,11 +178,23 @@ it. `visualViewport` is the only truth.
   `orientationchange`, `focusin`/`focusout`, `pageshow`,
   `visibilitychange`, and `visualViewport` `resize` — each scheduled at
   delays [0, 120, 360]ms (720ms added on resume) to catch the ~300ms iOS
-  keyboard animation. Ignore `visualViewport.scroll` while `keyboard-open`
-  (iOS emits tiny offset shifts per keystroke; re-measuring them causes a
-  feedback loop that makes the composer jitter).
+  keyboard animation. `visualViewport` `scroll` runs that same cascade while
+  the keyboard is shut, but while `keyboard-open` it takes an **offset-only,
+  rAF-coalesced path**: one write of `--vv-offset` per frame, reading nothing
+  but `visualViewport.offsetTop` — never `innerHeight`/`clientHeight`, never a
+  `keyboard-open` toggle. iOS scrolls the visual viewport to reveal the caret
+  (per keystroke, and when the suggestion panel opens), and the pinned
+  composer's `bottom` is derived from `--vv-offset` (PWA-15), so an ignored
+  scroll leaves the composer painted away from where it is hit-tested — taps
+  land offset. The original "ignore it" rule feared a feedback loop, but that
+  fear belonged to the full cascade: three timers, each forcing a layout read
+  and a class toggle whose relayout produced more scrolls. An offset-only
+  write forces no layout and changes no class — it slides an
+  already-composited fixed box — so it cannot feed itself.
 - PWA-15 `keyboard-open` behavior: tab bar hides; the composer pins to the
-  visible viewport bottom (`--vv-offset`/`--vv-height`), sitting flush above
+  visible viewport bottom (`--vv-offset`/`--vv-height`, both of which track
+  visual-viewport scrolls live per PWA-14, so the paint and the hit-test agree
+  after a caret reveal), sitting flush above
   the keyboard; the day list keeps its scroll position; `--sab` padding is
   dropped while the keyboard covers the home-indicator area. On dismiss,
   force a WebKit flex recalc (read `offsetHeight`) — otherwise flex children
@@ -209,7 +221,12 @@ it. `visualViewport` is the only truth.
   surface — rows and grammar caption alike — suppresses `pointerdown`
   (PWA-19): blurring the input closes the panel _and_ dismisses the keyboard,
   which on iOS happens between `touchend` and `click`, so the tap would
-  resolve against a surface that had already left.
+  resolve against a surface that had already left. The price of that
+  suppression is that iOS then synthesizes the row's click unreliably, so the
+  rows — real `button[role="option"]` elements — **accept on `pointerup`**,
+  guarded by a 10px travel slop so a scroll is not a choice (LOG-49). The
+  panel's container is always mounted and merely `hidden` when shut, so the
+  input's `aria-controls` never dangles and never churns.
 - PWA-17b **The entry action sheet is anchored to the visible viewport, not
   the layout one.** Its panel sits at
   `bottom: calc(var(--app-height,100dvh) - var(--vv-offset,0px) - var(--vv-height,100dvh))`
@@ -243,7 +260,14 @@ it. `visualViewport` is the only truth.
 - PWA-19 Popover/menu items use `onPointerDown` + `preventDefault` to avoid
   blurring the composer (iOS fires blur between `touchend` and `mousedown`;
   `onMouseDown` handlers act after the blur has already closed the menu),
-  with `onClick` doing the action.
+  with `onClick` doing the action. **One exception, and only one:** the
+  capture suggestion rows act on `pointerup` (PWA-17a, LOG-49), because they
+  sit inside the surface that suppressed the `pointerdown` and iOS will not
+  reliably synthesize their click. Their `onClick` survives as the
+  assistive-technology path only, answering the `detail === 0` clicks that had
+  no press behind them; anything with a press was already handled on
+  `pointerup`, so a tap inserts exactly once. Any new surface starts from the
+  convention; this row is the documented deviation.
 - PWA-20 `window.confirm`/`alert` are banned; destructive confirmations use
   the app's dialog components.
 - PWA-21 Scroll containment: `body` `overscroll-behavior: none`; the main
@@ -285,7 +309,8 @@ iPhone (standalone, notched device):
 
 1. No white/black bar at top or bottom; status-bar area painted `#16130F`.
 2. Composer sits flush above the keyboard while typing; no jitter while
-   typing; tab bar restored cleanly on dismiss.
+   typing; it neither shifts nor mis-registers taps when the suggestion panel
+   opens; tab bar restored cleanly on dismiss.
 3. No page-level rubber-band; day list bounces within itself only.
 4. Focusing the composer does not zoom the page.
 5. App-switch away during capture → return: draft intact, layout correct,

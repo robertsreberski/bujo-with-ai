@@ -190,19 +190,19 @@ export function Composer({
 
   /*
    * The combobox contract is permanent, per ARIA 1.2: the input is always a
-   * combobox and `aria-expanded` reports whether the popup is showing. The role
-   * must never change on a focused field — WebKit rebuilds the accessibility
-   * and editing context on a role mutation, which drops the caret to the end.
-   * Only the popup-relative attributes come and go, because pointing
-   * `aria-controls`/`aria-activedescendant` at an element that does not exist
-   * is itself an accessibility violation.
+   * combobox, `aria-controls` always names the listbox (which is always in the
+   * DOM, merely hidden while shut), and `aria-expanded` reports whether the
+   * popup is showing. So opening the panel changes exactly one attribute on the
+   * focused field, and `aria-activedescendant` joins it only once the owner
+   * actually navigates. Every one of those mutations is a chance for WebKit to
+   * rebuild a focused field's accessibility and editing context and drop the
+   * caret to the end mid-typing, so the churn is kept to the one that carries
+   * real news.
    */
-  const popupProps = suggestions.open
-    ? ({
-        'aria-controls': suggestions.panelId,
-        'aria-activedescendant': suggestions.activeOptionId,
-      } as const)
-    : {};
+  const popupProps =
+    suggestions.activeOptionId === undefined
+      ? {}
+      : ({ 'aria-activedescendant': suggestions.activeOptionId } as const);
 
   const clearDestination = ((): (() => void) | null => {
     if (resolved.source === 'chip') return () => onChipOverrideChange?.(null);
@@ -333,7 +333,13 @@ export function Composer({
          * and help sits at the top right so it stays put as the facts grow.
          */}
         <div className="flex items-start gap-1.5 pb-1.5">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
+          {/*
+           * `touch:gap-y-2`: each chip's 40px touch box overhangs its 24px ink
+           * by 8px top and bottom, so a wrapped row needs 8px between lines or
+           * the line below reaches back over the ink of the line above and — as
+           * the later element — takes the taps meant for it.
+           */}
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 touch:gap-y-2">
             <DestinationChip
               resolved={resolved}
               route={route}
@@ -346,7 +352,7 @@ export function Composer({
               onRestoreFocus={focusInput}
             />
             <div
-              className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
+              className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 touch:gap-y-2"
               aria-live="polite"
             >
               {parsed.error ? (
@@ -467,6 +473,7 @@ export function Composer({
               role="combobox"
               aria-expanded={suggestions.open}
               aria-autocomplete="list"
+              aria-controls={suggestions.panelId}
               {...popupProps}
             />
             {draft ? (

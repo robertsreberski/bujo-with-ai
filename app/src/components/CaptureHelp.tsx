@@ -57,7 +57,14 @@ export function CaptureHelp() {
       className="min-[680px]:max-w-[min(320px,calc(100vw_-_24px))] min-[680px]:p-3"
       trigger={
         <button
-          className="grid size-7 flex-none place-items-center rounded-md text-fg-mute hover:bg-bg-line hover:text-fg touch:size-10"
+          /*
+           * `touch:-my-1.5` for the same reason the chips carry `touch:-my-2`:
+           * the 40px touch box is a target, not a size, so it hands the 12px it
+           * added back to the layout and the context row stays 28px tall
+           * instead of being propped open by the one control in it that is not
+           * a chip.
+           */
+          className="grid size-7 flex-none place-items-center rounded-md text-fg-mute hover:bg-bg-line hover:text-fg touch:-my-1.5 touch:size-10"
           type="button"
           aria-label="Capture help"
         >
