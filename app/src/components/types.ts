@@ -1,6 +1,7 @@
 import type {
   ActivityView,
   Collection,
+  DateShift,
   Entry,
   EntryAuthor,
   EntryPatch as CanonicalEntryPatch,
@@ -12,6 +13,7 @@ import type {
 
 export const ENTRY_TYPES = ['task', 'event', 'note', 'idea', 'question', 'habit', 'mood'] as const;
 
+export type { DateShift };
 export type EntryType = CanonicalEntryType;
 export type EntryState = CanonicalEntryState;
 export type Author = EntryAuthor;
@@ -32,7 +34,8 @@ export interface ParsedDraft {
   tags: string[];
   /** Collection slug from a `/slug` token, before destination precedence runs. */
   collection: string | null;
-  dateShift: 'tomorrow' | null;
+  /** The `>` token's symbolic shift; `resolveDateShift` turns it into a date. */
+  dateShift: DateShift | null;
   signifierWon: boolean;
   error: string | null;
 }

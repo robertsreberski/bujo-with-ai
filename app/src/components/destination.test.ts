@@ -6,14 +6,16 @@ import {
   destinationRoute,
   humanizeSlug,
   nextCalendarDate,
+  resolveDateShift,
   resolveDestination,
   sameDestination,
   slugifyCollection,
   viewedDestination,
   type Destination,
 } from './destination';
-import type { JournalCollection } from './types';
+import type { DateShift, JournalCollection } from './types';
 
+/** A Friday, so `>friday` has to prove it means the *next* one. */
 const TODAY = '2026-07-31';
 const TOMORROW = '2026-08-01';
 
@@ -43,7 +45,7 @@ function resolve(
     route?: JournalRoute;
     chipOverride?: Destination | null;
     parsedCollection?: string | null;
-    dateShift?: 0 | 1;
+    dateShift?: DateShift | null;
     collectionsById?: Record<string, JournalCollection>;
     today?: string;
   } = {},
@@ -53,7 +55,7 @@ function resolve(
     today: overrides.today ?? TODAY,
     chipOverride: overrides.chipOverride ?? null,
     parsedCollection: overrides.parsedCollection ?? null,
-    dateShift: overrides.dateShift ?? 0,
+    dateShift: overrides.dateShift ?? null,
     collectionsById: overrides.collectionsById ?? collections(ATLAS, ARCHIVED, JULY),
   });
 }
@@ -145,10 +147,52 @@ describe('resolveDestination screen defaults', () => {
   });
 });
 
+describe('resolveDateShift', () => {
+  it.each([
+    [{ kind: 'today' } as const, TODAY],
+    [{ kind: 'tomorrow' } as const, TOMORROW],
+    // Friday on a Friday is the Friday coming, never the one being lived.
+    [{ kind: 'weekday', day: 5 } as const, '2026-08-07'],
+    [{ kind: 'weekday', day: 6 } as const, '2026-08-01'],
+    [{ kind: 'weekday', day: 7 } as const, '2026-08-02'],
+    [{ kind: 'weekday', day: 1 } as const, '2026-08-03'],
+    [{ kind: 'weekday', day: 4 } as const, '2026-08-06'],
+    [{ kind: 'next-week' } as const, '2026-08-03'],
+    [{ kind: 'weekend' } as const, '2026-08-01'],
+  ])('resolves %o against today without reading a clock', (shift, expected) => {
+    expect(resolveDateShift(shift, TODAY)).toBe(expected);
+  });
+
+  it('crosses the year boundary for every relative target', () => {
+    // 2026-12-31 is a Thursday.
+    expect(resolveDateShift({ kind: 'tomorrow' }, '2026-12-31')).toBe('2027-01-01');
+    expect(resolveDateShift({ kind: 'weekday', day: 1 }, '2026-12-31')).toBe('2027-01-04');
+    expect(resolveDateShift({ kind: 'next-week' }, '2026-12-31')).toBe('2027-01-04');
+    expect(resolveDateShift({ kind: 'weekend' }, '2026-12-31')).toBe('2027-01-02');
+  });
+
+  it('passes an absolute date through, past dates included', () => {
+    expect(resolveDateShift({ kind: 'absolute', date: '2026-09-15' }, TODAY)).toBe('2026-09-15');
+    expect(resolveDateShift({ kind: 'absolute', date: '2026-01-02' }, TODAY)).toBe('2026-01-02');
+  });
+});
+
 describe('resolveDestination date shift', () => {
   it('beats a backdated screen and reports the token as the source', () => {
-    expect(resolve({ route: { name: 'today', date: '2026-07-12' }, dateShift: 1 })).toEqual({
+    expect(
+      resolve({ route: { name: 'today', date: '2026-07-12' }, dateShift: { kind: 'tomorrow' } }),
+    ).toEqual({
       destination: { kind: 'date', date: TOMORROW },
+      source: 'token',
+      createsCollection: false,
+    });
+  });
+
+  it('lets `>today` pull a capture out of the backdated day being viewed', () => {
+    expect(
+      resolve({ route: { name: 'today', date: '2026-07-12' }, dateShift: { kind: 'today' } }),
+    ).toEqual({
+      destination: { kind: 'date', date: TODAY },
       source: 'token',
       createsCollection: false,
     });
@@ -156,25 +200,49 @@ describe('resolveDestination date shift', () => {
 
   it('beats a date chip', () => {
     expect(
-      resolve({ chipOverride: { kind: 'date', date: '2026-07-04' }, dateShift: 1 }).destination,
+      resolve({
+        chipOverride: { kind: 'date', date: '2026-07-04' },
+        dateShift: { kind: 'tomorrow' },
+      }).destination,
     ).toEqual({ kind: 'date', date: TOMORROW });
   });
 
+  it('files a weekday shift on its next occurrence, crossing the month', () => {
+    expect(resolve({ dateShift: { kind: 'weekday', day: 1 } }).destination).toEqual({
+      kind: 'date',
+      date: '2026-08-03',
+    });
+  });
+
   it('crosses month and year boundaries without reading the clock', () => {
-    expect(resolve({ today: '2026-12-31', dateShift: 1 }).destination).toEqual({
+    expect(resolve({ today: '2026-12-31', dateShift: { kind: 'tomorrow' } }).destination).toEqual({
       kind: 'date',
       date: '2027-01-01',
+    });
+    expect(
+      resolve({ today: '2026-12-31', dateShift: { kind: 'weekday', day: 5 } }).destination,
+    ).toEqual({ kind: 'date', date: '2027-01-01' });
+  });
+
+  it('files an absolute shift on exactly the day it names', () => {
+    expect(resolve({ dateShift: { kind: 'absolute', date: '2026-06-01' } })).toEqual({
+      destination: { kind: 'date', date: '2026-06-01' },
+      source: 'token',
+      createsCollection: false,
     });
   });
 
   it('is ignored for collection destinations, which take their date server-side', () => {
-    expect(resolve({ parsedCollection: 'project-atlas', dateShift: 1 })).toEqual({
+    expect(
+      resolve({ parsedCollection: 'project-atlas', dateShift: { kind: 'weekday', day: 5 } }),
+    ).toEqual({
       destination: { kind: 'collection', id: 'project-atlas' },
       source: 'token',
       createsCollection: false,
     });
     expect(
-      resolve({ route: { name: 'month', month: '2026-09' }, dateShift: 1 }).destination,
+      resolve({ route: { name: 'month', month: '2026-09' }, dateShift: { kind: 'tomorrow' } })
+        .destination,
     ).toEqual({ kind: 'collection', id: 'month:2026-09' });
   });
 });

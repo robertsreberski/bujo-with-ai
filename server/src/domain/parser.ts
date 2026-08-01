@@ -1,8 +1,22 @@
 import { z } from 'zod';
 import { EntryTypeSchema, type EntryType } from '../contracts/entities.js';
-import { LocalTimeSchema, TagsSchema } from '../contracts/primitives.js';
+import { CalendarDateSchema, LocalTimeSchema, TagsSchema } from '../contracts/primitives.js';
 
 export const CaptureSignifierSchema = z.enum(['.', 'o', '-', '!', '?', '+', '~']);
+
+/**
+ * What a `>` token asks for, kept symbolic rather than resolved to a date: the
+ * parser is clock-free, so the caller resolves against its own `today`.
+ * `weekday` carries an ISO day number (Monday = 1).
+ */
+export const DateShiftSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('today') }),
+  z.strictObject({ kind: z.literal('tomorrow') }),
+  z.strictObject({ kind: z.literal('weekday'), day: z.number().int().min(1).max(7) }),
+  z.strictObject({ kind: z.literal('next-week') }),
+  z.strictObject({ kind: z.literal('weekend') }),
+  z.strictObject({ kind: z.literal('absolute'), date: CalendarDateSchema }),
+]);
 
 export const ParsedCaptureSchema = z.strictObject({
   type: EntryTypeSchema,
@@ -13,11 +27,12 @@ export const ParsedCaptureSchema = z.strictObject({
     .string()
     .regex(/^[a-z0-9-]{1,80}$/, 'Collection slugs use lowercase letters, digits, and hyphens.')
     .nullable(),
-  dateShift: z.union([z.literal(0), z.literal(1)]),
+  dateShift: DateShiftSchema.nullable(),
   signifier: CaptureSignifierSchema.nullable(),
 });
 
 export type CaptureSignifier = z.infer<typeof CaptureSignifierSchema>;
+export type DateShift = z.infer<typeof DateShiftSchema>;
 export type ParsedCapture = z.infer<typeof ParsedCaptureSchema>;
 
 export class CaptureParseError extends Error {
@@ -56,7 +71,12 @@ export const COLLECTION_TOKEN_SOURCE = String.raw`(?<=^|\s)/([A-Za-z0-9-]{1,80})
 export const COLLECTION_ESCAPE_SOURCE = String.raw`(?<=^|\s)//(?=[A-Za-z0-9-])`;
 export const TAG_TOKEN_SOURCE = String.raw`#[A-Za-z0-9-]+(?![A-Za-z0-9_-])`;
 export const TIME_TOKEN_SOURCE = String.raw`@(\d{1,2})(?::(\d{2}))?(?:\s*(am|pm))?(?![A-Za-z0-9:])`;
-export const DATE_SHIFT_TOKEN_SOURCE = String.raw`>tomorrow\b`;
+/*
+ * Full weekday names precede their three-letter prefixes so the first winning
+ * alternative is the longest one, and the trailing `\b` keeps `>tomorrowish`
+ * and `>monx` inert rather than half-consumed.
+ */
+export const DATE_SHIFT_TOKEN_SOURCE = String.raw`>(today|tomorrow|next-week|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun|\d{4}-\d{2}-\d{2})\b`;
 
 const SIGNIFIER_LEAD = new RegExp(SIGNIFIER_TOKEN_SOURCE, 'i');
 const COLLECTION_TOKEN = new RegExp(COLLECTION_TOKEN_SOURCE);
@@ -64,12 +84,46 @@ const COLLECTION_ESCAPE = new RegExp(COLLECTION_ESCAPE_SOURCE, 'g');
 const VALID_TAG = new RegExp(TAG_TOKEN_SOURCE, 'g');
 const INVALID_UNDERSCORE_TAG = /#[A-Za-z0-9-]*_[A-Za-z0-9_-]*/;
 const TIME_CANDIDATE = new RegExp(TIME_TOKEN_SOURCE, 'gi');
-const DATE_SHIFT = new RegExp(DATE_SHIFT_TOKEN_SOURCE, 'i');
+const DATE_SHIFT_CANDIDATE = new RegExp(DATE_SHIFT_TOKEN_SOURCE, 'gi');
+
+const WEEKDAY_NUMBERS: Readonly<Record<string, number>> = {
+  monday: 1,
+  mon: 1,
+  tuesday: 2,
+  tue: 2,
+  wednesday: 3,
+  wed: 3,
+  thursday: 4,
+  thu: 4,
+  friday: 5,
+  fri: 5,
+  saturday: 6,
+  sat: 6,
+  sunday: 7,
+  sun: 7,
+};
+
+/**
+ * Reads the body of a `>` token (the match's capture group, no sigil) into the
+ * shift it names, or null when the shape matched but the calendar refuses it —
+ * `>2026-02-30`. Exported so an editor stripping the token can skip exactly the
+ * candidates the parser skipped instead of re-deriving the rule.
+ */
+export function parseDateShiftToken(token: string): DateShift | null {
+  const word = token.toLowerCase();
+  if (word === 'today' || word === 'tomorrow') return { kind: word };
+  if (word === 'next-week' || word === 'weekend') return { kind: word };
+  const day = WEEKDAY_NUMBERS[word];
+  if (day !== undefined) return { kind: 'weekday', day };
+  const date = CalendarDateSchema.safeParse(word);
+  return date.success ? { kind: 'absolute', date: date.data } : null;
+}
 
 /**
  * Parses the rapid-log grammar in its normative order. It is deterministic,
- * time-zone independent, and safe to share with the browser. Date intent is
- * represented as a 0/1 shift; the caller attaches its frozen capture context.
+ * time-zone independent, and safe to share with the browser. Date intent stays
+ * symbolic — `{ kind: 'weekday', day: 5 }`, never a resolved date — because the
+ * parser never reads a clock; the caller attaches its frozen capture context.
  */
 export function parseCapture(draft: string, defaultType: EntryType = 'task'): ParsedCapture {
   let remaining = draft.trim();
@@ -125,12 +179,20 @@ export function parseCapture(draft: string, defaultType: EntryType = 'task'): Pa
     break;
   }
 
-  const tomorrow = DATE_SHIFT.exec(remaining);
-  const dateShift: 0 | 1 = tomorrow === null ? 0 : 1;
-  if (tomorrow !== null) {
-    remaining = `${remaining.slice(0, tomorrow.index)} ${remaining.slice(
-      tomorrow.index + tomorrow[0].length,
+  // Like the time scan: a candidate the calendar rejects (`>2026-13-40`) is
+  // left as text and the scan continues, so it cannot mask a later valid token.
+  let dateShift: DateShift | null = null;
+  let shiftMatch: RegExpExecArray | null;
+  DATE_SHIFT_CANDIDATE.lastIndex = 0;
+  while ((shiftMatch = DATE_SHIFT_CANDIDATE.exec(remaining)) !== null) {
+    const body = shiftMatch[1];
+    const shift = body === undefined ? null : parseDateShiftToken(body);
+    if (shift === null) continue;
+    dateShift = shift;
+    remaining = `${remaining.slice(0, shiftMatch.index)} ${remaining.slice(
+      shiftMatch.index + shiftMatch[0].length,
     )}`;
+    break;
   }
 
   return ParsedCaptureSchema.parse({

@@ -229,8 +229,16 @@ across a lost-response replay.
   the inert set (`https://a.com/b`, `/usr/bin`, `/a_b`, `/v1.2`, `a/b`,
   `/month:2026-07`, an 81-character slug), a token-only draft, `/errands>tomorrow`
   versus `@9/errands`, and an invalid tag still rejected after a slug is
-  consumed. Client/server parser results must be byte-equivalent canonical
-  DTOs.
+  consumed. The date shift (LOG-6 step 5) adds: every word of the grammar read
+  symbolically (`>today`, `>tomorrow`, `>friday`, `>fri`, `>Friday`, `>SUN`,
+  `>next-week`, `>weekend`, `>2026-08-04`), first-shift-wins with later ones
+  left as text, the inert set (`>tomorrowish`, `>monx`, `>next-weekend`,
+  `> mon`, `>2026-13-40`, `>2026-02-30`), an impossible date skipped without
+  masking a later valid token (`x >2026-13-40 >friday`), and `/errands>friday`
+  gluing exactly as `/errands>tomorrow` does. `/api/capture` echoes the shift
+  in that structured form (`parsed.dateShift: {kind:'tomorrow'}`) while the
+  frozen `dateIntent` stays authoritative for the entry's date. Client/server
+  parser results must be byte-equivalent canonical DTOs.
 - API-16 End-to-end and security tests cover pairing/cookie/Host/Origin,
   unauthorized REST/SSE, lost-response replay, dependent outbox recovery,
   atomic IndexedDB state+outbox, offline capture across midnight, two-device

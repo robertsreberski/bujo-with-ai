@@ -1,6 +1,6 @@
 import type { JournalRoute } from '../routes/useJournalRoute';
 import { formatMonth, formatShortDate } from './dates';
-import type { JournalCollection } from './types';
+import type { DateShift, JournalCollection } from './types';
 
 const MONTH_COLLECTION_PREFIX = 'month:';
 
@@ -23,7 +23,8 @@ export interface ResolveDestinationArgs {
   chipOverride: Destination | null;
   /** `ParsedDraft.collection` — the `/slug` token the owner typed. */
   parsedCollection: string | null;
-  dateShift: 0 | 1;
+  /** `ParsedDraft.dateShift` — the `>token` shift, still unresolved. */
+  dateShift: DateShift | null;
   collectionsById: Record<string, JournalCollection>;
 }
 
@@ -45,9 +46,53 @@ export const sameDestination = (left: Destination, right: Destination): boolean 
  * `Tomorrow` string can never drift apart.
  */
 export function nextCalendarDate(date: string): string {
+  return shiftCalendarDate(date, 1);
+}
+
+function shiftCalendarDate(date: string, days: number): string {
   const parsed = new Date(`${date}T12:00:00Z`);
-  parsed.setUTCDate(parsed.getUTCDate() + 1);
+  parsed.setUTCDate(parsed.getUTCDate() + days);
   return parsed.toISOString().slice(0, 10);
+}
+
+/** ISO weekday of a calendar date: Monday = 1 … Sunday = 7. */
+function isoWeekday(date: string): number {
+  const day = new Date(`${date}T12:00:00Z`).getUTCDay();
+  return day === 0 ? 7 : day;
+}
+
+/**
+ * The next occurrence of an ISO weekday, always **strictly future**: `>monday`
+ * typed on a Monday means the Monday coming, not the one being lived. A
+ * capture aimed at the current day is what `>today` (or no token) is for, and
+ * the ambiguity is worth spending a keyword on rather than resolving silently.
+ */
+function nextWeekday(today: string, day: number): string {
+  const ahead = (day - isoWeekday(today) + 7) % 7;
+  return shiftCalendarDate(today, ahead === 0 ? 7 : ahead);
+}
+
+/**
+ * Resolves a `>` token against a passed `today`. Pure and clock-free, like the
+ * parser that produced the shift: every relative target is calendar arithmetic
+ * on the server-synced date, and an absolute one passes through untouched —
+ * a past date is a deliberate backdate, not an error.
+ */
+export function resolveDateShift(shift: DateShift, today: string): string {
+  switch (shift.kind) {
+    case 'today':
+      return today;
+    case 'tomorrow':
+      return nextCalendarDate(today);
+    case 'weekday':
+      return nextWeekday(today, shift.day);
+    case 'next-week':
+      return nextWeekday(today, 1);
+    case 'weekend':
+      return nextWeekday(today, 6);
+    case 'absolute':
+      return shift.date;
+  }
 }
 
 /** Rough inverse of the index view's slugify: `project-atlas` → `Project atlas`. */
@@ -137,9 +182,10 @@ function destinationCreatesCollection(
 
 /**
  * Precedence: a typed `/slug` token beats a picked chip, which beats the screen.
- * `>tomorrow` then overrides any *date* destination — explicit grammar beats the
- * ambient viewed date — while collection destinations ignore it because the
- * server owns the entry date for filed captures.
+ * A `>` shift then overrides any *date* destination — explicit grammar beats the
+ * ambient viewed date, so `>today` typed while a past day is open files into
+ * today — while collection destinations ignore it because the server owns the
+ * entry date for filed captures.
  */
 export function resolveDestination(args: ResolveDestinationArgs): ResolvedDestination {
   const { route, today, chipOverride, parsedCollection, dateShift, collectionsById } = args;
@@ -155,8 +201,8 @@ export function resolveDestination(args: ResolveDestinationArgs): ResolvedDestin
     destination = screenDestination(route, today, collectionsById);
   }
 
-  if (dateShift === 1 && destination.kind === 'date') {
-    destination = { kind: 'date', date: nextCalendarDate(today) };
+  if (dateShift !== null && destination.kind === 'date') {
+    destination = { kind: 'date', date: resolveDateShift(dateShift, today) };
     source = 'token';
   }
 

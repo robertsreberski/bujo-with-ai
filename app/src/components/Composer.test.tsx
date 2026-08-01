@@ -100,7 +100,7 @@ describe('parseDraft', () => {
       time: '16:00',
       tags: ['work'],
       collection: null,
-      dateShift: 'tomorrow',
+      dateShift: { kind: 'tomorrow' },
       signifierWon: true,
       error: null,
     });
@@ -190,6 +190,27 @@ describe('Composer destination chip', () => {
     expect(screen.getByRole('button', { name: 'Destination: Tomorrow' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Clear destination' }));
     expect(input()).toHaveValue('Call the bank');
+  });
+
+  it('dates a weekday shift by its next occurrence and clears that token', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    // TODAY is a Friday, so `>friday` is the Friday after it.
+    await user.type(input(), 'Call the bank >friday');
+    expect(screen.getByRole('button', { name: /^Destination: Aug 7/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Clear destination' }));
+    expect(input()).toHaveValue('Call the bank');
+    expect(screen.getByRole('button', { name: 'Destination: Today' })).toBeInTheDocument();
+  });
+
+  it('lets `>today` pull a capture off the backdated day being viewed', async () => {
+    const user = userEvent.setup();
+    render(<Harness route={{ name: 'today', date: '2026-07-12' }} />);
+    await user.type(input(), 'Call the bank >today');
+    expect(screen.getByRole('button', { name: 'Destination: Today' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Clear destination' }));
+    expect(input()).toHaveValue('Call the bank');
+    expect(screen.getByRole('button', { name: /^Destination: Jul 12/ })).toBeInTheDocument();
   });
 
   it('flags a slug the mirror has never seen', async () => {

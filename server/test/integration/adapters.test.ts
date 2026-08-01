@@ -230,9 +230,9 @@ describe('HTTP and MCP domain adapters', () => {
       },
       owner,
       { id: ulid(), statusCode: 201 },
-    ) as { entry: Entry; parsed: { dateShift: number } };
+    ) as { entry: Entry; parsed: { dateShift: unknown } };
 
-    expect(captured.parsed.dateShift).toBe(1);
+    expect(captured.parsed.dateShift).toEqual({ kind: 'tomorrow' });
     expect(captured.entry).toMatchObject({
       date: '2026-08-02',
       text: 'Offline follow-up',

@@ -291,7 +291,7 @@ export default function App() {
         today: store.today,
         chipOverride,
         parsedCollection: parsed.collection,
-        dateShift: parsed.dateShift === 'tomorrow' ? 1 : 0,
+        dateShift: parsed.dateShift,
         collectionsById: store.collectionsById,
       });
       const plan = planSubmit(parsed, resolved, store.today);

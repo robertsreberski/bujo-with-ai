@@ -134,7 +134,7 @@ describe('planSubmit over the resolver it consumes', () => {
         today: TODAY,
         chipOverride: args.chipOverride ?? null,
         parsedCollection: parsed.collection,
-        dateShift: parsed.dateShift === 'tomorrow' ? 1 : 0,
+        dateShift: parsed.dateShift,
         collectionsById: COLLECTIONS,
       }),
       TODAY,
@@ -158,9 +158,16 @@ describe('planSubmit over the resolver it consumes', () => {
   it('keeps a `>tomorrow` capture on the shift intent from a backdated screen', () => {
     const result = plan({
       route: { name: 'today', date: '2026-07-12' },
-      parsed: draft({ dateShift: 'tomorrow' }),
+      parsed: draft({ dateShift: { kind: 'tomorrow' } }),
     });
     expect(result.entry).toMatchObject({ dateShift: 'tomorrow' });
+  });
+
+  it('sends a further-out shift as the absolute day it resolved to', () => {
+    // TODAY is a Friday, so `>friday` is the Friday after it.
+    const result = plan({ parsed: draft({ dateShift: { kind: 'weekday', day: 5 } }) });
+    expect(result.entry).toMatchObject({ date: '2026-08-07', collection: null });
+    expect(result.entry).not.toHaveProperty('dateShift');
   });
 
   it('backdates a plain capture taken while a past day is open', () => {
@@ -184,7 +191,7 @@ describe('planSubmit over the resolver it consumes', () => {
   it('ignores `>tomorrow` when the destination is a collection', () => {
     const result = plan({
       route: { name: 'collection', collectionId: 'reading' },
-      parsed: draft({ dateShift: 'tomorrow' }),
+      parsed: draft({ dateShift: { kind: 'tomorrow' } }),
     });
     expect(result.entry).toMatchObject({ collection: 'reading' });
     expect(result.entry).not.toHaveProperty('dateShift');

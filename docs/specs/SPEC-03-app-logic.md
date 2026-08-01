@@ -74,15 +74,47 @@ Present on every screen, docked to the bottom (keyboard behavior: SPEC-05 §4).
      de-duplicated into `tags`. Underscore is deliberately not valid.
   4. **Time** — first `@H`, `@H:MM`, `@Ham/pm`, `@H:MMam/pm`;
      12h converts to 24h (12am → 00); consumed; result `HH:MM`.
-  5. **Date shift** — `>tomorrow` (case-insensitive) sets the target date to
-     today+1; consumed. (Other targets: FR-39, P2.)
+  5. **Date shift** — the first `>` token naming a day, matched
+     case-insensitively as
+     `>(today|tomorrow|next-week|weekend|monday…sunday|mon…sun|\d{4}-\d{2}-\d{2})\b`;
+     consumed. The parser stays clock-free and yields the shift **symbolically**
+     — `{kind:'weekday', day:5}`, never a resolved date — and the app resolves
+     it against the server-synced `today` (LOG-45): **[ext]**
+
+     | Token               | Target                                  |
+     | ------------------- | --------------------------------------- |
+     | `>today`            | today                                   |
+     | `>tomorrow`         | today + 1                               |
+     | `>monday`…`>sunday` | the **next** occurrence of that weekday |
+     | `>mon`…`>sun`       | the same, three-letter                  |
+     | `>next-week`        | the next Monday                         |
+     | `>weekend`          | the next Saturday                       |
+     | `>2026-08-12`       | exactly that date, past dates included  |
+
+     A weekday is **strictly future**: `>friday` typed on a Friday means the
+     Friday coming, not the one being lived — the day you are already on is
+     what `>today` (or no token at all) says, so the ambiguity is spent on a
+     keyword rather than resolved silently. This is a deliberate departure from
+     Todoist, where a bare weekday can mean the current day. `>next-week` and
+     `>weekend` are the same rule applied to Monday and Saturday.
+
+     Full weekday names precede their prefixes in the alternation so the
+     longest alternative wins, and the trailing `\b` keeps `>tomorrowish`,
+     `>monx`, and `>next-weekend` inert. A token whose shape matched but whose
+     calendar refuses it (`>2026-13-40`, `>2026-02-30`) is **skipped** and left
+     as text, and the scan continues — exactly as it does for `@99` — so an
+     impossible date cannot mask a later valid one: `x >2026-13-40 >friday`
+     files on Friday and keeps the literal date as text. Only the first
+     surviving token counts; later ones stay text.
+
   6. Remaining text is whitespace-collapsed and becomes `text`.
 
   The collection step runs before tags because tag consumption inserts
   spaces where tokens were: parsed after tags, `#work/x` would leave `/x`
   opening a run and become a collection. Parsed before them it stays a
-  `work` tag plus the literal text `/x`. `>tomorrow` may be glued to the
-  slug (`/errands>tomorrow` parses both), but a time may not
+  `work` tag plus the literal text `/x`. A shift may be glued to the slug —
+  the `>` token has no left-context rule, so `/errands>tomorrow` and
+  `/errands>friday` alike parse both — but a time may not
   (`@9/errands` is a `09:00` time and literal `/errands`), because the time
   token's own lookahead ends the run first. A draft that is nothing but a
   token parses to empty text, exactly as a tag-only draft does.
@@ -93,16 +125,20 @@ Present on every screen, docked to the bottom (keyboard behavior: SPEC-05 §4).
   at its trailing edge. The facts region is `aria-live="polite"` (the chip and
   help control sit outside it, so control churn never announces), and the facts **wrap
   onto further lines rather than truncate**: a capture with several tags stays
-  legible instead of scrolling sideways out of view. `>tomorrow` has no chip
-  of its own; it is reported by the destination chip reading `Tomorrow`, which
-  is the same fact stated once. **[amended]**
+  legible instead of scrolling sideways out of view. A `>` shift has no chip
+  of its own; it is reported by the destination chip, which reads `Today`,
+  `Tomorrow`, or the short date the shift resolved to (`Aug 7`) — the same
+  fact stated once. **[amended]**
 - LOG-7a **[ext]** Removing a token behind a chip edits the draft rather
   than the parse result, using regex sources exported by the parser so the
   editor can never drift from it. A removal splices the single occurrence
   the parser consumed and heals the seam to one space; `tag` is the
   exception and strips **every** occurrence of that tag, because the parser
-  folds duplicates into one chip. A token that is absent leaves the draft
-  untouched, so repeated removals are idempotent.
+  folds duplicates into one chip. `time` and `date-shift` removals re-run the
+  parser's own validity test and skip the candidates it skipped (`@99`,
+  `>2026-13-40`), so the chip and its removal target can never disagree. A
+  token that is absent leaves the draft untouched, so repeated removals are
+  idempotent.
 - LOG-7b **[amended]** An empty draft shows **no legend**. The composer used
   to carry a `Shortcuts: …` hint line, and it is deliberately gone: a legend
   that is only readable while the draft is empty disappears exactly when the
@@ -151,12 +187,16 @@ resolved on every keystroke and shown as a chip left of the preview row.
   override instead of pinning a chip whose clear button would do nothing.
 
 - LOG-45 Precedence is **token > chip > screen**: a typed `/slug` beats a
-  picked chip, which beats the ambient default. `>tomorrow` then overrides
-  any _date_ destination — explicit grammar beats the viewed day — but never
-  a collection one, because the server owns the entry date for a filed
-  capture. Date destinations travel as intent, not as a literal date: today
-  sends neither `date` nor `dateShift`, tomorrow sends `dateShift`, and any
-  other day sends an absolute `date` (ARC-16).
+  picked chip, which beats the ambient default. A `>` shift then overrides
+  any _date_ destination — explicit grammar beats the viewed day, so `>today`
+  typed while a past day is open files into today — but never a collection
+  one, because the server owns the entry date for a filed capture. The shift
+  is resolved here, against the server-synced `today` and by calendar
+  arithmetic only (LOG-6 step 5); the resolver is pure, so an offline capture
+  resolves the same way a replayed one does. Date destinations travel as
+  intent, not as a literal date: today sends neither `date` nor `dateShift`,
+  tomorrow sends `dateShift`, and any other day — a weekday, a weekend, an
+  absolute token — sends an absolute `date` (ARC-16).
 - LOG-46 **Create-then-file.** A destination whose slug the mirror has never
   seen is minted on submit: `createCollection` is enqueued first and the
   entry second, so the FIFO outbox creates the collection before the entry
@@ -204,9 +244,13 @@ resolved on every keystroke and shown as a chip left of the preview row.
   | `>…`  | the date shift | one `Tomorrow` row inserting `>tomorrow`, while the query prefixes it       |
   | `@…`  | a time         | the next three round hours, each glossed in 12-hour form (`16:00` → `4 pm`) |
 
-  At most six rows. A `/` query whose slug is unknown appends a trailing
-  `Create collection “<slug>”` row that mints exactly the slug the parser
-  would have read. The `@` rows are the upcoming hours in local wall time,
+  At most six rows. The `>` panel offers **only** `Tomorrow` even though the
+  parser reads the whole shift grammar (LOG-6 step 5): the rest of it is
+  usable by typing, and the panel that completes it is a later phase. So a
+  query the row cannot prefix (`>mon`) shows no rows, and one the mode cannot
+  read at all (`>2026-08-04`, non-alphabetic) closes the panel. A `/` query
+  whose slug is unknown appends a trailing `Create collection “<slug>”` row
+  that mints exactly the slug the parser would have read. The `@` rows are the upcoming hours in local wall time,
   wrapping past midnight — the clock the owner is looking at, and the one the
   parser resolves against — and a typed prefix matches either the padded or
   the spoken form, so `@9` still finds `09:00`.
@@ -255,7 +299,8 @@ draft` button inside the input is the pointer equivalent of the third rung.
 - LOG-52 Discoverability: each type-menu row carries an `aria-hidden` `<kbd>`
   showing its signifier, and the menu accepts a bare signifier key as a
   shortcut; a help popover (`.capture-help`, same surfaces as LOG-47) lists
-  the signifiers, the tokens (`#tag`, `@4pm`, `>tomorrow`, `/collection`,
+  the signifiers, the tokens (`#tag`, `@4pm`, `>tomorrow` — glossed with
+  `>friday`, `>next-week`, and an absolute date — `/collection`,
   `//literal`), and the shortcuts. Pressing `/` anywhere in the app focuses
   the composer, unless a dialog is open or the key was typed into a
   text-entry target — including the composer itself, where `/` is grammar.
@@ -312,6 +357,20 @@ draft` button inside the input is the pointer equivalent of the third rung.
     **File in ideas** → **[ext]** generalized to **File in collection…**
     (collection picker; the prototype hard-wired 'ideas'), **Delete**
     (soft delete, danger).
+  - **[ext]** a `migrated` or `scheduled` entry is a tombstone pointing at its
+    copy: filing and every state action are withheld, so **Delete** is offered
+    for it whatever its type — otherwise the "Moved forward"/"In monthly log"
+    shell could never be cleared. A `cancelled` task still offers no Delete:
+    the drop is the record it exists to keep.
+  - **[ext]** **To monthly log** targets the browsed month when the view is a
+    monthly log and the current month otherwise, naming itself after the
+    target when they differ ("To September log"). It is offered but inert when
+    the entry already sits in that target's `month:YYYY-MM`: scheduling files a
+    copy, so acting there would put a second one beside it.
+  - **[ext]** the filing control names the entry's true filing, monthly logs
+    included ("Monthly log — July 2026"). A monthly log is server-owned and so
+    is never an option the picker offers: it renders as the current, inert
+    selection, and choosing any other option is an explicit move out of it.
   - every action closes the dialog and toasts its result ("Moved to today",
     "Dropped", "Deleted"…).
 - LOG-21 **[ext, included]** An Edit affordance switches fields to inputs

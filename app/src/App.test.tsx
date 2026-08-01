@@ -162,6 +162,17 @@ describe('App capture', () => {
     );
   });
 
+  it('sends a `>friday` capture as the absolute day it resolves to', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    // TODAY is a Friday, so the weekday token means the Friday after it.
+    await capture(user, 'Call the bank >friday');
+    await screen.findByText('Added to Aug 7');
+    expect(createEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ date: '2026-08-07', collection: null }),
+    );
+  });
+
   it('clears the draft but leaves the composer ready for the next capture', async () => {
     const user = userEvent.setup();
     render(<App />);

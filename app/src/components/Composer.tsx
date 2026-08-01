@@ -98,7 +98,7 @@ export function Composer({
     today,
     chipOverride,
     parsedCollection: parsed.collection,
-    dateShift: parsed.dateShift === 'tomorrow' ? 1 : 0,
+    dateShift: parsed.dateShift,
     collectionsById,
   });
   const screenDestination = resolveDestination({
@@ -106,7 +106,7 @@ export function Composer({
     today,
     chipOverride: null,
     parsedCollection: null,
-    dateShift: 0,
+    dateShift: null,
     collectionsById,
   }).destination;
 
@@ -213,7 +213,7 @@ export function Composer({
     if (destination.kind === 'collection') {
       return () => onDraftChange(removeCaptureToken(draft, 'collection', destination.id));
     }
-    return () => onDraftChange(removeCaptureToken(draft, 'tomorrow'));
+    return () => onDraftChange(removeCaptureToken(draft, 'date-shift'));
   })();
 
   const selectDestination = (destination: Destination) => {

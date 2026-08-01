@@ -74,9 +74,23 @@ describe('removeCaptureToken', () => {
     expect(removeCaptureToken('Retro @9am @4pm', 'time', '16:00')).toBe('Retro @9am');
   });
 
-  it('removes the tomorrow shift case-insensitively', () => {
-    expect(removeCaptureToken('Call the bank >Tomorrow', 'tomorrow')).toBe('Call the bank');
-    expect(removeCaptureToken('>tomorrow call the bank', 'tomorrow')).toBe('call the bank');
+  it('removes the date shift case-insensitively, whatever day it names', () => {
+    expect(removeCaptureToken('Call the bank >Tomorrow', 'date-shift')).toBe('Call the bank');
+    expect(removeCaptureToken('>tomorrow call the bank', 'date-shift')).toBe('call the bank');
+    expect(removeCaptureToken('Call the bank >Friday', 'date-shift')).toBe('Call the bank');
+    expect(removeCaptureToken('Call the bank >next-week', 'date-shift')).toBe('Call the bank');
+    expect(removeCaptureToken('Call the bank >2026-08-04', 'date-shift')).toBe('Call the bank');
+  });
+
+  it('removes the shift the parser actually chose, skipping impossible dates', () => {
+    expect(parseDraft('Call >2026-13-40 >friday', 'note').dateShift).toEqual({
+      kind: 'weekday',
+      day: 5,
+    });
+    expect(removeCaptureToken('Call >2026-13-40 >friday', 'date-shift')).toBe('Call >2026-13-40');
+    expect(removeCaptureToken('Call >tomorrowish today', 'date-shift')).toBe(
+      'Call >tomorrowish today',
+    );
   });
 
   it('removes the collection token without touching an escaped slash', () => {
@@ -93,7 +107,7 @@ describe('removeCaptureToken', () => {
 
   it('leaves a draft untouched when the token is absent, so removal is idempotent', () => {
     const draft = 'Buy milk';
-    for (const kind of ['signifier', 'tag', 'time', 'tomorrow', 'collection'] as const) {
+    for (const kind of ['signifier', 'tag', 'time', 'date-shift', 'collection'] as const) {
       expect(removeCaptureToken(draft, kind)).toBe(draft);
     }
     const once = removeCaptureToken('Buy milk #home', 'tag');
@@ -109,7 +123,7 @@ describe('removeCaptureToken', () => {
       collection: 'project-atlas',
       tags: ['work'],
       time: '09:15',
-      dateShift: 'tomorrow',
+      dateShift: { kind: 'tomorrow' },
     });
 
     const withoutCollection = removeCaptureToken(draft, 'collection');
@@ -118,11 +132,11 @@ describe('removeCaptureToken', () => {
       collection: null,
       tags: ['work'],
       time: '09:15',
-      dateShift: 'tomorrow',
+      dateShift: { kind: 'tomorrow' },
       text: 'Draft the brief',
     });
 
-    const withoutShift = removeCaptureToken(withoutCollection, 'tomorrow');
+    const withoutShift = removeCaptureToken(withoutCollection, 'date-shift');
     expect(parseDraft(withoutShift, 'note')).toMatchObject({
       dateShift: null,
       time: '09:15',

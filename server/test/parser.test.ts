@@ -9,7 +9,7 @@ describe('capture parser', () => {
       time: '16:00',
       tags: ['work'],
       collection: null,
-      dateShift: 1,
+      dateShift: { kind: 'tomorrow' },
       signifier: '.',
     });
   });
@@ -21,7 +21,7 @@ describe('capture parser', () => {
       time: '11:00',
       tags: [],
       collection: null,
-      dateShift: 0,
+      dateShift: null,
       signifier: 'o',
     });
   });
@@ -49,7 +49,7 @@ describe('capture parser', () => {
       time: null,
       tags: [],
       collection: null,
-      dateShift: 0,
+      dateShift: null,
       signifier: null,
     });
   });
@@ -84,8 +84,53 @@ describe('capture parser', () => {
       time: '11:00',
       tags: ['work'],
       collection: null,
-      dateShift: 1,
+      dateShift: { kind: 'tomorrow' },
       signifier: 'o',
+    });
+  });
+});
+
+describe('capture parser date shift token', () => {
+  it.each([
+    ['- Call the bank >today', { kind: 'today' }],
+    ['- Call the bank >tomorrow', { kind: 'tomorrow' }],
+    ['- Call the bank >friday', { kind: 'weekday', day: 5 }],
+    ['- Call the bank >fri', { kind: 'weekday', day: 5 }],
+    ['- Call the bank >Friday', { kind: 'weekday', day: 5 }],
+    ['- Call the bank >SUN', { kind: 'weekday', day: 7 }],
+    ['- Call the bank >monday', { kind: 'weekday', day: 1 }],
+    ['- Call the bank >next-week', { kind: 'next-week' }],
+    ['- Call the bank >weekend', { kind: 'weekend' }],
+    ['- Call the bank >2026-08-04', { kind: 'absolute', date: '2026-08-04' }],
+  ])('reads the shift %s names without resolving it to a date', (draft, expected) => {
+    expect(parseCapture(draft)).toMatchObject({ text: 'Call the bank', dateShift: expected });
+  });
+
+  it('keeps the first shift and leaves later ones as text', () => {
+    expect(parseCapture('- Ship >mon >friday')).toMatchObject({
+      text: 'Ship >friday',
+      dateShift: { kind: 'weekday', day: 1 },
+    });
+  });
+
+  it.each([
+    '- Call the bank >tomorrowish',
+    '- Call the bank >monx',
+    '- Call the bank >next-weekend',
+    '- Notes > mon please',
+    '- Call the bank >2026-13-40',
+    '- Call the bank >2026-02-30',
+  ])('leaves %s whole, with no shift', (draft) => {
+    expect(parseCapture(draft)).toMatchObject({
+      text: draft.slice(2),
+      dateShift: null,
+    });
+  });
+
+  it('skips an impossible date and still catches a later valid shift', () => {
+    expect(parseCapture('x >2026-13-40 >friday')).toMatchObject({
+      text: 'x >2026-13-40',
+      dateShift: { kind: 'weekday', day: 5 },
     });
   });
 });
@@ -98,7 +143,7 @@ describe('capture parser collection token', () => {
       time: '09:00',
       tags: ['home'],
       collection: 'errands',
-      dateShift: 1,
+      dateShift: { kind: 'tomorrow' },
       signifier: '.',
     });
   });
@@ -160,7 +205,14 @@ describe('capture parser collection token', () => {
     expect(parseCapture('- Plan the week /errands>tomorrow')).toMatchObject({
       text: 'Plan the week',
       collection: 'errands',
-      dateShift: 1,
+      dateShift: { kind: 'tomorrow' },
+    });
+    // The shift token has no left-context rule, so every word of the grammar
+    // glues the same way `>tomorrow` always has.
+    expect(parseCapture('- Plan the week /errands>friday')).toMatchObject({
+      text: 'Plan the week',
+      collection: 'errands',
+      dateShift: { kind: 'weekday', day: 5 },
     });
     expect(parseCapture('- Meet @9/errands')).toMatchObject({
       text: 'Meet /errands',

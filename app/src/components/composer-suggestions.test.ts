@@ -113,7 +113,7 @@ describe('suggestionQuery', () => {
     expect(queryAt('>Tom|')).toMatchObject({ mode: 'date-shift', query: 'tom' });
   });
 
-  it('refuses a date-shift query the one supported word could never start', () => {
+  it('refuses a date-shift query the completion mode cannot read', () => {
     expect(queryAt('>2026-08-04|')).toBeNull();
   });
 
@@ -224,7 +224,7 @@ describe('buildSuggestionRows', () => {
     expect(rows('/|')).toHaveLength(2);
   });
 
-  it('completes the one date shift the parser understands', () => {
+  it('completes the one date shift the panel offers', () => {
     expect(rows('Call >|')).toEqual([
       {
         kind: 'date-shift',
@@ -238,6 +238,7 @@ describe('buildSuggestionRows', () => {
   });
 
   it('offers no date shift for a word `tomorrow` could never become', () => {
+    // The parser reads `>mon`; the panel simply has no row to offer for it yet.
     expect(rows('Call >mon|')).toEqual([]);
   });
 

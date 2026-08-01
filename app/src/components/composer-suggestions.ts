@@ -12,7 +12,11 @@ const DATE_SHIFT_QUERY = /^[a-z]*$/;
 /** `@` completes a clock reading; `@mira` is a handle, not a half-typed time. */
 const TIME_QUERY = /^\d{0,2}(?::\d{0,2})?$/;
 
-/** The only date shift the parser understands, so the only one worth offering. */
+/**
+ * The only shift this panel completes. The parser reads the whole grammar
+ * (`>friday`, `>next-week`, `>2026-08-12`; LOG-6 step 5) — completing the rest
+ * of it is a later phase, so until then those are reached by typing.
+ */
 const DATE_SHIFT_WORD = 'tomorrow';
 
 /** Upcoming round hours the `@` panel offers before the caption takes over. */

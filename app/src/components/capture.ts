@@ -4,6 +4,7 @@ import {
   SIGNIFIER_TOKEN_SOURCE,
   TAG_TOKEN_SOURCE,
   TIME_TOKEN_SOURCE,
+  parseDateShiftToken,
   safeParseCapture,
 } from '@journal/server/contracts/app';
 import type { EntryType, ParsedDraft } from './types';
@@ -29,13 +30,13 @@ export function parseDraft(raw: string, defaultType: EntryType): ParsedDraft {
     text: result.data.text,
     tags: result.data.tags,
     collection: result.data.collection,
-    dateShift: result.data.dateShift === 1 ? 'tomorrow' : null,
+    dateShift: result.data.dateShift,
     signifierWon: result.data.signifier !== null,
     error: null,
   };
 }
 
-export type CaptureTokenKind = 'signifier' | 'tag' | 'time' | 'tomorrow' | 'collection';
+export type CaptureTokenKind = 'signifier' | 'tag' | 'time' | 'date-shift' | 'collection';
 
 interface TokenSpan {
   start: number;
@@ -78,9 +79,17 @@ function findTokenSpan(draft: string, kind: CaptureTokenKind, value?: string): T
       if (match === null) return null;
       return { start: offset, end: offset + match[0].length };
     }
-    case 'tomorrow': {
-      const match = new RegExp(DATE_SHIFT_TOKEN_SOURCE, 'i').exec(draft);
-      return match === null ? null : spanOf(match.index, match[0]);
+    case 'date-shift': {
+      for (const match of draft.matchAll(new RegExp(DATE_SHIFT_TOKEN_SOURCE, 'gi'))) {
+        // Mirrors the parser: candidates it rejects (>2026-13-40) are skipped
+        // rather than removed, so the chip and the removal target agree. Only
+        // the first surviving token is the one the parser consumed, so this
+        // kind ignores `value` — there is never a second shift to disambiguate.
+        const body = match[1];
+        if (body === undefined || parseDateShiftToken(body) === null) continue;
+        return spanOf(match.index, match[0]);
+      }
+      return null;
     }
     case 'tag': {
       const wanted = value === undefined ? null : value.replace(/^#/, '').toLowerCase();
