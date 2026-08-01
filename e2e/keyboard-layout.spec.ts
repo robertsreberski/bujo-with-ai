@@ -278,6 +278,132 @@ test('a tap on a suggestion row completes the capture and keeps the keyboard up'
   await expect(html).toHaveClass(/keyboard-open/);
 });
 
+interface FieldEvidence {
+  composerHeightVariable: number;
+  /** The four-line ceiling, derived from the field's own type — not a literal. */
+  fieldCap: number;
+  fieldClientWidth: number;
+  fieldHeight: number;
+  fieldScrollWidth: number;
+  panelBottom: number | null;
+  shellBottom: number;
+  shellHeight: number;
+  shellTop: number;
+  visibleBottom: number;
+}
+
+async function readField(page: Page): Promise<FieldEvidence> {
+  return page.evaluate(async () => {
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+    const field = document.querySelector('.composer__input');
+    const shell = document.querySelector('.composer-shell');
+    const panel = document.querySelector('.composer-suggestions');
+    const viewport = window.visualViewport;
+    if (!field || !shell || !viewport) throw new Error('The composer field is not mounted.');
+    const styles = getComputedStyle(field);
+    const parse = (value: string): number => {
+      const parsed = Number.parseFloat(value);
+      if (!Number.isFinite(parsed)) throw new Error(`The field reports no metric: "${value}".`);
+      return parsed;
+    };
+    const shellBox = shell.getBoundingClientRect();
+    return {
+      composerHeightVariable: Number.parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue('--composer-height'),
+      ),
+      fieldCap:
+        parse(styles.lineHeight) * 4 +
+        parse(styles.paddingTop) +
+        parse(styles.paddingBottom) +
+        parse(styles.borderTopWidth) +
+        parse(styles.borderBottomWidth),
+      fieldClientWidth: field.clientWidth,
+      fieldHeight: field.getBoundingClientRect().height,
+      fieldScrollWidth: field.scrollWidth,
+      panelBottom:
+        panel === null || (panel as HTMLElement).hidden
+          ? null
+          : panel.getBoundingClientRect().bottom,
+      shellBottom: shellBox.bottom,
+      shellHeight: shellBox.height,
+      shellTop: shellBox.top,
+      visibleBottom: viewport.offsetTop + viewport.height,
+    };
+  });
+}
+
+/**
+ * LOG-56. A long capture is ordinary, so the field wraps and grows with it —
+ * and everything the docked composer promises has to survive the growth: it
+ * stops at four lines rather than eating the screen, the measured
+ * `--composer-height` follows it (PWA-15a), the shell stays flush with the
+ * keyboard's top edge (PWA-15), and the suggestion panel keeps riding the
+ * shell's top edge (PWA-17a) instead of being left behind over the draft.
+ */
+test('a long draft grows the composer without unpinning it or its suggestion panel', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await installKeyboardEmulation(page);
+  await openJournal(page);
+
+  const html = page.locator('html');
+  const input = page.getByRole('combobox', { name: 'Add an entry' });
+  const panel = page.locator('.composer-shell [role="listbox"]');
+  // ~200 characters of plain words: no sigil, so only the wrap is under test.
+  const long = 'the quiet capture that just keeps going and going '.repeat(4).trim();
+
+  await input.focus();
+  await setKeyboardInset(page, KEYBOARD_INSET);
+  await expect(html).toHaveClass(/keyboard-open/);
+  await expect(page.locator('.composer-shell')).toHaveCSS('position', 'fixed');
+
+  // The one-line baseline, and the gap the panel keeps above the shell.
+  await input.fill('>');
+  await expect(panel).toBeVisible();
+  const short = await readField(page);
+  expect(short.panelBottom).not.toBeNull();
+  const panelGap = short.shellTop - (short.panelBottom ?? 0);
+  expect(panelGap).toBeGreaterThan(0);
+  expect(short.fieldHeight).toBeLessThanOrEqual(short.fieldCap);
+
+  await input.fill(long);
+  await expect(panel).toBeHidden();
+  // The measurement lands on a frame behind the resize observation.
+  await expect
+    .poll(async () => (await readField(page)).composerHeightVariable)
+    .toBeGreaterThan(short.composerHeightVariable);
+
+  const grown = await readField(page);
+  expect(grown.fieldHeight).toBeGreaterThan(short.fieldHeight);
+  expect(grown.shellHeight).toBeGreaterThan(short.shellHeight);
+  // Four lines is the ceiling; past it the field takes the scroll itself.
+  expect(grown.fieldHeight).toBeLessThanOrEqual(grown.fieldCap + 1);
+  expect(grown.composerHeightVariable).toBeCloseTo(grown.shellHeight, 0);
+  // The whole point of the pin: a taller composer still ends where the keyboard
+  // begins, growing upward into the day list rather than under the keyboard.
+  expect(grown.shellBottom).toBeCloseTo(grown.visibleBottom, 0);
+  await expect(html).toHaveClass(/keyboard-open/);
+
+  await input.fill(`${long} >`);
+  await expect(panel).toBeVisible();
+  const anchored = await readField(page);
+  expect(anchored.panelBottom).not.toBeNull();
+  // Still glued to the shell's top edge, by the same gap, over a field three
+  // lines taller than the one it was measured against.
+  expect(anchored.shellTop - (anchored.panelBottom ?? 0)).toBeCloseTo(panelGap, 0);
+  expect(anchored.shellBottom).toBeCloseTo(anchored.visibleBottom, 0);
+
+  // A 200-character token with nothing to break on — a pasted URL — wraps too.
+  // Sideways scrolling is what the growth exists to replace, so there must be
+  // none of it left anywhere in the field.
+  await input.fill('x'.repeat(200));
+  const unbroken = await readField(page);
+  expect(unbroken.fieldHeight).toBeGreaterThan(short.fieldHeight);
+  expect(unbroken.fieldScrollWidth).toBeLessThanOrEqual(unbroken.fieldClientWidth);
+});
+
 /**
  * PWA-14. WebKit scrolls the *visual* viewport to reveal the caret while the
  * keyboard is up. The composer's keyboard-open `bottom` is
