@@ -373,6 +373,32 @@ draft` button inside the input is the pointer equivalent of the third rung.
   `//literal`), and the shortcuts. Pressing `/` anywhere in the app focuses
   the composer, unless a dialog is open or the key was typed into a
   text-entry target — including the composer itself, where `/` is grammar.
+- LOG-56 **[ext]** **The field wraps rather than scrolls sideways.** A long
+  capture is ordinary — a quote, a URL, a sentence that ran on — and a
+  one-line field answers it by scrolling horizontally, which on a phone hides
+  the words already typed. The composer input is therefore a **textarea that
+  auto-grows**: one line at rest (the same 36px box, 40px on touch, so nothing
+  moves for a short draft), growing line by line with the wrapped draft up to
+  **four lines**, after which it scrolls inside itself rather than pushing the
+  day list off the screen. The height is measured, never listed: the cap is
+  four times the field's own line-height plus its padding and borders, so the
+  13.5px pointer scale and the 16px touch scale each get four of their own
+  lines. Long unbroken tokens wrap (`overflow-wrap: break-word`) instead of
+  overflowing. The docked composer's measured height (PWA-15a) follows the
+  growth, so the day list's bottom padding, the toast anchor and the
+  suggestion panel all keep their distance from a composer that changes size.
+- LOG-57 **[ext]** **An entry stays one line.** The draft is a single line by
+  contract — the capture grammar and `EntryTextSchema` both say so — and the
+  taller field must not become a licence to write paragraphs. So **Enter files
+  the entry, with or without Shift**, and never inserts a newline: a textarea
+  has no implicit form submission to inherit, so the filing is explicit and
+  the key's own default is always suppressed (the one exception is an Enter
+  the IME is using to confirm a composition, and an Enter that accepts a
+  completion, which per LOG-49 is consumed by the accept). Line breaks that
+  arrive by any other route — paste, drop, dictation — are **sanitized on the
+  way in**: each run of `\r`/`\n` becomes a single space before the draft, the
+  parser, or the entry ever sees it, and the caret is mapped through the same
+  collapse so typing carries on where it left off.
 
 ## 3. Today view
 

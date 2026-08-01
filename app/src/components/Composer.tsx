@@ -37,6 +37,29 @@ import {
 const KBD =
   'ml-auto inline-flex min-w-4 flex-none items-center justify-center rounded-sm border border-border px-1 text-(length:--text-tag) font-mono text-fg-faint';
 
+/*
+ * The field is a textarea that wraps and grows with the draft, the way a
+ * messaging composer does, and stops at four lines — past that it scrolls
+ * inside itself rather than eating the screen the capture is about. What it is
+ * *not* is a multi-line draft: an entry is one line by contract (the capture
+ * grammar and `EntryTextSchema`), so Enter always files and every line break
+ * that reaches the field becomes a space on the way in.
+ */
+const FIELD_MAX_ROWS = 4;
+/**
+ * Style-less mounts (jsdom) report no line-height. The design scale's composer
+ * text is 13.5px × 1.45 ≈ 19.6px, 16px × 1.45 = 23.2px on touch; this is only
+ * the floor under a measurement that normally answers for itself.
+ */
+const FALLBACK_LINE_HEIGHT = 20;
+/** One run of line breaks — a pasted CRLF is one space, not two. */
+const NEWLINE_RUN = /[\r\n]+/g;
+
+const pixels = (value: string, fallback = 0): number => {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
 interface ComposerProps {
   draft: string;
   defaultType: EntryType;
@@ -78,7 +101,9 @@ export function Composer({
   const [menuOpen, setMenuOpen] = useState(false);
   const [caret, setCaret] = useState<number | null>(null);
   const [focused, setFocused] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  /** True once the draft is taller than the four-line cap the field grows to. */
+  const [overflowing, setOverflowing] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const focusMenuOnOpenRef = useRef(false);
   const pendingCaretRef = useRef<number | null>(null);
@@ -119,6 +144,39 @@ export function Composer({
 
   const focusInput = useCallback(() => inputRef.current?.focus(), []);
 
+  /*
+   * One line of draft has to look exactly like the fixed-height input it
+   * replaced, so nothing here hard-codes a height: `min-h-9`/`touch:min-h-10`
+   * own row one and the measurement takes over from row two. `scrollHeight` is
+   * the padding box, so the two borders are added back to reach the border-box
+   * height the layout actually uses, and the cap is derived from the field's
+   * own line-height — 13.5px text on a pointer device, 16px on touch, one
+   * measurement for both.
+   */
+  const resizeField = useCallback(() => {
+    const field = inputRef.current;
+    if (!field) return;
+    field.style.height = 'auto';
+    const styles = getComputedStyle(field);
+    const frame = pixels(styles.borderTopWidth) + pixels(styles.borderBottomWidth);
+    const cap =
+      pixels(styles.lineHeight, FALLBACK_LINE_HEIGHT) * FIELD_MAX_ROWS +
+      pixels(styles.paddingTop) +
+      pixels(styles.paddingBottom) +
+      frame;
+    const content = field.scrollHeight + frame;
+    field.style.height = `${Math.min(content, cap)}px`;
+    setOverflowing(content > cap);
+  }, []);
+
+  // A rotation or a pane resize changes how many lines the same draft takes.
+  useEffect(() => {
+    window.addEventListener('resize', resizeField);
+    return () => {
+      window.removeEventListener('resize', resizeField);
+    };
+  }, [resizeField]);
+
   useLayoutEffect(() => {
     if (menuOpen && focusMenuOnOpenRef.current) {
       menuRef.current?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
@@ -127,14 +185,17 @@ export function Composer({
   }, [menuOpen]);
 
   // An accepted completion rewrites the draft through the store, so the caret is
-  // restored once the new value has actually landed in the DOM node.
+  // restored once the new value has actually landed in the DOM node — after the
+  // field has been resized for it, because placing a caret against a height the
+  // draft has already outgrown scrolls the field to a line about to move.
   useLayoutEffect(() => {
+    resizeField();
     const position = pendingCaretRef.current;
     if (position === null) return;
     pendingCaretRef.current = null;
     inputRef.current?.setSelectionRange(position, position);
     setCaret(position);
-  }, [draft]);
+  }, [draft, resizeField]);
 
   useEffect(() => {
     if (focusRequest === undefined) return;
@@ -157,8 +218,13 @@ export function Composer({
     };
   }, [menuOpen]);
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
+  /*
+   * The one filing path. A textarea has no implicit form submission, so Enter
+   * calls this directly rather than dispatching a submit the field would answer
+   * with a newline — and the + button, the form's own `requestSubmit()` (the
+   * release benchmark uses it) and Enter all still go through the same guards.
+   */
+  const fileDraft = () => {
     // A completion accepted with Enter must never also file the entry.
     if (consumedEnterRef.current) {
       consumedEnterRef.current = false;
@@ -168,6 +234,11 @@ export function Composer({
     onSubmit(parsed);
     setMenuOpen(false);
     inputRef.current?.focus();
+  };
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    fileDraft();
   };
 
   const acceptSuggestion = (index: number) => {
@@ -186,7 +257,43 @@ export function Composer({
     inputRef.current?.focus();
   };
 
-  const trackCaret = (element: HTMLInputElement) => setCaret(element.selectionStart);
+  const trackCaret = (element: HTMLTextAreaElement) => setCaret(element.selectionStart);
+
+  /*
+   * Nothing but a single line ever reaches the draft. A paste, a drop or a
+   * dictation can carry line breaks the capture grammar has no room for, so
+   * each run of them collapses to one space here — before the parser, the
+   * store, or the entry ever sees it — and the caret is mapped through the same
+   * collapse so the owner keeps typing where they were.
+   */
+  const handleInput = (element: HTMLTextAreaElement) => {
+    const raw = element.value;
+    const next = raw.replace(NEWLINE_RUN, ' ');
+    if (next === raw) {
+      trackCaret(element);
+      onDraftChange(next);
+      return;
+    }
+    const position = raw
+      .slice(0, element.selectionStart ?? raw.length)
+      .replace(NEWLINE_RUN, ' ').length;
+    if (next === draft) {
+      /*
+       * Sanitizing back to the draft React already holds re-renders nothing, so
+       * the `[draft]` layout effect — the single path that moves the DOM
+       * selection and the `caret` state together — will not run: arming it
+       * would leave the ref for some later edit to consume. React restores the
+       * controlled value itself at the end of this event, so only the caret is
+       * left to place, one microtask behind that restore.
+       */
+      pendingCaretRef.current = null;
+      queueMicrotask(() => inputRef.current?.setSelectionRange(position, position));
+      setCaret(position);
+      return;
+    }
+    pendingCaretRef.current = position;
+    onDraftChange(next);
+  };
 
   /*
    * The combobox contract is permanent, per ARIA 1.2: the input is always a
@@ -220,7 +327,7 @@ export function Composer({
     onChipOverrideChange?.(sameDestination(destination, screenDestination) ? null : destination);
   };
 
-  const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+  const handleInputKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // Keys pressed to steer an IME composition are the IME's, not ours: Enter
     // confirms the composition and Escape cancels it — never accept, never
     // clear the draft.
@@ -247,6 +354,17 @@ export function Composer({
         acceptSuggestion(suggestions.activeIndex);
         return;
       }
+    }
+    /*
+     * Enter files, with or without Shift, and never writes a newline: the
+     * field's default action is the one thing a single-line contract cannot
+     * afford, and a textarea has no implicit form submission to fall back on,
+     * so the filing is explicit.
+     */
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      fileDraft();
+      return;
     }
     if (event.key !== 'Escape') return;
     // One ladder, rung by rung: the panel, then the type menu, then the draft,
@@ -449,15 +567,27 @@ export function Composer({
             Add an entry
           </label>
           <div className="relative flex min-w-0 flex-1 items-center">
-            <input
+            <textarea
               ref={inputRef}
               id={`${labelId}-input`}
-              className={cn('composer__input h-9 w-full min-w-0 touch:h-10', draft && 'pr-10')}
+              className={cn(
+                /*
+                 * `py-[7px]`: the reset gives inputs their vertical centring for
+                 * free and a textarea none, so the padding is what centres line
+                 * one inside the same 36px (40px touch) box — 13.5 × 1.45 +
+                 * 14 + 2 borders lands just under it, and the min-height owns
+                 * the last fraction. `break-words` says out loud what both
+                 * engines' textarea defaults already do — a 200-character URL
+                 * wraps rather than scrolling the field sideways, which is the
+                 * whole point of growing it.
+                 */
+                'composer__input min-h-9 w-full min-w-0 resize-none break-words py-[7px] touch:min-h-10',
+                overflowing ? 'overflow-y-auto' : 'overflow-hidden',
+                draft && 'pr-10',
+              )}
+              rows={1}
               value={draft}
-              onChange={(event) => {
-                trackCaret(event.currentTarget);
-                onDraftChange(event.currentTarget.value);
-              }}
+              onChange={(event) => handleInput(event.currentTarget)}
               placeholder="Add an entry…"
               autoComplete="off"
               enterKeyHint="done"

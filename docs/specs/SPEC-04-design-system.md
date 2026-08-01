@@ -139,16 +139,23 @@ Dark theme only in v1 (the design defines no light theme).
 Control heights: 28 (calendar chevrons) · 30 (small buttons, tab segments) ·
 32 (header icon buttons, card footer buttons) · 34 (nav rows, action-grid
 buttons) · 36 (composer input/submit/type button). Hit areas on touch ≥40px
-via padding (SPEC-05).
+via padding (SPEC-05). One exception, and it is a floor rather than a height:
+the composer input is a textarea that grows with the wrapped draft (LOG-56),
+so 36 (40 touch) is its **min-height** — the height it holds for the one-line
+draft it holds most of the time.
 
 - DS-15 **Buttons.** Primary: `--primary` bg, `--primary-fg` text, no
   border, hover `--primary-hover`. Secondary: `--bg` bg, 1px `--border`,
   hover `--bg-line`. Danger: secondary shape with `--danger` text; hover
   `--danger-bg-hover` + `--danger-border`. Icon buttons: 32px square,
   secondary shape, `--fg-mid` → `--fg` on hover. Weight 500, sizes 12–12.5.
-- DS-16 **Inputs.** 36px, `--bg` bg, 1px `--border-control`, radius 6,
+- DS-16 **Inputs.** 36px (min-height, and the height of every input but the
+  growing composer field), `--bg` bg, 1px `--border-control`, radius 6,
   13.5px; focus: border `--primary` + a 2px `--primary-hover` outline with
-  2px offset; placeholder `--fg-faint`; selection bg `--border`.
+  2px offset; placeholder `--fg-faint`; selection bg `--border`. The composer
+  textarea earns that same one-line box with 7px block padding — an input
+  centres its single line for free, a textarea does not — and never shows a
+  resize grabber.
 - DS-17 **Entry row.** Grid `18px 1fr auto`, column-gap 11, top-aligned;
   hover `--bg-hover`; bottom hairline `--bg-line`; background transition
   `.1s ease`. Checkbox 16px, radius 4, border `--border-control` →
@@ -180,7 +187,10 @@ via padding (SPEC-05).
   11.5px/500 `--fg-mute`.
 - DS-23 **Composer.** Top border on `--bg`; padding `10px 12px 12px`; chip
   row (20px chips, `--bg-line` bg, `--fg-mid`); 36px type button + input +
-  36px primary submit; hint line 11.5px `--fg-mute`.
+  36px primary submit; hint line 11.5px `--fg-mute`. The input is the one
+  control on the row whose height is a floor: it wraps and grows to four
+  lines, then scrolls inside itself (LOG-56), and the row's other two controls
+  stay centred against it.
 
 ## 7. Motion
 

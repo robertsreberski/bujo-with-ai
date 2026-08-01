@@ -205,7 +205,12 @@ it. `visualViewport` is the only truth.
   against the viewport, so it is pinned to the measured pane box — otherwise it
   spans the window and runs under the sidebar on the wide (iPad) layout. The
   day list's keyboard-open bottom padding and the toast anchor both derive from
-  `--composer-height`; no layout literal duplicates the composer's height.
+  `--composer-height`; no layout literal duplicates the composer's height. That
+  height is not a constant: the capture field grows with the wrapped draft up
+  to four lines (LOG-56), and because the observation is on the shell rather
+  than on a number, the padding, the toast and the pin all follow it — the
+  composer grows **upward** into the day list, its bottom still flush with the
+  keyboard's top edge.
 - PWA-16 Focus scroll: focusing the composer scrolls the newest entries into
   view with `behavior: 'auto'` — `smooth` double-animates against the
   keyboard slide and feels broken.

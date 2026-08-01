@@ -109,11 +109,28 @@ const pointerEvent = (
   return event;
 };
 
+const field = () => input() as HTMLTextAreaElement;
+
 /** jsdom leaves the caret at 0 after a programmatic value set, so tests place it. */
 const caretToEnd = async (user: ReturnType<typeof userEvent.setup>) => {
-  const element = input() as HTMLInputElement;
+  const element = field();
   element.setSelectionRange(element.value.length, element.value.length);
   await user.click(element);
+};
+
+/**
+ * jsdom lays nothing out, so the field's geometry is dictated here: 20px lines
+ * with no padding or border, which puts the four-line cap at exactly 80px. The
+ * effect only ever writes `height`, so these survive it.
+ */
+const stubFieldMetrics = (scrollHeight: () => number) => {
+  const element = field();
+  element.setAttribute(
+    'style',
+    'line-height: 20px; padding-top: 0px; padding-bottom: 0px; border-top-width: 0px; border-bottom-width: 0px;',
+  );
+  Object.defineProperty(element, 'scrollHeight', { configurable: true, get: scrollHeight });
+  return element;
 };
 
 afterEach(cleanup);
@@ -229,7 +246,7 @@ describe('Composer', () => {
     // The removal reconciles the caret through the same path an accepted
     // completion uses, so the suggestion machinery reads an offset the input
     // actually has — and nothing pops open behind the owner's back.
-    expect((input() as HTMLInputElement).selectionStart).toBe('Ship it plan'.length);
+    expect(field().selectionStart).toBe('Ship it plan'.length);
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   });
 
@@ -267,6 +284,100 @@ describe('Composer', () => {
     const trigger = screen.getByRole('button', { name: /^Entry type: Event/ });
     expect(trigger).toHaveAccessibleName(/remove it to choose/);
     expect(trigger).toHaveAttribute('title', expect.stringContaining("leading 'o'"));
+  });
+});
+
+describe('Composer field', () => {
+  it('files on Enter and writes no newline into the single-line draft', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn<(parsed: ParsedDraft) => void>();
+    render(<Harness onSubmit={onSubmit} />);
+    await user.type(input(), 'Water the plants');
+    await user.keyboard('{Enter}');
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0]?.[0].text).toBe('Water the plants');
+    // The harness keeps the draft (App clears it), so the field still shows
+    // exactly what Enter filed — the key's own default never reached it.
+    expect(field().value).toBe('Water the plants');
+  });
+
+  it('files on Shift+Enter too: there is no second line to reach for', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn<(parsed: ParsedDraft) => void>();
+    render(<Harness onSubmit={onSubmit} />);
+    await user.type(input(), 'Water the plants');
+    await user.keyboard('{Shift>}{Enter}{/Shift}');
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(field().value).toBe('Water the plants');
+  });
+
+  it('turns pasted line breaks into spaces before they reach the draft', async () => {
+    const user = userEvent.setup();
+    const onDraftChange = vi.fn<(draft: string) => void>();
+    render(<Harness onDraftChange={onDraftChange} />);
+    await user.click(input());
+    await user.paste('Call Mira\nabout the deck\nbefore Friday');
+
+    expect(field().value).toBe('Call Mira about the deck before Friday');
+    expect(onDraftChange).toHaveBeenLastCalledWith('Call Mira about the deck before Friday');
+    // The caret is mapped through the same collapse, so typing carries on where
+    // the paste ended rather than at the top of the draft.
+    expect(field().selectionStart).toBe('Call Mira about the deck before Friday'.length);
+
+    // A value arriving whole — a drop, or dictation — takes the same path, and
+    // one run of breaks is one space: a CRLF is not two. (user-event normalizes
+    // `\r\n` to `\n` on paste, so only a raw change event can say this.)
+    fireEvent.change(field(), { target: { value: 'One\r\n\nTwo' } });
+    expect(field().value).toBe('One Two');
+  });
+
+  it('restores the field when the sanitized draft is the one React already holds', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), 'a b');
+
+    // Replacing the space with a break sanitizes straight back to the current
+    // draft, so nothing re-renders: the value has to come back through React's
+    // own controlled restore, and the caret has to be placed without arming a
+    // ref that some later, unrelated edit would consume.
+    fireEvent.change(field(), { target: { value: 'a\nb' } });
+    expect(field().value).toBe('a b');
+    await Promise.resolve();
+    expect(field().selectionStart).toBe('a b'.length);
+
+    await user.type(field(), 'c');
+    expect(field().value).toBe('a bc');
+  });
+
+  it('grows with the wrapped draft and scrolls inside itself at four lines', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    let scrollHeight = 20;
+    const element = stubFieldMetrics(() => scrollHeight);
+
+    await user.type(input(), 'a');
+    expect(element.style.height).toBe('20px');
+    expect(element.className).toContain('overflow-hidden');
+
+    scrollHeight = 60;
+    await user.type(input(), 'b');
+    expect(element.style.height).toBe('60px');
+    expect(element.className).toContain('overflow-hidden');
+
+    // Past the cap the field stops growing and takes the scroll itself, so a
+    // long capture can never push the day list off the screen.
+    scrollHeight = 240;
+    await user.type(input(), 'c');
+    expect(element.style.height).toBe('80px');
+    expect(element.className).toContain('overflow-y-auto');
+    expect(element.className).not.toContain('overflow-hidden');
+
+    scrollHeight = 40;
+    await user.type(input(), 'd');
+    expect(element.style.height).toBe('40px');
+    expect(element.className).toContain('overflow-hidden');
   });
 });
 
@@ -420,6 +531,8 @@ describe('Composer suggestions', () => {
     await screen.findByRole('listbox');
     await user.keyboard('{Enter}');
     expect(onSubmit).not.toHaveBeenCalled();
+    // The accept consumed the key outright: no filing, and no newline either.
+    expect(field().value).toBe('Ship it #design ');
   });
 
   it('files the entry on the very next Add-entry click after an Enter-accepted completion', async () => {
