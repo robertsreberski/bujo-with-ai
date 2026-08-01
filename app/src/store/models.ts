@@ -11,6 +11,7 @@ import type {
   Settings,
   Summary,
 } from '../api/types';
+import type { LogViewConfig } from '../views/log-arrangement';
 
 export type ConnectionStatus = 'offline' | 'connecting' | 'connected' | 'error';
 
@@ -125,6 +126,14 @@ export interface JournalClientRecord {
    * they hydrate as `null`, which reads every recorded change as unseen.
    */
   lastReviewSeenAt?: string | null;
+  /**
+   * Per-device monthly-log arrangement. Optional for the same reason as the
+   * review mark: older records lack it and hydrate as `null`, which means
+   * "use the default view".
+   */
+  monthLogView?: LogViewConfig | null;
+  /** One shared per-device arrangement for every collection screen. */
+  collectionLogView?: LogViewConfig | null;
 }
 
 export interface CreateEntryInput {

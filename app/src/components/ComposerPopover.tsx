@@ -16,6 +16,8 @@ interface ComposerPopoverProps {
   className?: string;
   /** Radix hands focus back to the trigger by default; composer surfaces refuse it. */
   onCloseAutoFocus?: ((event: Event) => void) | undefined;
+  /** Popover placement relative to the trigger; composer surfaces open upward. */
+  side?: 'top' | 'bottom';
   children: ReactNode;
 }
 
@@ -49,6 +51,7 @@ export function ComposerPopover({
   marker,
   className,
   onCloseAutoFocus,
+  side = 'top',
   children,
 }: ComposerPopoverProps) {
   const compact = useCompactSurface();
@@ -81,7 +84,7 @@ export function ComposerPopover({
       <Popover.Portal>
         <Popover.Content
           className={cn(marker, PANEL, className)}
-          side="top"
+          side={side}
           align="start"
           sideOffset={6}
           collisionPadding={12}

@@ -1,8 +1,10 @@
-import { EntryRow } from '../components/EntryRow';
+import { ArrangedEntryList } from '../components/ArrangedEntryList';
+import { ArrangeMenu } from '../components/ArrangeMenu';
 import { Icon } from '../components/Icon';
 import { Button } from '../components/ui/button';
 import { cn } from '../lib/utils';
 import { journalActions } from '../store/journal-store';
+import { arrangeLog, logMetaLabel, type LogViewConfig } from './log-arrangement';
 import { EMPTY_PANEL } from './view-classes';
 import type { DisplayPreferences, JournalCollection, JournalEntry } from '../components/types';
 
@@ -10,18 +12,22 @@ interface CollectionViewProps {
   collection: JournalCollection | null;
   entries: JournalEntry[];
   preferences: DisplayPreferences;
+  logView: LogViewConfig;
   onBack: () => void;
   onOpenEntry: (entry: JournalEntry) => void;
   onToggleEntry: (entry: JournalEntry) => void;
+  onLogViewChange: (config: LogViewConfig) => void;
 }
 
 export function CollectionView({
   collection,
   entries,
   preferences,
+  logView,
   onBack,
   onOpenEntry,
   onToggleEntry,
+  onLogViewChange,
 }: CollectionViewProps) {
   if (!collection) {
     return (
@@ -35,10 +41,11 @@ export function CollectionView({
       </section>
     );
   }
-  const collectionEntries = entries
-    .filter((entry) => entry.collection === collection.id)
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const collectionEntries = entries.filter((entry) => entry.collection === collection.id);
+  // Done keeps counting the whole collection: the meta's "M done" is a fact
+  // about the collection, not about the current arrangement.
   const doneCount = collectionEntries.filter((entry) => entry.state === 'done').length;
+  const arrangement = arrangeLog(collectionEntries, logView);
   return (
     <section className="collection-screen min-h-full" aria-labelledby="collection-title">
       <header className="px-4 pt-3.5 pb-[7px]">
@@ -48,24 +55,25 @@ export function CollectionView({
         <h2 className="pt-3 text-xl font-semibold tracking-[-0.01em]" id="collection-title">
           {collection.name}
         </h2>
-        <p className="pt-0.5 text-sm text-fg-mute">
-          {collectionEntries.length} items · {doneCount} done
-        </p>
+        <div className="flex items-center gap-1.5 pt-0.5">
+          <p className="text-sm text-fg-mute">
+            {logMetaLabel(arrangement)} · {doneCount} done
+          </p>
+          <ArrangeMenu config={logView} onChange={onLogViewChange} label="Arrange collection" />
+        </div>
         {collection.note ? (
           <p className="pt-0.5 text-sm leading-[1.5] text-fg-mid">{collection.note}</p>
         ) : null}
       </header>
-      {collectionEntries.length > 0 ? (
-        collectionEntries.map((entry) => (
-          <EntryRow
-            entry={entry}
-            preferences={preferences}
-            showDate
-            onOpen={onOpenEntry}
-            onToggle={onToggleEntry}
-            key={entry.id}
-          />
-        ))
+      {arrangement.totalCount > 0 ? (
+        <ArrangedEntryList
+          arrangement={arrangement}
+          preferences={preferences}
+          showDate
+          resetKey={collection.id}
+          onOpen={onOpenEntry}
+          onToggle={onToggleEntry}
+        />
       ) : (
         <div className={cn(EMPTY_PANEL, 'min-h-[280px]')}>
           <Icon name="folder" size={18} />

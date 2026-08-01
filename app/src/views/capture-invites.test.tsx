@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CollectionView } from './CollectionView';
 import { IndexView } from './IndexView';
 import { MonthView } from './MonthView';
+import { DEFAULT_LOG_VIEW } from './log-arrangement';
 import { journalActions } from '../store/journal-store';
 import type { DisplayPreferences, JournalCollection, JournalEntry } from '../components/types';
 
@@ -58,6 +59,8 @@ const renderMonth = (entries: JournalEntry[] = []) =>
       entries={entries}
       summary={null}
       preferences={preferences}
+      logView={DEFAULT_LOG_VIEW}
+      onLogViewChange={vi.fn()}
       onMonthChange={vi.fn()}
       onDaySelect={vi.fn()}
       onOpenEntry={vi.fn()}
@@ -75,6 +78,8 @@ describe('capture invites', () => {
         collection={atlas}
         entries={[]}
         preferences={preferences}
+        logView={DEFAULT_LOG_VIEW}
+        onLogViewChange={vi.fn()}
         onBack={vi.fn()}
         onOpenEntry={vi.fn()}
         onToggleEntry={vi.fn()}

@@ -31,6 +31,7 @@ import type {
 } from './components/types';
 import { isTextEntryTarget, useViewportLayout } from './hooks/use-viewport-layout';
 import { useJournalRoute } from './routes/useJournalRoute';
+import { DEFAULT_LOG_VIEW } from './views/log-arrangement';
 import { createUlid } from './store/ids';
 import {
   journalActions,
@@ -416,6 +417,8 @@ export default function App() {
             entries={entries}
             summary={store.summariesByMonth[displayedMonth] ?? null}
             preferences={preferences}
+            logView={store.monthLogView ?? DEFAULT_LOG_VIEW}
+            onLogViewChange={journalActions.setMonthLogView}
             onMonthChange={(month) => navigate({ name: 'month', month })}
             onDaySelect={(date) => navigate({ name: 'today', date })}
             onOpenEntry={(entry) => setDetailId(entry.id)}
@@ -456,6 +459,8 @@ export default function App() {
             collection={collection}
             entries={entries}
             preferences={preferences}
+            logView={store.collectionLogView ?? DEFAULT_LOG_VIEW}
+            onLogViewChange={journalActions.setCollectionLogView}
             onBack={() => navigate({ name: 'index' })}
             onOpenEntry={(entry) => setDetailId(entry.id)}
             onToggleEntry={toggleEntry}

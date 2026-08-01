@@ -602,6 +602,50 @@ test('a capture on the month spread lands in the monthly log without leaving it'
   await expect(chip).toHaveAttribute('aria-label', `Destination: ${chipLabel}`);
 });
 
+test('the monthly log collapses done work and the arrange menu narrows it', async ({ page }) => {
+  await openJournal(page);
+  await page.getByRole('button', { name: /^Month/ }).click();
+  const monthlyLog = page.getByRole('region', { name: 'Monthly log' });
+
+  const keep = uniqueText('Renew passport');
+  const finish = uniqueText('Call plumber');
+  const input = page.getByRole('combobox', { name: 'Add an entry' });
+  for (const text of [keep, finish]) {
+    await input.fill(`. ${text}`);
+    await page.getByRole('button', { name: 'Add entry' }).click();
+    await expect(monthlyLog.getByText(text, { exact: true })).toBeVisible();
+  }
+
+  // Finishing a task folds it into the disclosure instead of leaving a
+  // dimmed row behind. The count is a pattern: the shared server means other
+  // tests' entries may sit in the same bucket.
+  await monthlyLog.getByRole('button', { name: `Mark as done: ${finish}` }).click();
+  await expect(monthlyLog.getByText(finish, { exact: true })).toBeHidden();
+  await expect(monthlyLog.getByText(keep, { exact: true })).toBeVisible();
+  const disclosure = monthlyLog.getByText(/^Done & moved \(\d+\)$/);
+  await expect(disclosure).toBeVisible();
+  await disclosure.click();
+  await expect(monthlyLog.getByText(finish, { exact: true })).toBeVisible();
+
+  // The arrange menu narrows to the closed shells and the header meta counts
+  // the narrowing; the trigger keeps announcing that filters are active.
+  await monthlyLog.getByRole('button', { name: 'Arrange monthly log' }).click();
+  const menu = page.locator('.arrange-menu');
+  await menu.getByRole('menuitemradio', { name: 'Done & moved' }).click();
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(monthlyLog.getByText(keep, { exact: true })).toBeHidden();
+  await expect(monthlyLog.getByText(finish, { exact: true })).toBeVisible();
+  await expect(monthlyLog.getByText(/^\d+ of \d+ items$/)).toBeVisible();
+
+  // Reset restores the default arrangement: open work up top, done collapsed.
+  await monthlyLog.getByRole('button', { name: 'Arrange monthly log — filters active' }).click();
+  await page.locator('.arrange-menu').getByRole('menuitem', { name: 'Reset to defaults' }).click();
+  await page.keyboard.press('Escape');
+  await expect(monthlyLog.getByText(keep, { exact: true })).toBeVisible();
+  await expect(monthlyLog.getByText(finish, { exact: true })).toBeHidden();
+});
+
 test('an unknown /slug mints its collection, files the capture, and the toast opens it', async ({
   page,
 }) => {

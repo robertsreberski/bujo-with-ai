@@ -29,6 +29,7 @@ import {
   subscribePwaRegistration,
 } from '../pwa/registration';
 import type { Destination } from '../components/destination';
+import type { LogViewConfig } from '../views/log-arrangement';
 import { createUlid } from './ids';
 import type {
   ConnectionStatus,
@@ -167,6 +168,12 @@ export interface JournalState extends MirrorData {
   /** When the owner last opened Review; null until they ever have. */
   lastReviewSeenAt: string | null;
   markReviewSeen(): void;
+  /** Per-device monthly-log arrangement; null means the default view. */
+  monthLogView: LogViewConfig | null;
+  setMonthLogView(config: LogViewConfig | null): void;
+  /** One shared per-device arrangement for every collection screen. */
+  collectionLogView: LogViewConfig | null;
+  setCollectionLogView(config: LogViewConfig | null): void;
   initialize(): Promise<void>;
   shutdown(): void;
   setDraft(draft: string): void;
@@ -283,6 +290,8 @@ function recordFromState(
     deadLetters: state.deadLetters,
     agentTokens: state.agentTokens,
     lastReviewSeenAt: state.lastReviewSeenAt,
+    monthLogView: state.monthLogView,
+    collectionLogView: state.collectionLogView,
   };
 }
 
@@ -1910,6 +1919,8 @@ async function initializeJournal(): Promise<void> {
         deadLetters: saved.deadLetters,
         agentTokens: saved.agentTokens ?? [],
         lastReviewSeenAt: saved.lastReviewSeenAt ?? null,
+        monthLogView: saved.monthLogView ?? null,
+        collectionLogView: saved.collectionLogView ?? null,
         activityHasMore: saved.mirror.activityOrder.length >= 50,
         activityNextCursor:
           saved.mirror.activityById[saved.mirror.activityOrder.at(-1) ?? '']?.at ?? null,
@@ -1929,6 +1940,8 @@ async function initializeJournal(): Promise<void> {
         deadLetters: [],
         agentTokens: [],
         lastReviewSeenAt: null,
+        monthLogView: null,
+        collectionLogView: null,
         activityHasMore: false,
         activityNextCursor: null,
         hydrated: true,
@@ -2172,6 +2185,8 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
     tagSuggestions: [],
     tagsFetchedAt: null,
     lastReviewSeenAt: null,
+    monthLogView: null,
+    collectionLogView: null,
     initialize: initializeJournal,
     shutdown: shutdownJournal,
     // Opening Review is what marks it read, so the write is a local, debounced
@@ -2187,6 +2202,14 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
       }, '');
       const now = new Date().toISOString();
       set({ lastReviewSeenAt: newestAt > now ? newestAt : now });
+      persistSoon();
+    },
+    setMonthLogView: (config) => {
+      set({ monthLogView: config });
+      persistSoon();
+    },
+    setCollectionLogView: (config) => {
+      set({ collectionLogView: config });
       persistSoon();
     },
     setDraft: (draft) => {
@@ -2697,6 +2720,10 @@ export const journalActions = {
   ): Promise<Settings> => useJournalStore.getState().updateSettings(patch),
   setDraft: (draft: string): void => useJournalStore.getState().setDraft(draft),
   markReviewSeen: (): void => useJournalStore.getState().markReviewSeen(),
+  setMonthLogView: (config: LogViewConfig | null): void =>
+    useJournalStore.getState().setMonthLogView(config),
+  setCollectionLogView: (config: LogViewConfig | null): void =>
+    useJournalStore.getState().setCollectionLogView(config),
   setDefaultType: (type: EntryType): void => useJournalStore.getState().setDefaultType(type),
   searchEntries: (query: string): Promise<Entry[]> =>
     useJournalStore.getState().searchEntries(query),

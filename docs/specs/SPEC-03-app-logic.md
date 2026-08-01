@@ -437,9 +437,20 @@ draft` button inside the input is the pointer equivalent of the third rung.
 - LOG-26 Cell tap navigates to `/?date=YYYY-MM-DD` and scrolls Today to that
   day; empty days render a named empty section. Cell tooltip: "<long date> —
   N entries".
-- LOG-27 Monthly log section: entries in `month:<displayed-month>`
-  (newest-first), heading meta "N items", explainer "Things that belong to
-  the month, not to a day.", standard entry rows.
+- LOG-27 **[amended]** Monthly log section: entries in
+  `month:<displayed-month>`, explainer "Things that belong to the month, not
+  to a day.", standard entry rows with date prefixes (`showDate`). Default
+  arrangement: active entries (open work and logged rows) newest-first, with
+  closed states (done, cancelled, migrated, scheduled) collapsed behind a
+  "Done & moved (N)" disclosure whose expansion is ephemeral — it collapses
+  again on navigation. An **arrange menu** on the heading offers sort
+  (newest — default / oldest), group (none — default / by type, pluralized
+  count headers in signifier order), show (open — default / everything /
+  done & moved), and per-type narrowing; unchecking the last type falls back
+  to every type. The arrangement persists per device in the client record —
+  deliberately not a server setting. Heading meta reads "N items", or
+  "V of N items" while the arrangement narrows the list; an arrangement
+  matching nothing renders "Nothing matches the current arrangement."
 - LOG-28 Weekly summary card: sparkle icon + "Weekly summary · generated
   automatically", the greatest-weekStart Summary assigned to the displayed
   month (DM-17), and actions **Save to today** / **Rewrite**. Card hides when
@@ -461,8 +472,12 @@ draft` button inside the input is the pointer equivalent of the third rung.
      assistant" (`author=ai`), "Tagged #work" (tag filter) — each opens
      Search pre-filtered. **[ext]** Saved views are configurable in a later
      release; v1 ships exactly these three.
-- LOG-31 Collection view: back-to-Index button, title, meta "N items · M
-  done", entry rows with date prefixes (`showDate`).
+- LOG-31 **[amended]** Collection view: back-to-Index button, title, meta
+  "N items · M done" (or "V of N items · M done" while narrowed; "M done"
+  always counts the whole collection), entry rows with date prefixes
+  (`showDate`). Carries the same LOG-27 arrangement — collapsed "Done &
+  moved (N)" disclosure plus an arrange menu — with one shared per-device
+  arrangement across all collection screens, persisted in the client record.
 - LOG-32 Review is the activity/revert center:
   - Intro: "Automatic changes" and a concise explanation that agent writes
     apply immediately with attribution and snapshots.

@@ -1,10 +1,12 @@
 import { useMemo } from 'react';
-import { EntryRow } from '../components/EntryRow';
+import { ArrangedEntryList } from '../components/ArrangedEntryList';
+import { ArrangeMenu } from '../components/ArrangeMenu';
 import { Icon } from '../components/Icon';
 import { Button } from '../components/ui/button';
 import { daysInMonth, formatLongDate, formatMonth, mondayStartOffset } from '../components/dates';
 import { cn } from '../lib/utils';
 import { journalActions } from '../store/journal-store';
+import { arrangeLog, logMetaLabel, type LogViewConfig } from './log-arrangement';
 import {
   CALENDAR_DAY,
   CARD,
@@ -23,12 +25,14 @@ interface MonthViewProps {
   entries: JournalEntry[];
   summary: JournalSummary | null;
   preferences: DisplayPreferences;
+  logView: LogViewConfig;
   onMonthChange: (month: string) => void;
   onDaySelect: (date: string) => void;
   onOpenEntry: (entry: JournalEntry) => void;
   onToggleEntry: (entry: JournalEntry) => void;
   onSaveSummary: (summary: JournalSummary) => void;
   onRewriteSummary: (summary: JournalSummary) => void;
+  onLogViewChange: (config: LogViewConfig) => void;
 }
 
 const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
@@ -45,12 +49,14 @@ export function MonthView({
   entries,
   summary,
   preferences,
+  logView,
   onMonthChange,
   onDaySelect,
   onOpenEntry,
   onToggleEntry,
   onSaveSummary,
   onRewriteSummary,
+  onLogViewChange,
 }: MonthViewProps) {
   const dayCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -71,12 +77,13 @@ export function MonthView({
     while (result.length % 7 !== 0) result.push(null);
     return result;
   }, [month]);
-  const monthlyEntries = useMemo(
+  const arrangement = useMemo(
     () =>
-      entries
-        .filter((entry) => entry.collection === `month:${month}`)
-        .sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
-    [entries, month],
+      arrangeLog(
+        entries.filter((entry) => entry.collection === `month:${month}`),
+        logView,
+      ),
+    [entries, month, logView],
   );
   // The month log is a server-owned collection, so an invite files into it by
   // id rather than by date — the same address the schedule action uses.
@@ -186,7 +193,8 @@ export function MonthView({
             <p className={SECTION_COPY}>Things that belong to the month, not to a day.</p>
           </div>
           <div className="flex flex-none items-center gap-1.5">
-            <span className={SECTION_COUNT}>{monthlyEntries.length} items</span>
+            <span className={SECTION_COUNT}>{logMetaLabel(arrangement)}</span>
+            <ArrangeMenu config={logView} onChange={onLogViewChange} label="Arrange monthly log" />
             <Button
               variant="ghost"
               size="icon"
@@ -198,16 +206,15 @@ export function MonthView({
             </Button>
           </div>
         </header>
-        {monthlyEntries.length > 0 ? (
-          monthlyEntries.map((entry) => (
-            <EntryRow
-              entry={entry}
-              preferences={preferences}
-              onOpen={onOpenEntry}
-              onToggle={onToggleEntry}
-              key={entry.id}
-            />
-          ))
+        {arrangement.totalCount > 0 ? (
+          <ArrangedEntryList
+            arrangement={arrangement}
+            preferences={preferences}
+            showDate
+            resetKey={month}
+            onOpen={onOpenEntry}
+            onToggle={onToggleEntry}
+          />
         ) : (
           <div className={SECTION_EMPTY}>
             <p>Nothing belongs to {formatMonth(month)} yet.</p>
