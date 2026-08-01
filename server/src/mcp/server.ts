@@ -42,6 +42,10 @@ const McpAddEntryJsonSchema = z.toJSONSchema(McpAddEntryOutputSchema, {
   io: 'output',
 });
 delete McpAddEntryJsonSchema.$schema;
+// The MCP spec requires an object-typed root on outputSchema; strict clients
+// (mono-agent's Pi runtime) reject the whole tools/list without it. Both union
+// branches are objects, so stamping the root keeps the contract identical.
+McpAddEntryJsonSchema.type = 'object';
 const McpAddEntrySdkOutputSchema = z.strictObject({
   kind: z.enum(['entry', 'summary']),
   entry: AgentEntrySchema.optional(),

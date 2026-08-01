@@ -965,6 +965,7 @@ describe('stateful MCP endpoint', () => {
       name: string;
       annotations: Record<string, boolean>;
       outputSchema?: {
+        type?: string;
         oneOf?: Array<{
           properties?: { kind?: { const?: string } };
           required?: string[];
@@ -983,6 +984,8 @@ describe('stateful MCP endpoint', () => {
     ]);
     expect(tools.filter((tool) => tool.annotations.readOnlyHint)).toHaveLength(2);
     const addEntrySchema = tools.find((tool) => tool.name === 'add_entry')?.outputSchema;
+    // MCP requires an object-typed root; strict clients drop the server without it.
+    expect(addEntrySchema?.type).toBe('object');
     expect(addEntrySchema?.oneOf).toHaveLength(2);
     expect(addEntrySchema?.oneOf).toEqual(
       expect.arrayContaining([
