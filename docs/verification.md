@@ -26,6 +26,11 @@ atomic pointer change.
 
 ## Product and non-functional requirements
 
+The `FR-`, `LOG-`, `PWA-`, and `MCP-` identifiers below come from the PRD and
+SPEC-01…SPEC-07 set that specified v1. Those documents were retired once v1
+shipped; the identifiers are kept here as stable gate names, and the behavior
+each one covers is now defined by the named tests.
+
 | Requirements | Acceptance focus                                                            | Intended evidence                                     | Result      |
 | ------------ | --------------------------------------------------------------------------- | ----------------------------------------------------- | ----------- |
 | FR-1…5       | Composer/parser, fast optimistic capture, offline replay                    | parser/component/outbox E2E                           | NOT RUN     |
@@ -129,7 +134,7 @@ atomic pointer change.
 | Existing HTTPS 443 preserved                    | exact `mickey-home.tail8a9beb.ts.net:443 -> http://127.0.0.1:5050` in every snapshot               | NOT RUN        |
 | Graceful SIGTERM lifecycle                      | exact PID exits in no more than 5 seconds; distinct healthy launchd recovery                       | NOT RUN        |
 | SIGKILL crash lifecycle                         | separate exact PID; distinct healthy launchd recovery                                              | NOT RUN        |
-| Physical iPhone standalone                      | seven checks in SPEC-05 section 8 plus stamped device provenance                                   | DEVICE HANDOFF |
+| Physical iPhone standalone                      | nine checks in operations.md section 6 plus stamped device provenance                              | DEVICE HANDOFF |
 | Final promotion guard                           | lockf + CAS; deployed-tree and <=2h live SHA; strict log scan + HTTP-free binding; crash recovery  | NOT RUN        |
 
 ## Explicitly accepted release deviations
@@ -157,4 +162,4 @@ The Gate cell must exactly equal the deviating gate above.
 - The Journal server has no third-party egress. Owner-authorized MCP clients
   may transmit retrieved data to their configured AI provider.
 - Prototype contrast/touch-target values may be corrected for WCAG 2.2 AA;
-  SPEC-04's deviation log records the exact changes.
+  the shipped tokens and component tests record the exact values.

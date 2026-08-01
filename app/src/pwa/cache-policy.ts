@@ -1,4 +1,4 @@
-/** GET-only runtime fallbacks allowed by SPEC-05; IndexedDB owns bootstrap/settings state. */
+/** GET-only runtime fallbacks are the only cacheable responses; IndexedDB owns bootstrap/settings state. */
 export const CACHEABLE_API_PREFIXES = [
   '/api/entries',
   '/api/collections',

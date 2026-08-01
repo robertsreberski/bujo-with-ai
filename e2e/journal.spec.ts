@@ -706,7 +706,7 @@ test('tag autocomplete completes from the mirror and the accepted tag survives s
   await input.fill(`- ${text} #`);
 
   // The panel lives inside the composer shell rather than a portal, so it rides
-  // the same keyboard-open pinning the composer does (SPEC-05 §4).
+  // the same keyboard-open pinning the composer does.
   const panel = page.locator('.composer-shell [role="listbox"]');
   await expect(panel).toBeVisible();
   await expect(input).toHaveAttribute('aria-expanded', 'true');

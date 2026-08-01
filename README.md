@@ -92,18 +92,15 @@ moves `current-release` only after every release gate passes.
 
 ## Documentation
 
-| Document                                       | Contents                                                |
-| ---------------------------------------------- | ------------------------------------------------------- |
-| [PRD](docs/PRD.md)                             | Approved v1 + P1 product requirements and P2 exclusions |
-| [SPEC-01](docs/specs/SPEC-01-architecture.md)  | Topology, stack, Tailnet, lifecycle, backups            |
-| [SPEC-02](docs/specs/SPEC-02-data-model.md)    | Entities, invariants, SQLite, snapshots                 |
-| [SPEC-03](docs/specs/SPEC-03-app-logic.md)     | Views, capture, migration, search, Review               |
-| [SPEC-04](docs/specs/SPEC-04-design-system.md) | Tokens, components, responsive layout, motion           |
-| [SPEC-05](docs/specs/SPEC-05-pwa.md)           | Offline behavior and iOS standalone hardening           |
-| [SPEC-06](docs/specs/SPEC-06-mcp-server.md)    | MCP transport, seven tools, resources, security         |
-| [SPEC-07](docs/specs/SPEC-07-sync-api.md)      | REST/SSE, pairing, outbox, reconciliation               |
-| [Verification](docs/verification.md)           | Requirement-to-evidence and release-gate matrix         |
+| Document                             | Contents                                        |
+| ------------------------------------ | ----------------------------------------------- |
+| [Operations](docs/operations.md)     | Release staging, cutover, backups, lifecycle    |
+| [Verification](docs/verification.md) | Requirement-to-evidence and release-gate matrix |
+
+The PRD and the SPEC-01…SPEC-07 set that specified this build were retired once
+v1 shipped; the code, its tests, and the verification matrix are now the
+authority. Their text remains in history at `3b33138`.
 
 The prototype in `design/` is a visual reference only. Its runtime is not
-shipped, and intentional accessibility/product-contract deviations are logged
-in SPEC-04.
+shipped, and the shipped app intentionally deviates from it where product
+contracts or accessibility required.

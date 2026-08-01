@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { CACHEABLE_API_PREFIXES } from './cache-policy';
 
 describe('service-worker API cache policy', () => {
-  it('caches only the SPEC-05 history fallbacks, never authoritative bootstrap or settings', () => {
+  it('caches only the history fallbacks, never authoritative bootstrap or settings', () => {
     expect(CACHEABLE_API_PREFIXES).toEqual([
       '/api/entries',
       '/api/collections',

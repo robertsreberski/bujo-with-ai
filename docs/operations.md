@@ -171,6 +171,27 @@ the same stamp.
 
 ## 6. Record physical-device provenance
 
+### The physical-iPhone checklist
+
+Run every check on a notched iPhone with the release installed to the home screen, in standalone
+mode. This list is authoritative; it moved here from the retired SPEC-05 when v1 shipped.
+
+1. No white/black bar at top or bottom; status-bar area painted `#16130F`.
+2. Composer sits flush above the keyboard while typing; no jitter while typing; it neither shifts
+   nor mis-registers taps when the suggestion panel opens; tab bar restored cleanly on dismiss.
+3. No page-level rubber-band; day list bounces within itself only.
+4. Focusing the composer does not zoom the page.
+5. App-switch away during capture → return: draft intact, layout correct, queued entry syncs.
+6. Airplane mode: journal readable, capture works, banner shows; disable → entries sync, SSE
+   resumes.
+7. Home-screen install shows correct icon/name; cold offline launch renders the journal.
+8. Type `#` or `/` with the keyboard up: the suggestion panel rides above the composer instead of
+   sitting behind the keyboard, and tapping a row completes the token without dismissing it.
+9. Open an entry sheet with the keyboard raised, then the destination picker's "New collection"
+   field: both must stay above the keyboard — the one known divergence this list leaves open.
+
+### Record the handoff
+
 The physical-iPhone checklist is explicitly approved as a handoff. Record the assignee and exact
 checklist reference without inventing device results:
 
@@ -186,14 +207,14 @@ EVIDENCE=${CONTEXT:h}
   --output "$EVIDENCE/device-$STAMP.json" \
   --status 'DEVICE HANDOFF' \
   --assignee 'Robert' \
-  --checklist-reference 'SPEC-05 section 8, seven physical-iPhone checks' \
+  --checklist-reference 'operations.md section 6, nine physical-iPhone checks' \
   --notes 'Assigned for owner execution; this release does not claim a device pass.'
 ```
 
 The handoff remains bound to the release stamp, base commit, manifest SHA-256, and archive SHA-256.
 It refuses stale manifest or archive bytes. Only an actual `PASS` record requires and accepts a
 concrete device model, iOS version, and Tailnet account. In the release ledger, record this gate as
-`EVIDENCE: device-<release-stamp>.json; assignee and SPEC-05 section 8 checklist` with result
+`EVIDENCE: device-<release-stamp>.json; assignee and section 6 physical-iPhone checklist` with result
 `DEVICE HANDOFF`; do not reuse the template's intended-evidence text.
 
 ## 7. Capture final context-bound live evidence
