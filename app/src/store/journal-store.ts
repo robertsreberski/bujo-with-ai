@@ -2730,7 +2730,6 @@ export const selectActiveCollections = (state: JournalState): Collection[] =>
   Object.values(state.collectionsById)
     .filter((collection) => !collection.archivedAt && !collection.id.startsWith('month:'))
     .sort((left, right) => left.name.localeCompare(right.name));
-export const selectTagSuggestions = (state: JournalState): TagUsage[] => state.tagSuggestions;
 /**
  * What the Today badge counts: work still waiting in the daily log. Only tasks
  * and habits can be open, collections have their own screens, and anything

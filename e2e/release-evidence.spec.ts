@@ -1035,6 +1035,18 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
     expect(fontEvidence.resources.length).toBeGreaterThan(0);
     expect(fontEvidence.origins).toEqual([new URL(origin).origin]);
 
+    // The coarse-pointer entry surface is the sheet, so the sweep has to reach
+    // its rows too — they are the densest stack of controls the phone renders.
+    await page.getByRole('button', { name: /^Today/ }).click();
+    await page.locator('.entry-row__content').filter({ hasText: aiText }).click();
+    const entrySheet = page.locator('.entry-sheet');
+    await expect(entrySheet).toBeVisible();
+    await waitForFiniteAnimations(entrySheet);
+    await expectTouchTargets(page, '375px entry sheet');
+    await captureEvidenceScreenshot(page, testInfo, 'design-entry-sheet-375.png');
+    await page.keyboard.press('Escape');
+    await expect(entrySheet).toHaveCount(0);
+
     await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
     const accessDialog = page.getByRole('dialog', { name: 'Assistant access' });
     await expect(accessDialog).toBeVisible();
@@ -1047,6 +1059,8 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
 });
 
 test('normal motion stays within the approved bounds and reduced motion removes it', async ({
+  baseURL,
+  browser,
   page,
 }, testInfo) => {
   test.skip(
@@ -1109,4 +1123,50 @@ test('normal motion stays within the approved bounds and reduced motion removes 
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: /^Entry type:/ }).click();
   expect((await motionStyle(page.locator('.type-menu'))).animationName).toBe('none');
+
+  /*
+   * The entry sheet is a coarse-pointer surface, so it needs its own context.
+   * Vaul ships a 500ms slide; DS-24 caps the dialog family at 160ms, which the
+   * app reaches by overriding both the animation and vaul's inline release
+   * transition. Under reduced motion the panel is re-pointed at the app's
+   * opacity-only keyframes instead of simply keeping a shortened slide.
+   */
+  const touchContext = await browser.newContext({
+    baseURL: requireBaseUrl(baseURL),
+    hasTouch: true,
+    isMobile: true,
+    viewport: { width: 375, height: 812 },
+  });
+  const phone = await touchContext.newPage();
+  try {
+    await phone.emulateMedia({ reducedMotion: 'no-preference' });
+    await openJournal(phone);
+    const sheetText = uniqueText('Sheet motion evidence');
+    await phone.getByRole('textbox', { name: 'Add an entry' }).fill(`- ${sheetText}`);
+    await phone.getByRole('button', { name: 'Add entry' }).click();
+    await phone.locator('.entry-row__content').filter({ hasText: sheetText }).click();
+
+    const sheet = phone.locator('.entry-sheet');
+    const scrim = phone.locator('.entry-sheet__scrim');
+    await expect(sheet).toBeVisible();
+    const sheetMotion = await motionStyle(sheet);
+    const scrimMotion = await motionStyle(scrim);
+    expect(cssTimeMilliseconds(sheetMotion.animationDuration)).toBeGreaterThan(0);
+    expect(cssTimeMilliseconds(sheetMotion.animationDuration)).toBeLessThanOrEqual(160);
+    expect(sheetMotion.animationTimingFunction).toBe('cubic-bezier(0.16, 1, 0.3, 1)');
+    expect(cssTimeMilliseconds(sheetMotion.transitionDuration)).toBeLessThanOrEqual(160);
+    expect(sheetMotion.transitionTimingFunction).toBe('cubic-bezier(0.16, 1, 0.3, 1)');
+    expect(cssTimeMilliseconds(scrimMotion.animationDuration)).toBeGreaterThan(0);
+    expect(cssTimeMilliseconds(scrimMotion.animationDuration)).toBeLessThanOrEqual(160);
+    await waitForFiniteAnimations(sheet);
+
+    await phone.emulateMedia({ reducedMotion: 'reduce' });
+    const reducedSheet = await motionStyle(sheet);
+    expect(['overlay-in', 'none']).toContain(reducedSheet.animationName);
+    expect(cssTimeMilliseconds(reducedSheet.animationDuration)).toBeLessThanOrEqual(0.01);
+    expect(cssTimeMilliseconds(reducedSheet.transitionDuration)).toBeLessThanOrEqual(0.01);
+    expect(['overlay-in', 'none']).toContain((await motionStyle(scrim)).animationName);
+  } finally {
+    await touchContext.close();
+  }
 });

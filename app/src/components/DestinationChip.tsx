@@ -21,13 +21,22 @@ import type { JournalCollection } from './types';
 const FILTER_THRESHOLD = 6;
 
 /*
- * `max-w-[45%]` is the narrow-viewport guard: the chip never shrinks (the hint
- * beside it would win), so a long collection name would otherwise widen the
- * preview row past the document at 320px instead of ellipsing inside it.
+ * The width cap lives on the wrapper, never on the chip itself: the wrapper is a
+ * flex item of a row with a definite width, so `65%` has something real to
+ * resolve against. A percentage cap on the chip resolved against its own
+ * shrink-to-fit parent instead, which collapsed it to the bare touch target and
+ * left the label reading `→ …` in every state.
+ */
+const WRAP = 'inline-flex max-w-[65%] min-w-0 flex-none items-center';
+
+/*
+ * Control-sized rather than chip-sized: the destination answers the composer's
+ * whole question — where does this land? — so it is control-sized (28px, 40 touch),
+ * radius and text size instead of the smaller ramp the derived facts use.
  */
 const CHIP =
-  'destination-chip inline-flex max-w-[45%] min-w-0 flex-none items-center gap-1 border px-[7px] text-2xs font-medium touch:min-h-10 touch:min-w-10';
-const CHIP_SCREEN = 'border-transparent bg-bg-line text-fg-mid hover:bg-bg-raised';
+  'destination-chip inline-flex h-7 min-w-0 items-center gap-1.5 border px-2.5 text-sm font-medium touch:h-10 touch:min-w-10';
+const CHIP_SCREEN = 'border-border bg-bg-line text-fg-mid hover:bg-bg-raised hover:text-fg-body';
 const CHIP_ACTIVE = 'border-ai-border bg-ai-bg text-ai-fg';
 const OPTION =
   'flex min-h-10 w-full items-center gap-2 rounded-md px-[9px] text-md text-fg-body hover:bg-bg-line hover:text-fg';
@@ -80,7 +89,7 @@ export function DestinationChip({
   };
 
   return (
-    <span className="inline-flex min-w-0 flex-none items-center">
+    <span className={WRAP}>
       <ComposerPopover
         open={open}
         onOpenChange={setOpen}
@@ -93,19 +102,22 @@ export function DestinationChip({
             className={cn(
               CHIP,
               active ? CHIP_ACTIVE : CHIP_SCREEN,
-              onClear ? 'rounded-l-sm' : 'rounded-sm',
+              onClear ? 'rounded-l-md' : 'rounded-md',
             )}
             type="button"
             aria-label={`Destination: ${label}`}
           >
-            <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-              {`→ ${label}`}
+            {/* Its own element so the arrow survives a truncation the name causes. */}
+            <span className="flex-none opacity-60" aria-hidden="true">
+              →
             </span>
+            <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{label}</span>
             {resolved.createsCollection ? (
               <Badge variant="count" className="flex-none px-1.5">
                 New
               </Badge>
             ) : null}
+            <Icon name="chevronDown" size={11} className="flex-none opacity-60" />
           </button>
         }
       >
@@ -123,7 +135,9 @@ export function DestinationChip({
           className={cn(
             CHIP,
             active ? CHIP_ACTIVE : CHIP_SCREEN,
-            'rounded-r-sm border-l-0 justify-center px-1.5',
+            // No left border of its own: the trigger's right edge is the seam,
+            // so the pair reads as one chip split into two targets.
+            'rounded-r-md justify-center border-l-0 pr-2 pl-1.5',
           )}
           type="button"
           aria-label="Clear destination"
@@ -133,7 +147,7 @@ export function DestinationChip({
             onRestoreFocus();
           }}
         >
-          <Icon name="close" size={11} />
+          <Icon name="close" size={12} className="flex-none" />
         </button>
       ) : null}
     </span>

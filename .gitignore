@@ -13,3 +13,4 @@ test-results/
 *.db-wal
 .journal-test/
 .journal-dev/
+.playwright-mcp/

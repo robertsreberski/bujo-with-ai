@@ -39,7 +39,7 @@ export const DIALOG_DESCRIPTION = 'pt-0.5 text-sm leading-[1.5] text-fg-mute tex
 
 export const DIALOG_BODY = 'dialog-body scrollable min-h-0 px-4 pt-3.5 pb-4';
 
-export const DIALOG_ACTIONS = 'flex flex-wrap gap-2 pt-3.5';
+const DIALOG_ACTIONS = 'flex flex-wrap gap-2 pt-3.5';
 
 export const DIALOG_ACTIONS_END = `${DIALOG_ACTIONS} justify-end`;
 

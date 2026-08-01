@@ -1,13 +1,135 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { expect, test, type Page } from '@playwright/test';
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type BrowserContext,
+  type Page,
+} from '@playwright/test';
 import { ulid } from 'ulid';
 import { openJournal, uniqueText } from './helpers';
 
 interface McpEntryWrite {
   activityId: string;
   entry: { id: string; revision: number; text: string };
+}
+
+interface ServerContext {
+  today: string;
+  timezone: string;
+}
+
+/**
+ * The Playwright server is shared by every spec, so its database carries the
+ * other tests' rows. Seeds therefore establish *relative* facts (one more open
+ * task than a moment ago) rather than absolute ones.
+ */
+async function pairAndBootstrap(
+  context: BrowserContext,
+  baseURL: string | undefined,
+): Promise<ServerContext> {
+  const paired = await context.request.post('/api/pair', {
+    data: {},
+    headers: { Origin: baseURL! },
+  });
+  expect(paired.status()).toBe(201);
+  const bootstrap = await context.request.get('/api/bootstrap');
+  expect(bootstrap.ok()).toBeTruthy();
+  return (await bootstrap.json()) as ServerContext;
+}
+
+async function seedOwnerEntry(
+  request: APIRequestContext,
+  baseURL: string | undefined,
+  server: ServerContext,
+  entry: { text: string; type: string; tags?: string[] },
+): Promise<void> {
+  const created = await request.post('/api/entries', {
+    data: {
+      id: ulid(),
+      text: entry.text,
+      type: entry.type,
+      time: null,
+      tags: entry.tags ?? [],
+      collection: null,
+      dateIntent: {
+        kind: 'today',
+        baseToday: server.today,
+        capturedAt: new Date().toISOString(),
+        timezone: server.timezone,
+      },
+    },
+    headers: { 'Idempotency-Key': ulid(), Origin: baseURL! },
+  });
+  expect(created.status()).toBe(201);
+}
+
+/** `humanizeSlug`, restated: the name a create-then-file capture mints. */
+function humanizeSlug(slug: string): string {
+  const words = slug.replace(/-+/g, ' ').trim();
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+}
+
+/** LOG-53's Today-badge formula, computed from the server's own bootstrap. */
+async function openTodayCount(request: APIRequestContext, server: ServerContext): Promise<number> {
+  const bootstrap = await request.get('/api/bootstrap');
+  expect(bootstrap.ok()).toBeTruthy();
+  const body = (await bootstrap.json()) as {
+    entries?: Array<{ state?: string; type?: string; collection?: string | null; date?: string }>;
+  };
+  return (
+    body.entries?.filter(
+      (entry) =>
+        entry.state === 'open' &&
+        (entry.type === 'task' || entry.type === 'habit') &&
+        (entry.collection ?? null) === null &&
+        (entry.date ?? '') <= server.today,
+    ).length ?? 0
+  );
+}
+
+/** The count a nav item announces, or 0 when it carries no badge at all. */
+async function navCount(page: Page, label: 'Today' | 'Review'): Promise<number> {
+  const name = await page
+    .getByRole('button', { name: new RegExp(`^${label}`) })
+    .first()
+    .getAttribute('aria-label');
+  const match = /— (\d+) /.exec(name ?? '');
+  return match ? Number(match[1]) : 0;
+}
+
+/** Reads the persisted client record straight out of IndexedDB. */
+async function persistedReviewMark(page: Page): Promise<string | null> {
+  return page.evaluate(
+    () =>
+      new Promise<string | null>((resolve) => {
+        const request = indexedDB.open('journal-pwa');
+        request.onerror = () => resolve(null);
+        request.onsuccess = () => {
+          const database = request.result;
+          if (!database.objectStoreNames.contains('client-state')) {
+            database.close();
+            resolve(null);
+            return;
+          }
+          const read = database
+            .transaction('client-state', 'readonly')
+            .objectStore('client-state')
+            .get('journal-client-state-v1');
+          read.onerror = () => {
+            database.close();
+            resolve(null);
+          };
+          read.onsuccess = () => {
+            const record = read.result as { lastReviewSeenAt?: string | null } | undefined;
+            database.close();
+            resolve(record?.lastReviewSeenAt ?? null);
+          };
+        };
+      }),
+  );
 }
 
 async function issueMcpSecret(page: Page, tokenLabel: string): Promise<string> {
@@ -451,4 +573,217 @@ test('keyboard search opens a labelled modal, traps focus, and restores the open
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await expect(content).toBeFocused();
+});
+
+test('a capture on the month spread lands in the monthly log without leaving it', async ({
+  page,
+}) => {
+  await openJournal(page);
+  await page.getByRole('button', { name: /^Month/ }).click();
+  await expect(page).toHaveURL(/\/month(?:\?|$)/);
+
+  // The screen's own default: the month being browsed, named as the chip says.
+  const chip = page.getByRole('button', { name: /^Destination: / });
+  const chipLabel = ((await chip.getAttribute('aria-label')) ?? '').replace('Destination: ', '');
+  expect(chipLabel).toMatch(/^[A-Z][a-z]+ \d{4}$/);
+
+  const text = uniqueText('Month spread capture');
+  await page.getByRole('textbox', { name: 'Add an entry' }).fill(`- ${text}`);
+  await page.getByRole('button', { name: 'Add entry' }).click();
+
+  const monthlyLog = page.getByRole('region', { name: 'Monthly log' });
+  await expect(monthlyLog.getByText(text, { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/month(?:\?|$)/);
+
+  // The entry is already on screen, so the toast has nothing to offer a "View" for.
+  const toast = page.locator('.toast');
+  await expect(toast).toContainText(`Added to ${chipLabel}`);
+  await expect(toast.locator('.toast__action')).toHaveCount(0);
+  await expect(chip).toHaveAttribute('aria-label', `Destination: ${chipLabel}`);
+});
+
+test('an unknown /slug mints its collection, files the capture, and the toast opens it', async ({
+  page,
+}) => {
+  await openJournal(page);
+  // Unique so a retry — or a second run against the same server — still meets a
+  // collection the mirror has never seen, which is what the create row needs.
+  const slug = `garden-${Math.random().toString(36).slice(2, 8)}`;
+  const name = humanizeSlug(slug);
+  const text = uniqueText('Buy seeds');
+
+  const input = page.getByRole('textbox', { name: 'Add an entry' });
+  await input.fill(`${text} /${slug}`);
+  const panel = page.locator('.composer-shell [role="listbox"]');
+  await expect(panel).toBeVisible();
+  await panel.getByRole('option', { name: /^Create collection/ }).click();
+
+  const chip = page.getByRole('button', { name: `Destination: ${name}` });
+  await expect(chip).toBeVisible();
+  await expect(chip).toContainText('New');
+
+  await page.getByRole('button', { name: 'Add entry' }).click();
+  const toast = page.locator('.toast');
+  await expect(toast).toContainText(`Added to ${name}`);
+  await expect(page.getByText(text, { exact: true })).toHaveCount(0);
+
+  await toast.getByRole('button', { name: 'View' }).click();
+  await expect(page).toHaveURL(new RegExp(`/c/${slug}$`));
+  await expect(page.getByText(text, { exact: true })).toBeVisible();
+
+  // Scoped to the nav: the open collection carries its own "Index" back button.
+  await page
+    .getByRole('navigation')
+    .getByRole('button', { name: /^Index/ })
+    .click();
+  await expect(page.getByRole('button', { name: new RegExp(`^${name}`) })).toBeVisible();
+});
+
+test('tag autocomplete completes from the mirror and the accepted tag survives search', async ({
+  baseURL,
+  context,
+  page,
+}) => {
+  const server = await pairAndBootstrap(context, baseURL);
+  const tag = `harvest-${Math.random().toString(36).slice(2, 8)}`;
+  const seeded = uniqueText('Seeded tagged entry');
+  await seedOwnerEntry(context.request, baseURL, server, {
+    text: seeded,
+    type: 'note',
+    tags: [tag],
+  });
+
+  await openJournal(page);
+  // Located by class, not by role: the input *changes* role while the panel is
+  // open, which is exactly what the assertions below check.
+  const input = page.locator('.composer__input');
+  const text = uniqueText('Completed tag capture');
+  await input.fill(`- ${text} #`);
+
+  // The panel lives inside the composer shell rather than a portal, so it rides
+  // the same keyboard-open pinning the composer does (SPEC-05 §4).
+  const panel = page.locator('.composer-shell [role="listbox"]');
+  await expect(panel).toBeVisible();
+  await expect(input).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByRole('combobox', { name: 'Add an entry' })).toHaveCount(1);
+
+  // The full tag, not a prefix: a CI retry's leftover rows could share a
+  // shorter prefix and outrank the seeded tag at row 0.
+  await page.keyboard.type(tag);
+  const option = panel.getByRole('option').filter({ hasText: `#${tag}` });
+  await expect(option).toHaveCount(1);
+  await page.keyboard.press('Enter');
+
+  // Enter accepted the completion; it must not also have filed the entry.
+  await expect(panel).toHaveCount(0);
+  await expect(page.getByRole('combobox', { name: 'Add an entry' })).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Add an entry' })).toHaveCount(1);
+  await expect(page.locator('.parse-chip').filter({ hasText: `#${tag}` })).toHaveCount(1);
+  await expect(page.getByText(text, { exact: true })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Add entry' }).click();
+  await expect(page.getByText(text, { exact: true })).toBeVisible();
+
+  await page.keyboard.press('Control+k');
+  const search = page.getByRole('dialog', { name: 'Search journal' });
+  await search.getByRole('searchbox', { name: 'Search entries and tags' }).fill(`#${tag}`);
+  await expect(search.getByText(text, { exact: true })).toBeVisible();
+  await expect(search.getByText(seeded, { exact: true })).toBeVisible();
+});
+
+test('every capture sigil opens its own completion panel', async ({ page }) => {
+  await openJournal(page);
+  const input = page.locator('.composer__input');
+  const panel = page.locator('.composer-shell [role="listbox"]');
+  const caption = page.locator('.composer-suggestions__hint');
+
+  // `>` completes the one date shift the parser understands, and captions why.
+  await input.fill(`- ${uniqueText('Sigil sweep')} >`);
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole('option')).toHaveCount(1);
+  await expect(panel.getByRole('option', { name: /Tomorrow/ })).toBeVisible();
+  await expect(caption).toBeVisible();
+  await expect(caption).not.toBeEmpty();
+  // The caption teaches; it is not a completion, so it must sit outside the listbox.
+  await expect(panel.locator('.composer-suggestions__hint')).toHaveCount(0);
+
+  // `@` offers the next three round hours, each glossed in 12-hour form.
+  await input.fill(`- ${uniqueText('Sigil sweep')} @`);
+  await expect(panel).toBeVisible();
+  const hours = panel.getByRole('option');
+  await expect(hours).toHaveCount(3);
+  for (const option of await hours.all()) {
+    await expect(option).toHaveText(/^@\d{2}:00\d{1,2} (?:am|pm)$/);
+  }
+  await expect(caption).toContainText('@4pm');
+
+  // Accepting a time writes the parsed clock, which the preview then echoes.
+  const clock = ((await hours.first().textContent()) ?? '').slice(1, 6);
+  await page.keyboard.press('Enter');
+  await expect(panel).toHaveCount(0);
+  await expect(page.locator('.parse-chip').filter({ hasText: `at ${clock}` })).toHaveCount(1);
+
+  // A sigil that opens no run is inert: `@mira` is a handle, not a half-typed time.
+  await input.fill(`- ${uniqueText('Sigil sweep')} @mira`);
+  await expect(panel).toHaveCount(0);
+});
+
+test('the Today and Review tabs announce their counts and Review stays cleared', async ({
+  baseURL,
+  context,
+  page,
+}) => {
+  const server = await pairAndBootstrap(context, baseURL);
+  await openJournal(page);
+
+  // Anchor the baseline to server truth, not to whatever the badge shows
+  // mid-hydration — the shared database already carries earlier specs' rows.
+  const openBefore = await openTodayCount(context.request, server);
+  await expect.poll(() => navCount(page, 'Today')).toBe(openBefore);
+  await seedOwnerEntry(context.request, baseURL, server, {
+    text: uniqueText('Badge open task'),
+    type: 'task',
+  });
+  // The count rides the same SSE batch as the row, so it needs no reload.
+  await expect.poll(() => navCount(page, 'Today')).toBe(openBefore + 1);
+  await expect(page.getByRole('button', { name: /^Today — \d+ open tasks?$/ })).toBeVisible();
+
+  const unseenBefore = await navCount(page, 'Review');
+  const secret = await issueMcpSecret(page, uniqueText('Badge agent'));
+  const client = new Client({ name: 'journal-badge-evidence', version: '1.0.0' });
+  const transport = new StreamableHTTPClientTransport(new URL('/mcp', baseURL), {
+    requestInit: { headers: { Authorization: `Bearer ${secret}` } },
+  });
+  const agentText = uniqueText('Badge agent addition');
+  try {
+    await client.connect(transport as unknown as Transport);
+    mcpEntryWrite(
+      await client.callTool({
+        name: 'add_entry',
+        arguments: {
+          idempotencyKey: ulid(),
+          source: 'Playwright review-badge coverage',
+          text: agentText,
+          type: 'note',
+        },
+      }),
+      agentText,
+    );
+  } finally {
+    await client.close();
+  }
+
+  await expect.poll(() => navCount(page, 'Review')).toBe(unseenBefore + 1);
+  await expect(page.getByRole('button', { name: /^Review — \d+ unseen changes?$/ })).toBeVisible();
+
+  await page.getByRole('button', { name: /^Review/ }).click();
+  await expect(page.getByRole('region', { name: 'Assistant activity' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Review', exact: true })).toBeVisible();
+  // The mark is local and debounced; reload only proves anything once it landed.
+  await expect.poll(() => persistedReviewMark(page)).not.toBeNull();
+
+  await page.reload();
+  await expect(page.locator('#journal-content')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Review', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Review — / })).toHaveCount(0);
 });

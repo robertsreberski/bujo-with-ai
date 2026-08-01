@@ -7,6 +7,7 @@ import type { RequestHandler } from 'express';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import supertest from 'supertest';
 import { createJournalApplication, type JournalApplication } from '../../src/index.js';
+import { DomainError } from '../../src/domain/errors.js';
 import type { ApiJournalOperations, MutationContext, OwnerActor } from '../../src/api/routes.js';
 import type { ChangeBatch } from '../../src/api/sse.js';
 import {
@@ -756,6 +757,37 @@ describe('one-origin HTTP application', () => {
       .expect(200);
     expect(response.body).toEqual({
       items: [{ tag: 'work', uses: 3, lastUsedAt: '2026-07-31T09:00:00.000Z' }],
+    });
+  });
+
+  it('surfaces a capture into an unknown collection as a 404', async () => {
+    const { application, operations } = await build();
+    openApplications.push(application);
+    const cookie = await pair(application);
+    // The parser accepts any well-formed slug; only the domain knows whether the
+    // collection exists, and capture is deliberately not allowed to mint one.
+    vi.spyOn(operations, 'capture').mockImplementation(() => {
+      throw new DomainError('NOT_FOUND', 'Collection garden was not found');
+    });
+
+    const response = await request(application.app)
+      .post('/api/capture')
+      .set('Host', 'localhost:5178')
+      .set('Origin', 'http://localhost:5178')
+      .set('Cookie', cookie)
+      .set('Idempotency-Key', MUTATION_ID)
+      .send({
+        draft: '. Buy seeds /garden',
+        dateIntent: {
+          kind: 'today',
+          capturedAt: '2026-07-31T10:00:00.000Z',
+          baseToday: '2026-07-31',
+          timezone: 'Europe/Amsterdam',
+        },
+      })
+      .expect(404);
+    expect(response.body).toEqual({
+      error: { code: 'not_found', message: 'Collection garden was not found' },
     });
   });
 

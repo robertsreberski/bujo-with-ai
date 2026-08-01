@@ -31,7 +31,7 @@ import {
 
 /** Preview chip shared by the parse result and its error variant. */
 const CHIP =
-  'parse-chip inline-flex h-5 flex-none items-center rounded-sm bg-bg-line px-[7px] text-2xs font-medium text-fg-mid';
+  'parse-chip inline-flex h-6 flex-none items-center rounded-sm bg-bg-line px-2 text-2xs font-medium text-fg-mid';
 
 /*
  * `text-(length:--text-tag)`: tailwind-merge reads the bare `text-tag` size as a
@@ -308,54 +308,58 @@ export function Composer({
     <div className="composer-shell relative z-(--z-composer) flex-none border-t border-border bg-bg pb-(--sab) keyboard-open:fixed keyboard-open:right-auto keyboard-open:bottom-[calc(100%_-_var(--vv-offset,0px)_-_var(--vv-height,100%))] keyboard-open:left-[var(--pane-left,var(--sal))] keyboard-open:w-[var(--pane-width,calc(100%_-_var(--sal)_-_var(--sar)))] keyboard-open:pb-0">
       <div className="relative mx-auto w-full max-w-(--content-width) px-3 pt-2 pb-2.5">
         <ComposerSuggestions state={suggestions} onAccept={acceptSuggestion} />
-        <div className="flex min-h-[22px] items-center gap-[5px] pb-1">
-          <DestinationChip
-            resolved={resolved}
-            route={route}
-            today={today}
-            collections={collections}
-            collectionsById={collectionsById}
-            screenDestination={screenDestination}
-            onSelect={selectDestination}
-            onClear={clearDestination}
-            onRestoreFocus={focusInput}
-          />
-          <div
-            className="flex min-w-0 flex-1 items-center gap-[5px] overflow-x-auto [scrollbar-width:none]"
-            aria-live="polite"
-          >
-            {parsed.error ? (
-              <span
-                className={cn(
-                  CHIP,
-                  'parse-chip--error border border-danger-border bg-danger-bg text-danger',
-                )}
-              >
-                {parsed.error}
-              </span>
-            ) : draft ? (
-              <>
-                <span className={CHIP}>{TYPE_LABELS[parsed.type]}</span>
-                {parsed.time ? <span className={CHIP}>at {parsed.time}</span> : null}
-                {parsed.tags.map((tag) => (
-                  <span className={CHIP} key={tag}>
-                    #{tag}
-                  </span>
-                ))}
-              </>
-            ) : (
-              <span className="overflow-hidden text-tag text-fg-mute text-ellipsis whitespace-nowrap [&>b]:font-medium">
-                Shortcuts: <b>.</b> task · <b>o</b> event · <b>-</b> note · #tag · @3pm ·
-                &gt;tomorrow
-              </span>
-            )}
+        {/*
+         * The context zone: the destination leads at full width, the facts the
+         * parser found follow and wrap onto further lines rather than truncate,
+         * and help sits at the top right so it stays put as the facts grow.
+         */}
+        <div className="flex items-start gap-1.5 pb-1.5">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
+            <DestinationChip
+              resolved={resolved}
+              route={route}
+              today={today}
+              collections={collections}
+              collectionsById={collectionsById}
+              screenDestination={screenDestination}
+              onSelect={selectDestination}
+              onClear={clearDestination}
+              onRestoreFocus={focusInput}
+            />
+            <div
+              className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
+              aria-live="polite"
+            >
+              {parsed.error ? (
+                <span
+                  className={cn(
+                    CHIP,
+                    'parse-chip--error border border-danger-border bg-danger-bg text-danger',
+                  )}
+                >
+                  {parsed.error}
+                </span>
+              ) : draft ? (
+                <>
+                  <span className={CHIP}>{TYPE_LABELS[parsed.type]}</span>
+                  {parsed.time ? <span className={CHIP}>at {parsed.time}</span> : null}
+                  {parsed.tags.map((tag) => (
+                    <span className={CHIP} key={tag}>
+                      #{tag}
+                    </span>
+                  ))}
+                </>
+              ) : null}
+            </div>
           </div>
           <CaptureHelp />
         </div>
-        <form className="flex items-center gap-2" onSubmit={submit}>
+        <form className="composer__form flex items-center gap-2" onSubmit={submit}>
           <button
             className={cn(
-              'composer__type flex h-9 min-w-[104px] items-center gap-1.5 rounded-md border border-border-control bg-bg px-[9px] text-sm max-[480px]:min-w-[86px] touch:h-10',
+              // Below 480px the label is hidden, so the button stops reserving
+              // room for it and gives the draft the width instead.
+              'composer__type flex h-9 min-w-[104px] items-center gap-1.5 rounded-md border border-border-control bg-bg px-[9px] text-sm max-[480px]:min-w-[62px] max-[480px]:justify-center max-[480px]:px-2 touch:h-10',
               parsed.signifierWon ? 'composer__type--overridden text-fg-mute' : 'text-fg-body',
             )}
             type="button"

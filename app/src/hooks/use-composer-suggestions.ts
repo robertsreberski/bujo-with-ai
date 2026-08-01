@@ -1,8 +1,9 @@
 import type { TagUsage } from '@journal/server/contracts/app';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import {
   applySuggestion,
   buildSuggestionRows,
+  suggestionHint,
   suggestionQuery,
   type SuggestionRow,
 } from '../components/composer-suggestions';
@@ -22,6 +23,8 @@ interface UseComposerSuggestionsArgs {
 export interface ComposerSuggestionsState {
   open: boolean;
   rows: SuggestionRow[];
+  /** Grammar caption under the rows, for the sigils a list alone cannot teach. */
+  hint: string | null;
   activeIndex: number;
   panelId: string;
   activeOptionId: string | undefined;
@@ -45,20 +48,22 @@ export function useComposerSuggestions({
   const baseId = useId();
   const [active, setActive] = useState<{ key: string; index: number } | null>(null);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
-  const requestedTagsRef = useRef(false);
 
   const query = enabled ? suggestionQuery(value, caret) : null;
   const queryKey = query === null ? null : `${query.mode}:${query.start}:${query.query}`;
   // Cheap enough to recompute: both inputs are short, screen-sized lists.
-  const rows = query === null ? [] : buildSuggestionRows(query, { collections, tags });
+  const rows =
+    query === null ? [] : buildSuggestionRows(query, { collections, tags, now: new Date() });
   const open = queryKey !== null && rows.length > 0 && dismissedKey !== queryKey;
   const activeIndex =
     active !== null && active.key === queryKey ? Math.min(active.index, rows.length - 1) : 0;
 
+  // Fires on every entry into tag mode, not once per mount: loadTagSuggestions
+  // re-derives from the mirror synchronously and TTL-guards the network call
+  // itself, so a journal whose first tags appear after mount still learns them.
   const mode = query?.mode ?? null;
   useEffect(() => {
-    if (mode !== 'tag' || requestedTagsRef.current) return;
-    requestedTagsRef.current = true;
+    if (mode !== 'tag') return;
     onLoadTags?.();
   }, [mode, onLoadTags]);
 
@@ -68,6 +73,7 @@ export function useComposerSuggestions({
   return {
     open,
     rows,
+    hint: query === null ? null : suggestionHint(query.mode),
     activeIndex,
     panelId,
     activeOptionId: open ? optionId(activeIndex) : undefined,

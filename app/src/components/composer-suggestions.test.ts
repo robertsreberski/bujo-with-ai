@@ -5,9 +5,14 @@ import {
   activeToken,
   applySuggestion,
   buildSuggestionRows,
+  suggestionHint,
   suggestionQuery,
+  upcomingHours,
 } from './composer-suggestions';
 import type { JournalCollection } from './types';
+
+/** A fixed afternoon, so `@` rows are deterministic wherever they surface. */
+const NOW = new Date(2026, 7, 1, 15, 20);
 
 const collection = (id: string, name = id): JournalCollection => ({
   id,
@@ -98,13 +103,70 @@ describe('suggestionQuery', () => {
   it('opens on a bare sigil so the whole vocabulary is browsable', () => {
     expect(queryAt('#|')).toMatchObject({ mode: 'tag', query: '' });
   });
+
+  it('opens date-shift mode on a leading angle bracket', () => {
+    expect(queryAt('Call the bank >|')).toMatchObject({ mode: 'date-shift', query: '' });
+    expect(queryAt('Call the bank >tom|')).toMatchObject({ mode: 'date-shift', query: 'tom' });
+  });
+
+  it('lowercases the date-shift query so `>Tomorrow` still completes', () => {
+    expect(queryAt('>Tom|')).toMatchObject({ mode: 'date-shift', query: 'tom' });
+  });
+
+  it('refuses a date-shift query the one supported word could never start', () => {
+    expect(queryAt('>2026-08-04|')).toBeNull();
+  });
+
+  it('opens time mode on a leading at-sign', () => {
+    expect(queryAt('Standup @|')).toMatchObject({ mode: 'time', query: '' });
+    expect(queryAt('Standup @9|')).toMatchObject({ mode: 'time', query: '9' });
+    expect(queryAt('Standup @23:|')).toMatchObject({ mode: 'time', query: '23:' });
+  });
+
+  it('leaves a handle alone rather than reading it as a half-typed clock', () => {
+    expect(queryAt('Ask @mira|')).toBeNull();
+    expect(queryAt('Mail her@example.com| today')).toBeNull();
+  });
+
+  it('stays closed once the time is already spelled the other way', () => {
+    // `@4pm` parses perfectly well; there is nothing left to complete.
+    expect(queryAt('Standup @4pm|')).toBeNull();
+  });
+
+  it('ignores sigils that do not open their token', () => {
+    expect(queryAt('a>b| c')).toBeNull();
+    expect(queryAt('2<x>|3')).toBeNull();
+  });
+});
+
+describe('upcomingHours', () => {
+  it('starts at the next round hour, never the current one', () => {
+    expect(upcomingHours(new Date(2026, 7, 1, 15, 20))).toEqual([16, 17, 18]);
+    expect(upcomingHours(new Date(2026, 7, 1, 15, 0))).toEqual([16, 17, 18]);
+  });
+
+  it('wraps past midnight', () => {
+    expect(upcomingHours(new Date(2026, 7, 1, 22, 5))).toEqual([23, 0, 1]);
+  });
+});
+
+describe('suggestionHint', () => {
+  it('teaches the sigils a list of completions cannot explain by itself', () => {
+    expect(suggestionHint('date-shift')).toMatch(/tomorrow/i);
+    expect(suggestionHint('time')).toMatch(/@4pm/);
+  });
+
+  it('stays silent where the rows already speak for themselves', () => {
+    expect(suggestionHint('tag')).toBeNull();
+    expect(suggestionHint('collection')).toBeNull();
+  });
 });
 
 describe('buildSuggestionRows', () => {
   const rows = (marked: string) => {
     const query = queryAt(marked);
     if (query === null) throw new Error(`expected a query for ${marked}`);
-    return buildSuggestionRows(query, { collections: COLLECTIONS, tags: TAGS });
+    return buildSuggestionRows(query, { collections: COLLECTIONS, tags: TAGS, now: NOW });
   };
 
   it('offers prefix-matched tags with their use counts', () => {
@@ -128,7 +190,7 @@ describe('buildSuggestionRows', () => {
     const query = suggestionQuery('#', 1);
     if (query === null) throw new Error('expected a query');
     const many = Array.from({ length: 20 }, (_, index) => tag(`t${String(index)}`, 1));
-    expect(buildSuggestionRows(query, { collections: [], tags: many })).toHaveLength(6);
+    expect(buildSuggestionRows(query, { collections: [], tags: many, now: NOW })).toHaveLength(6);
   });
 
   it('matches collections on both id and display name', () => {
@@ -161,6 +223,54 @@ describe('buildSuggestionRows', () => {
   it('offers nothing to create for an empty slug', () => {
     expect(rows('/|')).toHaveLength(2);
   });
+
+  it('completes the one date shift the parser understands', () => {
+    expect(rows('Call >|')).toEqual([
+      {
+        kind: 'date-shift',
+        key: 'date-shift:tomorrow',
+        label: 'Tomorrow',
+        detail: '>tomorrow',
+        insert: '>tomorrow ',
+      },
+    ]);
+    expect(rows('Call >tom|')).toHaveLength(1);
+  });
+
+  it('offers no date shift for a word `tomorrow` could never become', () => {
+    expect(rows('Call >mon|')).toEqual([]);
+  });
+
+  it('offers the next round hours with their 12-hour gloss', () => {
+    const at = (marked: string, now: Date) => {
+      const query = queryAt(marked);
+      if (query === null) throw new Error(`expected a query for ${marked}`);
+      return buildSuggestionRows(query, { collections: [], tags: [], now });
+    };
+    expect(at('Standup @|', new Date(2026, 7, 1, 15, 20))).toEqual([
+      { kind: 'time', key: 'time:16:00', label: '@16:00', detail: '4 pm', insert: '@16:00 ' },
+      { kind: 'time', key: 'time:17:00', label: '@17:00', detail: '5 pm', insert: '@17:00 ' },
+      { kind: 'time', key: 'time:18:00', label: '@18:00', detail: '6 pm', insert: '@18:00 ' },
+    ]);
+    // Midnight reads as 12 am, not 0 am.
+    expect(at('Standup @|', new Date(2026, 7, 1, 23, 5))[0]?.detail).toBe('12 am');
+  });
+
+  it('matches a typed hour with or without its leading zero', () => {
+    const at = (marked: string) => {
+      const query = queryAt(marked);
+      if (query === null) throw new Error(`expected a query for ${marked}`);
+      return buildSuggestionRows(query, {
+        collections: [],
+        tags: [],
+        now: new Date(2026, 7, 1, 8, 40),
+      }).map((row) => row.label);
+    };
+    expect(at('Standup @|')).toEqual(['@09:00', '@10:00', '@11:00']);
+    expect(at('Standup @9|')).toEqual(['@09:00']);
+    expect(at('Standup @09|')).toEqual(['@09:00']);
+    expect(at('Standup @1|')).toEqual(['@10:00', '@11:00']);
+  });
 });
 
 describe('applySuggestion', () => {
@@ -191,5 +301,20 @@ describe('applySuggestion', () => {
 
   it('inserts a collection token for a create row', () => {
     expect(accept('Log /gard|', '/garden ')).toEqual({ value: 'Log /garden ', caret: 12 });
+  });
+
+  it('finishes a half-typed date shift', () => {
+    expect(accept('Call the bank >|', '>tomorrow ')).toEqual({
+      value: 'Call the bank >tomorrow ',
+      caret: 24,
+    });
+    expect(accept('Call the bank >tom|', '>tomorrow ')).toEqual({
+      value: 'Call the bank >tomorrow ',
+      caret: 24,
+    });
+  });
+
+  it('finishes a bare at-sign into a full clock reading', () => {
+    expect(accept('Standup @|', '@09:00 ')).toEqual({ value: 'Standup @09:00 ', caret: 15 });
   });
 });

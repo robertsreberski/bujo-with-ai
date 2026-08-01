@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { ComposerPopover } from './ComposerPopover';
 import { Icon } from './Icon';
 import { SIGNIFIER_KEYS } from './signifiers';
@@ -23,7 +23,17 @@ const SHORTCUTS: Array<{ keys: string; description: string }> = [
  */
 const KBD =
   'inline-flex min-w-5 flex-none items-center justify-center rounded-sm border border-border bg-bg-line px-1 py-px text-(length:--text-tag) font-mono text-fg-faint';
-const ROW = 'flex items-center gap-2 py-[3px] text-md text-fg-body';
+
+/*
+ * A two-column grid rather than a row of flex pairs: the token column sizes to
+ * the widest `kbd` in its own section, so every description starts on the same
+ * line. This surface inherited the legend the capture bar used to carry, which
+ * makes scannability the whole point.
+ */
+// `m-0`/`ml-0`: the base reset leaves the UA's own `dl` margin and `dd` indent.
+const LIST = 'm-0 grid grid-cols-[max-content_1fr] items-center gap-x-2.5 gap-y-1';
+const TERM = 'flex';
+const DESCRIPTION = 'ml-0 min-w-0 text-md text-fg-body';
 
 /** The capture grammar, one row per token, on the same surface as the picker. */
 export function CaptureHelp() {
@@ -35,10 +45,16 @@ export function CaptureHelp() {
       title="Capture grammar"
       description="Everything the composer understands as you type."
       marker="capture-help"
-      className="max-w-[min(320px,calc(100vw_-_24px))] p-3"
+      /*
+       * Popover-only sizing. `ComposerPopover` hands this class to both of its
+       * surfaces, and below 680px the surface is a full-width bottom sheet: an
+       * unscoped `max-w`/`p-3` there pinned a 320px slab to the left edge and
+       * overwrote the sheet's safe-area bottom padding.
+       */
+      className="min-[680px]:max-w-[min(320px,calc(100vw_-_24px))] min-[680px]:p-3"
       trigger={
         <button
-          className="grid size-6 flex-none place-items-center rounded-sm text-fg-mute hover:bg-bg-line hover:text-fg touch:size-10"
+          className="grid size-7 flex-none place-items-center rounded-md text-fg-mute hover:bg-bg-line hover:text-fg touch:size-10"
           type="button"
           aria-label="Capture help"
         >
@@ -46,33 +62,46 @@ export function CaptureHelp() {
         </button>
       }
     >
-      <div className="flex flex-col gap-2.5">
-        <section className="flex flex-col">
-          <h3 className="pb-1 text-xs font-medium text-fg-mute">Signifiers</h3>
-          {SIGNIFIER_KEYS.map(([key, type]) => (
-            <p className={ROW} key={key}>
-              <kbd className={KBD}>{key}</kbd>
-              <span className="min-w-0 flex-1">{TYPE_LABELS[type]}</span>
-            </p>
-          ))}
+      {/* `px-2` on the sheet only, to meet the 16px inset its title already uses. */}
+      <div className="flex flex-col gap-3 max-[679px]:px-2 max-[679px]:pt-1">
+        <section>
+          <h3 className="pb-1.5 text-xs font-medium text-fg-mute">Signifiers</h3>
+          <dl className={LIST}>
+            {SIGNIFIER_KEYS.map(([key, type]) => (
+              <Fragment key={key}>
+                <dt className={TERM}>
+                  <kbd className={KBD}>{key}</kbd>
+                </dt>
+                <dd className={DESCRIPTION}>{TYPE_LABELS[type]}</dd>
+              </Fragment>
+            ))}
+          </dl>
         </section>
-        <section className="flex flex-col">
-          <h3 className="pb-1 text-xs font-medium text-fg-mute">Tokens</h3>
-          {GRAMMAR.map((item) => (
-            <p className={ROW} key={item.token}>
-              <kbd className={KBD}>{item.token}</kbd>
-              <span className="min-w-0 flex-1">{item.description}</span>
-            </p>
-          ))}
+        <section>
+          <h3 className="pb-1.5 text-xs font-medium text-fg-mute">Tokens</h3>
+          <dl className={LIST}>
+            {GRAMMAR.map((item) => (
+              <Fragment key={item.token}>
+                <dt className={TERM}>
+                  <kbd className={KBD}>{item.token}</kbd>
+                </dt>
+                <dd className={DESCRIPTION}>{item.description}</dd>
+              </Fragment>
+            ))}
+          </dl>
         </section>
-        <section className="flex flex-col">
-          <h3 className="pb-1 text-xs font-medium text-fg-mute">Shortcuts</h3>
-          {SHORTCUTS.map((item) => (
-            <p className={ROW} key={item.keys}>
-              <kbd className={KBD}>{item.keys}</kbd>
-              <span className="min-w-0 flex-1">{item.description}</span>
-            </p>
-          ))}
+        <section>
+          <h3 className="pb-1.5 text-xs font-medium text-fg-mute">Shortcuts</h3>
+          <dl className={LIST}>
+            {SHORTCUTS.map((item) => (
+              <Fragment key={item.keys}>
+                <dt className={TERM}>
+                  <kbd className={KBD}>{item.keys}</kbd>
+                </dt>
+                <dd className={DESCRIPTION}>{item.description}</dd>
+              </Fragment>
+            ))}
+          </dl>
         </section>
       </div>
     </ComposerPopover>

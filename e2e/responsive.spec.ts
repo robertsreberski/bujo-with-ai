@@ -48,6 +48,12 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
     expect(frameBox?.width).toBe(560);
     await expect(sidebar).toBeHidden();
     await expect(tabs).toBeVisible();
+  } else if (testInfo.project.name === 'webkit-iphone') {
+    // Below 680px the frame is the viewport, so WebKit's 390px phone reports
+    // 390 where Chromium's emulated 375px phone reports 375.
+    expect(frameBox?.width).toBe(390);
+    await expect(sidebar).toBeHidden();
+    await expect(tabs).toBeVisible();
   } else {
     expect(frameBox?.width).toBe(375);
     await expect(sidebar).toBeHidden();
@@ -55,14 +61,15 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
   }
 
   /*
-   * DS-14 control heights. The narrow project is the only coarse-pointer one,
-   * so it is the only place the 40px touch minimum applies; the pointer-precise
+   * DS-14 control heights. The phone projects are the coarse-pointer ones, so
+   * they are the only place the 40px touch minimum applies; the pointer-precise
    * layouts use the tighter desk metrics — 34px sidebar nav rows on the wide
    * layout, 30px tab segments on the mid layout, and a 36px composer trio.
    */
   const isNarrow = testInfo.project.name === 'chromium-narrow';
-  const primaryMinimum = isNarrow ? 40 : testInfo.project.name === 'chromium-desktop' ? 34 : 30;
-  const composerMinimum = isNarrow ? 40 : 36;
+  const isPhone = isNarrow || testInfo.project.name === 'webkit-iphone';
+  const primaryMinimum = isPhone ? 40 : testInfo.project.name === 'chromium-desktop' ? 34 : 30;
+  const composerMinimum = isPhone ? 40 : 36;
 
   const visiblePrimaryButtons = page
     .getByRole('button')
@@ -81,8 +88,8 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
   const input = page.getByRole('textbox', { name: 'Add an entry' });
   const inputBox = await input.boundingBox();
   expect(inputBox?.height).toBeGreaterThanOrEqual(composerMinimum);
+  if (isPhone) await expect(input).toHaveCSS('font-size', '16px');
   if (isNarrow) {
-    await expect(input).toHaveCSS('font-size', '16px');
     await page.setViewportSize({ width: 320, height: 700 });
     await page.getByRole('button', { name: 'Month', exact: true }).click();
     const dayButtons = page.locator('.calendar-day');

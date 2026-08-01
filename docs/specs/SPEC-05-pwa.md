@@ -200,6 +200,41 @@ it. `visualViewport` is the only truth.
 - PWA-17 The type-menu popover and dialogs opened while the keyboard is up
   position against the _visual_ viewport (`--vv-*`), not the layout
   viewport.
+- PWA-17a **The capture suggestion panel is not portalled.** It renders
+  inside `.composer-shell`, absolutely positioned above the input
+  (`bottom: 100%`), so it inherits the shell's keyboard-open pinning for
+  free. A portal to `<body>` would resolve against the layout viewport and
+  drop the panel behind the keyboard the moment the composer lifted — and
+  would have to re-derive the same `--vv-*` arithmetic to avoid it. The whole
+  surface — rows and grammar caption alike — suppresses `pointerdown`
+  (PWA-19): blurring the input closes the panel _and_ dismisses the keyboard,
+  which on iOS happens between `touchend` and `click`, so the tap would
+  resolve against a surface that had already left.
+- PWA-17b **The entry action sheet is anchored to the visible viewport, not
+  the layout one.** Its panel sits at
+  `bottom: calc(var(--app-height,100dvh) - var(--vv-offset,0px) - var(--vv-height,100dvh))`
+  and is capped at `calc(var(--vv-height,100dvh) - 48px)`, so an open
+  keyboard lifts the sheet instead of hiding it. Vaul's own `repositionInputs`
+  is disabled for exactly that reason: two mechanisms moving one panel fight,
+  and the app's is the one that also knows about `--app-height`. Vaul's 500ms
+  slide (an attribute-selector rule plus an inline transition it writes on
+  drag release) is overridden to 160ms on the DS-24 dialog curve — `!important`
+  twice over, because author-important is the only thing that outranks an
+  inline style — and reduced motion re-points the panel at the app's
+  opacity-only `overlay-in` keyframes rather than merely shortening the slide.
+  Filing, deleting, and editing swap the sheet's face instead of stacking a
+  second surface, so a phone never has two modal layers competing for the same
+  400px of screen.
+- PWA-17c **Known follow-up (needs device verification).** The two composer
+  sheets do not yet share one keyboard strategy: the destination picker and
+  capture-help surface (`ComposerPopover`) anchor at `bottom-0` — the layout
+  viewport — and leave vaul's default `repositionInputs` enabled, while the
+  entry sheet does the opposite (PWA-17b). Only two controls inside the picker
+  can raise the keyboard — the inline "New collection" name field and the
+  filter field that appears past six collections — so the divergence is easy
+  to miss and must be checked on a physical notched device before the two are
+  unified. Until then, treat PWA-17b as the intended pattern and the picker
+  as the outlier.
 
 ## 5. Touch & scroll behavior
 
@@ -259,3 +294,9 @@ iPhone (standalone, notched device):
    entries sync, SSE resumes.
 7. Home-screen install shows correct icon/name; cold offline launch renders
    the journal.
+8. Type `#` or `/` with the keyboard up: the suggestion panel rides above the
+   composer instead of sitting behind the keyboard, and tapping a row completes
+   the token without dismissing it (PWA-17a).
+9. Open an entry sheet with the keyboard raised, then the destination picker's
+   "New collection" field: both must stay above the keyboard, which is the
+   divergence PWA-17c leaves open.

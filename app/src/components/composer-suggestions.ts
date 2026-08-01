@@ -7,6 +7,16 @@ export const SUGGESTION_LIMIT = 6;
 
 const SLUG = /^[a-z0-9-]{1,80}$/;
 const TAG_QUERY = /^[A-Za-z0-9-]*$/;
+/** `>` completes one word, so anything non-alphabetic is somebody else's text. */
+const DATE_SHIFT_QUERY = /^[a-z]*$/;
+/** `@` completes a clock reading; `@mira` is a handle, not a half-typed time. */
+const TIME_QUERY = /^\d{0,2}(?::\d{0,2})?$/;
+
+/** The only date shift the parser understands, so the only one worth offering. */
+const DATE_SHIFT_WORD = 'tomorrow';
+
+/** Upcoming round hours the `@` panel offers before the caption takes over. */
+const TIME_SUGGESTION_COUNT = 3;
 
 export interface TokenSpan {
   start: number;
@@ -14,18 +24,20 @@ export interface TokenSpan {
   text: string;
 }
 
-export type SuggestionMode = 'tag' | 'collection';
+export type SuggestionMode = 'tag' | 'collection' | 'date-shift' | 'time';
 
 export interface SuggestionQuery extends TokenSpan {
   mode: SuggestionMode;
-  /** The token minus its `#`/`/` sigil, lowercased. */
+  /** The token minus its `#`/`/`/`>`/`@` sigil, lowercased. */
   query: string;
 }
 
 export type SuggestionRow =
   | { kind: 'tag'; key: string; label: string; detail: string; insert: string }
   | { kind: 'collection'; key: string; label: string; detail: string; insert: string }
-  | { kind: 'create'; key: string; label: string; detail: string; insert: string; slug: string };
+  | { kind: 'create'; key: string; label: string; detail: string; insert: string; slug: string }
+  | { kind: 'date-shift'; key: string; label: string; detail: string; insert: string }
+  | { kind: 'time'; key: string; label: string; detail: string; insert: string };
 
 /**
  * The non-whitespace run containing the caret. A caret sitting on whitespace
@@ -42,7 +54,9 @@ export function activeToken(value: string, caret: number): TokenSpan {
 }
 
 /**
- * Which completion the caret is inside, if any.
+ * Which completion the caret is inside, if any. Every sigil in the capture
+ * grammar opens a panel, so the grammar is discoverable by typing it rather
+ * than by reading a legend.
  *
  * Because the token is a whole whitespace-delimited run, a sigil only counts
  * when it opens the run — so `https://example.com` and `a#b` are inert, and the
@@ -59,13 +73,87 @@ export function suggestionQuery(value: string, caret: number | null): Suggestion
   if (token.text.startsWith('/') && !token.text.startsWith('//')) {
     return { ...token, mode: 'collection', query: token.text.slice(1).toLowerCase() };
   }
+  if (token.text.startsWith('>')) {
+    const query = token.text.slice(1).toLowerCase();
+    if (!DATE_SHIFT_QUERY.test(query)) return null;
+    return { ...token, mode: 'date-shift', query };
+  }
+  if (token.text.startsWith('@')) {
+    const query = token.text.slice(1);
+    if (!TIME_QUERY.test(query)) return null;
+    return { ...token, mode: 'time', query };
+  }
+  return null;
+}
+
+/**
+ * The round hours a capture is most likely aimed at: the next `count` of them,
+ * wrapping past midnight. Local wall time, because the owner means the clock on
+ * the wall in front of them — the parser resolves the token against the same one.
+ */
+export function upcomingHours(now: Date, count: number = TIME_SUGGESTION_COUNT): number[] {
+  const next = now.getHours() + 1;
+  return Array.from({ length: count }, (_, index) => (next + index) % 24);
+}
+
+/** `16` → `4 pm`: the 12-hour gloss that teaches `@4pm` is the same instant. */
+function meridiemGloss(hour: number): string {
+  return `${String(hour % 12 === 0 ? 12 : hour % 12)} ${hour < 12 ? 'am' : 'pm'}`;
+}
+
+/**
+ * A typed prefix matches a suggested hour in either the padded or the spoken
+ * form, so `@9` still finds `09:00` rather than silently closing the panel.
+ */
+function matchesTimeQuery(clock: string, query: string): boolean {
+  return query.length === 0 || clock.startsWith(query) || clock.replace(/^0/, '').startsWith(query);
+}
+
+/**
+ * The caption under the rows. It carries the part of the grammar a list of
+ * completions cannot: what the sigil *does*, and the shapes it also accepts.
+ */
+export function suggestionHint(mode: SuggestionMode): string | null {
+  if (mode === 'date-shift') return 'Files this capture into tomorrow’s log.';
+  if (mode === 'time') return 'Also reads @4pm, @11 and @23:59.';
   return null;
 }
 
 export function buildSuggestionRows(
   query: SuggestionQuery,
-  options: { collections: readonly JournalCollection[]; tags: readonly TagUsage[] },
+  options: {
+    collections: readonly JournalCollection[];
+    tags: readonly TagUsage[];
+    /** The clock is the caller's: this module stays pure and replayable. */
+    now: Date;
+  },
 ): SuggestionRow[] {
+  if (query.mode === 'date-shift') {
+    if (!DATE_SHIFT_WORD.startsWith(query.query)) return [];
+    return [
+      {
+        kind: 'date-shift',
+        key: 'date-shift:tomorrow',
+        label: 'Tomorrow',
+        detail: `>${DATE_SHIFT_WORD}`,
+        insert: `>${DATE_SHIFT_WORD} `,
+      },
+    ];
+  }
+
+  if (query.mode === 'time') {
+    return upcomingHours(options.now)
+      .map((hour) => `${String(hour).padStart(2, '0')}:00`)
+      .filter((clock) => matchesTimeQuery(clock, query.query))
+      .map((clock) => ({
+        kind: 'time' as const,
+        key: `time:${clock}`,
+        label: `@${clock}`,
+        detail: meridiemGloss(Number(clock.slice(0, 2))),
+        insert: `@${clock} `,
+      }));
+  }
+
   if (query.mode === 'tag') {
     return options.tags
       .filter((usage) => usage.tag.startsWith(query.query))

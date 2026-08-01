@@ -46,7 +46,7 @@ export default defineConfig({
     },
     {
       name: 'chromium-mid',
-      testMatch: /responsive\.spec\.ts/,
+      testMatch: /(?:responsive|keyboard-layout)\.spec\.ts/,
       use: {
         browserName: 'chromium',
         viewport: { width: 680, height: 900 },
@@ -54,12 +54,43 @@ export default defineConfig({
     },
     {
       name: 'chromium-narrow',
-      testMatch: /responsive\.spec\.ts/,
+      testMatch: /(?:responsive|entry-sheet)\.spec\.ts/,
       use: {
         browserName: 'chromium',
         hasTouch: true,
         isMobile: true,
         viewport: { width: 375, height: 812 },
+      },
+    },
+    /*
+     * WebKit is the engine the owner actually ships on. Chromium's mobile
+     * emulation agrees with it about layout far more often than about the
+     * visual viewport, so the two surfaces that are *built* on visualViewport —
+     * the pinned composer and the entry sheet — are re-run here for real.
+     */
+    {
+      name: 'webkit-iphone',
+      testMatch: /(?:responsive|entry-sheet|keyboard-layout)\.spec\.ts/,
+      use: {
+        browserName: 'webkit',
+        deviceScaleFactor: 3,
+        hasTouch: true,
+        isMobile: true,
+        viewport: { width: 390, height: 844 },
+      },
+    },
+    /*
+     * The ≥680px pinning regression this geometry system exists to prevent (a
+     * keyboard-open composer running the full window width, under the sidebar)
+     * only reproduces on a wide *touch* layout, which is exactly an iPad.
+     */
+    {
+      name: 'webkit-ipad',
+      testMatch: /keyboard-layout\.spec\.ts/,
+      use: {
+        browserName: 'webkit',
+        hasTouch: true,
+        viewport: { width: 834, height: 1_194 },
       },
     },
   ],

@@ -316,6 +316,74 @@ describe('Composer suggestions', () => {
     await caretToEnd(user);
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   });
+
+  it('completes `>` into a date shift and moves the destination with it', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), 'Call the bank >');
+    await caretToEnd(user);
+
+    const listbox = await screen.findByRole('listbox', { name: 'Capture suggestions' });
+    expect(within(listbox).getByRole('option', { name: /Tomorrow/ })).toBeInTheDocument();
+    // The caption teaches what the sigil does; the row alone cannot.
+    expect(screen.getByText(/Files this capture into tomorrow/i)).toBeInTheDocument();
+
+    await user.keyboard('{Enter}');
+    expect(input()).toHaveValue('Call the bank >tomorrow ');
+    expect(screen.getByRole('button', { name: 'Destination: Tomorrow' })).toBeInTheDocument();
+  });
+
+  it('offers upcoming round hours for `@` and teaches the other time formats', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), 'Standup @');
+    await caretToEnd(user);
+
+    const listbox = await screen.findByRole('listbox', { name: 'Capture suggestions' });
+    const options = within(listbox).getAllByRole('option');
+    expect(options).toHaveLength(3);
+    for (const option of options) expect(option).toHaveTextContent(/^@\d{2}:00/);
+    expect(screen.getByText(/@4pm/)).toBeInTheDocument();
+
+    await user.keyboard('{Enter}');
+    // Whichever hour led the list, the draft now carries a token the parser reads.
+    expect((input() as HTMLInputElement).value).toMatch(/^Standup @\d{2}:00 $/);
+    expect(screen.getByText(/^at \d{2}:00$/)).toBeInTheDocument();
+  });
+
+  it('leaves a handle alone instead of completing it as a time', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), 'Ask @mira');
+    await caretToEnd(user);
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+
+  it('keeps the listbox free of the non-option caption', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), 'Call the bank >');
+    await caretToEnd(user);
+    const listbox = await screen.findByRole('listbox');
+    expect(within(listbox).queryByText(/Files this capture/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('Composer capture bar', () => {
+  it('leads with the destination and drops the legend that used to crowd it', () => {
+    render(<Harness />);
+    expect(screen.getByRole('button', { name: 'Destination: Today' })).toBeInTheDocument();
+    expect(screen.queryByText(/^Shortcuts:/)).not.toBeInTheDocument();
+  });
+
+  it('shows the destination name in full rather than only its arrow', () => {
+    render(<Harness chipOverride={{ kind: 'collection', id: 'reading' }} />);
+    const chip = screen.getByRole('button', { name: 'Destination: Reading' });
+    // The arrow is a separate, decorative element so a long name can never
+    // truncate it away and leave the chip reading as a bare `→ …`.
+    expect(chip).toHaveTextContent('Reading');
+    expect(within(chip).getByText('→')).toHaveAttribute('aria-hidden', 'true');
+  });
 });
 
 describe('Composer escape ladder', () => {
