@@ -32,6 +32,8 @@ const paths = {
     'M10.3 3.7 2.2 18a2 2 0 0 0 1.8 3h16a2 2 0 0 0 1.8-3L13.7 3.7a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01',
   refresh: 'M20 11a8.1 8.1 0 1 0-2.4 5.7M20 4v7h-7',
   download: 'M12 3v12M7 10l5 5 5-5M5 21h14',
+  clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2',
+  hash: 'M4 9h16M4 15h16M10 3 8 21M16 3l-2 18',
 } as const;
 
 export type IconName = keyof typeof paths;

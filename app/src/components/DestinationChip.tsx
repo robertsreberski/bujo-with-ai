@@ -25,7 +25,8 @@ const FILTER_THRESHOLD = 6;
  * flex item of a row with a definite width, so `65%` has something real to
  * resolve against. A percentage cap on the chip resolved against its own
  * shrink-to-fit parent instead, which collapsed it to the bare touch target and
- * left the label reading `→ …` in every state.
+ * left every state reading as a kind icon, an ellipsis, and a chevron — the
+ * name, the one thing the chip exists to say, squeezed out entirely.
  */
 const WRAP = 'inline-flex max-w-[65%] min-w-0 flex-none items-center';
 
@@ -107,10 +108,13 @@ export function DestinationChip({
             type="button"
             aria-label={`Destination: ${label}`}
           >
-            {/* Its own element so the arrow survives a truncation the name causes. */}
-            <span className="flex-none opacity-60" aria-hidden="true">
-              →
-            </span>
+            {/* Its own element so the kind mark survives a truncation the name
+                causes; a day and a collection are the two things it can be. */}
+            <Icon
+              name={resolved.destination.kind === 'date' ? 'calendar' : 'folder'}
+              size={12}
+              className="flex-none opacity-60"
+            />
             <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{label}</span>
             {resolved.createsCollection ? (
               <Badge variant="count" className="flex-none px-1.5">

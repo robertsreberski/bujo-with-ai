@@ -13,6 +13,12 @@ import type { JournalRoute } from '../routes/useJournalRoute';
 
 const TODAY = '2026-07-31';
 
+/** Copied from Icon.tsx, the way release-evidence pins the sparkle path. */
+const CALENDAR_PATH =
+  'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z';
+const FOLDER_PATH =
+  'M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.9-1.3A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z';
+
 const collection = (id: string, name: string): JournalCollection => ({
   id,
   name,
@@ -149,6 +155,61 @@ describe('Composer', () => {
     await user.keyboard('~');
     expect(screen.getByRole('button', { name: 'Entry type: Mood' })).toBeInTheDocument();
     expect(screen.queryByRole('menuitemradio')).not.toBeInTheDocument();
+  });
+
+  it('takes back the time the draft carries without dropping the keyboard', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), 'Standup @9:15');
+    expect(screen.getByText('at 09:15')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove time at 09:15' }));
+    expect(input()).toHaveValue('Standup');
+    // The chip is a pointer surface on the composer, so the caret comes back to
+    // the field it edited — on iOS that is the difference between a keyboard
+    // that stays up and one that collapses the sheet.
+    expect(input()).toHaveFocus();
+    expect(screen.queryByText(/^at /)).not.toBeInTheDocument();
+  });
+
+  it('strips every occurrence of the tag behind one chip', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), 'Ship it #work and #work again');
+    // The parser dedupes, so two typed tokens still show one chip to dismiss.
+    expect(screen.getAllByRole('button', { name: 'Remove tag #work' })).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: 'Remove tag #work' }));
+    expect(input()).toHaveValue('Ship it and again');
+    expect(input()).toHaveFocus();
+  });
+
+  it('lands the caret at the end of the shortened draft, opening no panel', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), 'Ship it #design plan');
+    await caretToEnd(user);
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove tag #design' }));
+    expect(input()).toHaveValue('Ship it plan');
+    expect(input()).toHaveFocus();
+    // The removal reconciles the caret through the same path an accepted
+    // completion uses, so the suggestion machinery reads an offset the input
+    // actually has — and nothing pops open behind the owner's back.
+    expect((input() as HTMLInputElement).selectionStart).toBe('Ship it plan'.length);
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+
+  it('leaves the type chip inert — it restates the control, it cannot be dismissed', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), '- A useful detail');
+    const typeChip = screen
+      .getAllByText('Note')
+      .find((node) => node.classList.contains('parse-chip'));
+    expect(typeChip?.tagName).toBe('SPAN');
+    expect(screen.queryByRole('button', { name: /^Remove/ })).not.toBeInTheDocument();
   });
 
   it('explains a type the leading signifier already decided', async () => {
@@ -414,13 +475,21 @@ describe('Composer capture bar', () => {
     expect(screen.queryByText(/^Shortcuts:/)).not.toBeInTheDocument();
   });
 
-  it('shows the destination name in full rather than only its arrow', () => {
+  it('shows the destination name in full, led by the icon for its kind', () => {
     render(<Harness chipOverride={{ kind: 'collection', id: 'reading' }} />);
     const chip = screen.getByRole('button', { name: 'Destination: Reading' });
-    // The arrow is a separate, decorative element so a long name can never
-    // truncate it away and leave the chip reading as a bare `→ …`.
+    // The kind mark is a separate, decorative element so a long name can never
+    // truncate it away and leave the chip reading as a bare `…`.
     expect(chip).toHaveTextContent('Reading');
-    expect(within(chip).getByText('→')).toHaveAttribute('aria-hidden', 'true');
+    const lead = chip.querySelector('svg');
+    expect(lead).toHaveAttribute('aria-hidden', 'true');
+    // A collection is a folder; a day is a calendar. Never the same mark.
+    expect(lead?.querySelector('path')).toHaveAttribute('d', FOLDER_PATH);
+
+    cleanup();
+    render(<Harness />);
+    const today = screen.getByRole('button', { name: 'Destination: Today' });
+    expect(today.querySelector('path')).toHaveAttribute('d', CALENDAR_PATH);
   });
 });
 

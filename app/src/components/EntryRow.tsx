@@ -44,7 +44,13 @@ export function EntryRow({
   const actionable = isActionable(entry);
   const done = entry.state === 'done';
   const toggleable = actionable && (entry.state === 'open' || done);
-  const dimmed = done || entry.state === 'cancelled' || entry.state === 'migrated';
+  // `migrated` and `scheduled` are exact peers: both are the shell a copy left
+  // behind, so both recede the same way.
+  const dimmed =
+    done ||
+    entry.state === 'cancelled' ||
+    entry.state === 'migrated' ||
+    entry.state === 'scheduled';
   const struck = done || entry.state === 'cancelled';
   const displayState = stateLabel(entry);
   const showType = preferences.showTypeBadges && entry.type !== 'task';

@@ -71,7 +71,11 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
   const primaryMinimum = isPhone ? 40 : testInfo.project.name === 'chromium-desktop' ? 34 : 30;
   const composerMinimum = isPhone ? 40 : 36;
 
+  // Scoped to the nav landmark, not the whole page: the composer's destination
+  // chip legitimately reads `Today` too, and it is on the control ramp, not the
+  // nav one.
   const visiblePrimaryButtons = page
+    .getByRole('navigation')
     .getByRole('button')
     .filter({ hasText: /^(Today|Month|Index|Review)\s*(\d+\+?)?$/ });
   await expect(visiblePrimaryButtons).toHaveCount(4);

@@ -112,7 +112,9 @@ describe('buildEntryActions', () => {
     expect(label(null)).toBe('To monthly log');
     expect(label('2026-07')).toBe('To monthly log');
     expect(label('2026-08')).toBe('To August log');
-    expect(label('2025-12')).toBe('To December log');
+    // Across a year boundary the month alone is ambiguous, so the year comes too.
+    expect(label('2025-12')).toBe('To December 2025 log');
+    expect(label('2027-01')).toBe('To January 2027 log');
   });
 
   it('targets the browsed month, falling back to the current one', () => {

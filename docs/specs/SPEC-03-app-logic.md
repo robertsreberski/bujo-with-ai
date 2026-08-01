@@ -128,8 +128,20 @@ Present on every screen, docked to the bottom (keyboard behavior: SPEC-05 §4).
   legible instead of scrolling sideways out of view. A `>` shift has no chip
   of its own; it is reported by the destination chip, which reads `Today`,
   `Tomorrow`, or the short date the shift resolved to (`Aug 7`) — the same
-  fact stated once. **[amended]**
-- LOG-7a **[ext]** Removing a token behind a chip edits the draft rather
+  fact stated once. Each **fact** chip carries a leading kind icon (the
+  entry-type glyph, a clock, a `#`) so the row reads at a glance; a tag chip's
+  `#` is that icon, so its label is the bare tag and the character is never
+  doubled. The error chip is the exception and carries none: it replaces the
+  facts rather than joining them, and its own colour already marks it.
+  **[amended]**
+- LOG-7a **[ext]** The removable preview chips **are** the removal surface:
+  the whole `at HH:MM` chip and the whole tag chip are buttons named
+  `Remove time at <HH:MM>` / `Remove tag #<tag>` — each name contains the label
+  the chip shows, per WCAG 2.5.3 — wearing a trailing `×` as the
+  affordance. They swallow the pointer-down and hand focus straight back to
+  the input, so a removal never blurs the field or collapses the on-screen
+  keyboard. The type chip stays inert — it restates the type control, which
+  is where the type is changed. Removing a token behind a chip edits the draft rather
   than the parse result, using regex sources exported by the parser so the
   editor can never drift from it. A removal splices the single occurrence
   the parser consumed and heals the seam to one space; `tag` is the
@@ -160,7 +172,8 @@ resolved on every keystroke and shown as a chip left of the preview row.
   answers the composer's whole question — where does this land? — so it is
   control-sized (metrics: SPEC-04 §8 row 14) rather than on the smaller ramp
   the preview chips use, and it wears a border and a disclosure chevron so it
-  reads as openable. It shows a decorative `→` and the label, under the
+  reads as openable. It shows a decorative kind icon — a calendar for a day, a
+  folder for a collection, the same idiom the preview chips use — and the label, under the
   accessible name `Destination: <label>`, and carries a `New` badge when
   filing there would mint a collection. Its wrapper is width-capped so a long
   collection name ellipses inside the chip instead of pushing the row wider

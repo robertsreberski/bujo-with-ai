@@ -116,10 +116,35 @@ test('the sheet names the month it would file into on the month spread', async (
   await openJournal(page);
   test.skip(!(await isCoarsePointer(page)), 'The sheet is the coarse-pointer surface.');
 
+  /*
+   * Off the current month the schedule action names its target rather than
+   * saying "monthly log", which would file somewhere the owner is not looking.
+   * The expected name is computed from the two spread headings — both read
+   * before the modal sheet takes the background out of the accessibility tree —
+   * rather than pattern-matched, because the label mirrors `monthName`: bare
+   * inside the current year, year-qualified across a boundary. Every January,
+   * where "Previous month" lands in the year before, fails a `/^To \S+ log$/`.
+   * The years come from the app's own headings, never the runner's clock.
+   */
+  const monthYear = (name: string): [string, string] => {
+    const parsed = /^(\S+) (\d{4}) monthly log$/.exec(name);
+    expect(parsed, `the month spread names its month and year: "${name}"`).not.toBeNull();
+    return [parsed?.[1] ?? '', parsed?.[2] ?? ''];
+  };
+
   await page.getByRole('button', { name: /^Month/ }).click();
-  await page.getByRole('button', { name: 'Previous month' }).click();
   const spread = page.getByRole('region', { name: /monthly log$/ });
   await expect(spread).toBeVisible();
+  const currentName = (await spread.getAttribute('aria-label')) ?? '';
+  await page.getByRole('button', { name: 'Previous month' }).click();
+  await expect(spread).not.toHaveAttribute('aria-label', currentName);
+
+  const [browsedMonth, browsedYear] = monthYear((await spread.getAttribute('aria-label')) ?? '');
+  const [, currentYear] = monthYear(currentName);
+  const scheduleName =
+    browsedYear === currentYear
+      ? `To ${browsedMonth} log`
+      : `To ${browsedMonth} ${browsedYear} log`;
 
   // The composer's screen default on this spread is the browsed month's log.
   const text = uniqueText('Previous month item');
@@ -129,9 +154,7 @@ test('the sheet names the month it would file into on the month spread', async (
   await row.click();
   const sheet = page.locator('.entry-sheet');
   await expect(sheet).toBeVisible();
-  // Off the current month the schedule action names its target rather than
-  // saying "monthly log", which would file somewhere the owner is not looking.
-  await expect(sheet.getByRole('button', { name: /^To \S+ log$/ })).toBeVisible();
+  await expect(sheet.getByRole('button', { name: scheduleName })).toBeVisible();
   await expect(sheet.getByRole('button', { name: 'To monthly log' })).toHaveCount(0);
 });
 

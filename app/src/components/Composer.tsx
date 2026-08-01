@@ -14,10 +14,11 @@ import { CaptureHelp } from './CaptureHelp';
 import { ComposerSuggestions } from './ComposerSuggestions';
 import { DestinationChip } from './DestinationChip';
 import { Icon } from './Icon';
-import { parseDraft, removeCaptureToken } from './capture';
+import { parseDraft, removeCaptureToken, type CaptureTokenKind } from './capture';
 import { resolveDestination, sameDestination, type Destination } from './destination';
 import { entryIcon } from './entry-icons';
 import { SIGNIFIER_BY_TYPE, typeForSignifier } from './signifiers';
+import { Chip, ChipButton } from './ui/chip';
 import { useComposerSuggestions } from '../hooks/use-composer-suggestions';
 import { cn } from '../lib/utils';
 import type { JournalRoute } from '../routes/useJournalRoute';
@@ -28,10 +29,6 @@ import {
   type JournalCollection,
   type ParsedDraft,
 } from './types';
-
-/** Preview chip shared by the parse result and its error variant. */
-const CHIP =
-  'parse-chip inline-flex h-6 flex-none items-center rounded-sm bg-bg-line px-2 text-2xs font-medium text-fg-mid';
 
 /*
  * `text-(length:--text-tag)`: tailwind-merge reads the bare `text-tag` size as a
@@ -272,6 +269,26 @@ export function Composer({
 
   const keepComposerFocus = (event: PointerEvent) => event.preventDefault();
 
+  /*
+   * Dismissing a fact chip edits the draft the owner actually typed, then hands
+   * the caret straight back — the pointer-down was swallowed, so the input never
+   * blurred and the iOS keyboard never dropped.
+   */
+  const removeToken = (kind: CaptureTokenKind, value: string | null) => {
+    const next = removeCaptureToken(draft, kind, value ?? undefined);
+    /*
+     * Arm the caret before the shorter draft lands: the `[draft]` layout effect
+     * is the single path that moves the DOM selection and the `caret` state
+     * together, and an unreconciled `caret` leaves the suggestion machinery
+     * reading the new draft at an offset the input no longer has. Skipped when
+     * the removal was a no-op, so no effect can consume a stale armed ref later
+     * (the same hazard `acceptSuggestion` guards).
+     */
+    if (next !== draft) pendingCaretRef.current = next.length;
+    onDraftChange(next);
+    inputRef.current?.focus();
+  };
+
   const handleMenuKey = (event: KeyboardEvent<HTMLDivElement>) => {
     // A bare signifier keystroke is the shortcut; Ctrl+O is the browser's.
     const bareKey = event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey;
@@ -332,22 +349,40 @@ export function Composer({
               aria-live="polite"
             >
               {parsed.error ? (
-                <span
-                  className={cn(
-                    CHIP,
-                    'parse-chip--error border border-danger-border bg-danger-bg text-danger',
-                  )}
-                >
-                  {parsed.error}
-                </span>
+                <Chip variant="error">{parsed.error}</Chip>
               ) : draft ? (
                 <>
-                  <span className={CHIP}>{TYPE_LABELS[parsed.type]}</span>
-                  {parsed.time ? <span className={CHIP}>at {parsed.time}</span> : null}
+                  <Chip>
+                    <Icon name={entryIcon[parsed.type]} size={11} />
+                    {TYPE_LABELS[parsed.type]}
+                  </Chip>
+                  {parsed.time ? (
+                    <ChipButton
+                      // WCAG 2.5.3: the visible `at HH:MM` is a substring of the
+                      // name, so a voice command can say what the chip reads.
+                      aria-label={`Remove time at ${parsed.time}`}
+                      onPointerDown={keepComposerFocus}
+                      onClick={() => removeToken('time', parsed.time)}
+                    >
+                      <Icon name="clock" size={11} />
+                      {/* Its own element so the chip's text is exactly the fact:
+                          the icons contribute nothing to textContent. */}
+                      <span>at {parsed.time}</span>
+                      <Icon name="close" size={10} className="opacity-60" />
+                    </ChipButton>
+                  ) : null}
                   {parsed.tags.map((tag) => (
-                    <span className={CHIP} key={tag}>
-                      #{tag}
-                    </span>
+                    <ChipButton
+                      aria-label={`Remove tag #${tag}`}
+                      key={tag}
+                      onPointerDown={keepComposerFocus}
+                      onClick={() => removeToken('tag', tag)}
+                    >
+                      {/* The `#` is the icon, so the label stays the bare tag. */}
+                      <Icon name="hash" size={11} />
+                      <span>{tag}</span>
+                      <Icon name="close" size={10} className="opacity-60" />
+                    </ChipButton>
                   ))}
                 </>
               ) : null}

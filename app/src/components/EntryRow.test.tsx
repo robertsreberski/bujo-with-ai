@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { EntryRow } from './EntryRow';
@@ -61,5 +61,22 @@ describe('EntryRow', () => {
     expect(onOpen).toHaveBeenCalledWith(migrated);
     expect(onToggle).not.toHaveBeenCalled();
     expect(container.querySelector('.entry-row')).not.toHaveClass('entry-row--struck');
+  });
+
+  it('dims both tombstone states, and neither is struck through', () => {
+    for (const state of ['migrated', 'scheduled'] as const) {
+      const { container } = render(
+        <EntryRow
+          entry={{ ...entry, state, migrations: 1 }}
+          preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
+          onToggle={vi.fn()}
+          onOpen={vi.fn()}
+        />,
+      );
+      const row = container.querySelector('.entry-row');
+      expect(row, state).toHaveClass('entry-row--dimmed');
+      expect(row, state).not.toHaveClass('entry-row--struck');
+      cleanup();
+    }
   });
 });

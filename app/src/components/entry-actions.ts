@@ -52,8 +52,15 @@ const ACTION_ORDER: EntryActionId[] = [
 /** Monthly logs are the server-owned pseudo-collection `month:YYYY-MM` (DM-4). */
 const MONTH_PREFIX = 'month:';
 
-const monthName = (month: string): string =>
-  new Intl.DateTimeFormat(undefined, { month: 'long' }).format(fromDateKey(`${month}-01`));
+/*
+ * As terse as it can still be read: bare inside the current year, and
+ * year-qualified across a boundary, where a lone "To December log" hides which
+ * December the copy would land in.
+ */
+const monthName = (month: string, today: string): string =>
+  month.slice(0, 4) === today.slice(0, 4)
+    ? new Intl.DateTimeFormat(undefined, { month: 'long' }).format(fromDateKey(`${month}-01`))
+    : formatMonth(month);
 
 /**
  * How a monthly-log filing is named wherever one is shown — `month:2026-07` →
@@ -73,7 +80,7 @@ export const scheduleTargetMonth = (context: EntryActionContext): string =>
   context.contextMonth ?? context.today.slice(0, 7);
 
 const scheduleLabel = (target: string, today: string): string =>
-  target === today.slice(0, 7) ? 'To monthly log' : `To ${monthName(target)} log`;
+  target === today.slice(0, 7) ? 'To monthly log' : `To ${monthName(target, today)} log`;
 
 export function buildEntryActions(entry: JournalEntry, context: EntryActionContext): EntryAction[] {
   const actionable = isActionable(entry);

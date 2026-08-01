@@ -679,7 +679,10 @@ test('tag autocomplete completes from the mirror and the accepted tag survives s
   await expect(panel).toHaveCount(0);
   await expect(page.getByRole('combobox', { name: 'Add an entry' })).toHaveCount(1);
   await expect(input).toHaveAttribute('aria-expanded', 'false');
-  await expect(page.locator('.parse-chip').filter({ hasText: `#${tag}` })).toHaveCount(1);
+  // The chip wears a `#` icon rather than the character, so its text is the bare
+  // tag; the `#` survives in the removal control's accessible name.
+  await expect(page.locator('.parse-chip').filter({ hasText: tag })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: `Remove tag #${tag}` })).toBeVisible();
   await expect(page.getByText(text, { exact: true })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Add entry' }).click();
