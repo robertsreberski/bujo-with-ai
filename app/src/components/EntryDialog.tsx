@@ -6,7 +6,12 @@ import { Icon } from './Icon';
 import { Button, type ButtonVariant } from './ui/button';
 import { NativeSelect } from './ui/native-select';
 import { ACTION_GRID } from './ui/dialog-classes';
-import { buildEntryActions, type EntryAction, type EntryActionId } from './entry-actions';
+import {
+  buildEntryActions,
+  monthCollectionLabel,
+  type EntryAction,
+  type EntryActionId,
+} from './entry-actions';
 import { isActionable, type EntryPatch, type JournalCollection, type JournalEntry } from './types';
 
 interface EntryDialogProps {
@@ -61,6 +66,12 @@ export function EntryDialog({
     () => buildEntryActions(entry, { contextMonth, today }).filter((action) => action.available),
     [contextMonth, entry, today],
   );
+  // The select names the entry's real filing, monthly logs included, so it can
+  // never claim "Daily log" for something the daily log does not hold. A
+  // monthly log is not a fileable destination, so its option is inert: it shows
+  // where the entry is, and picking anything else is an explicit move out.
+  const filedValue = entry.collection ?? '';
+  const filedMonth = monthCollectionLabel(entry.collection);
 
   const activate = (id: EntryActionId) => {
     switch (id) {
@@ -137,7 +148,7 @@ export function EntryDialog({
                   <Icon name={action.icon} size={14} />
                   <NativeSelect
                     className="h-8 min-w-0 flex-1 rounded-none border-0 bg-transparent pr-2 pl-0 text-sm"
-                    value={entry.collection?.startsWith('month:') ? '' : (entry.collection ?? '')}
+                    value={filedValue}
                     aria-label={action.label}
                     onChange={(event) => {
                       onUpdate(
@@ -148,6 +159,11 @@ export function EntryDialog({
                       onClose();
                     }}
                   >
+                    {filedMonth ? (
+                      <option value={filedValue} disabled>
+                        {filedMonth}
+                      </option>
+                    ) : null}
                     <option value="">Daily log</option>
                     {visibleCollections.map((collection) => (
                       <option value={collection.id} key={collection.id}>

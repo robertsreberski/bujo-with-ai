@@ -81,16 +81,34 @@ describe('EntryDialog', () => {
     );
   });
 
-  it.each(['migrated', 'cancelled'] as const)(
-    'does not offer unsupported actions for a %s task',
-    (state) => {
-      renderEntry({ ...entry, state, migrations: state === 'migrated' ? 2 : 0 });
-      expect(screen.queryByRole('button', { name: 'Mark done' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Move to today' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'To monthly log' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Drop' })).not.toBeInTheDocument();
-    },
-  );
+  // A tombstone has nothing left to act on, so removing the shell is the one
+  // way out of it; a dropped task keeps no Delete, because the drop is the record.
+  it.each([
+    ['migrated', true],
+    ['scheduled', true],
+    ['cancelled', false],
+  ] as const)('leaves a %s task no action but edit, and delete: %s', (state, deletable) => {
+    renderEntry({ ...entry, state, migrations: state === 'migrated' ? 2 : 0 });
+    expect(screen.queryByRole('button', { name: 'Mark done' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Move to today' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'To monthly log' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Drop' })).not.toBeInTheDocument();
+    const remove = screen.queryByRole('button', { name: 'Delete' });
+    if (deletable) expect(remove).toBeInTheDocument();
+    else expect(remove).not.toBeInTheDocument();
+  });
+
+  it('confirms before deleting the tombstone left in the daily log', async () => {
+    const user = userEvent.setup();
+    const tombstone = { ...entry, state: 'scheduled' as const, collection: null };
+    const { onDelete, onClose } = renderEntry(tombstone);
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(onDelete).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Delete entry' }));
+    expect(onDelete).toHaveBeenCalledWith(tombstone);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 
   it('keeps the non-actionable move, filing, and delete actions', () => {
     renderEntry({ ...entry, type: 'note', state: 'logged' });
@@ -146,6 +164,35 @@ describe('EntryDialog', () => {
     const filing = screen.queryByRole('combobox', { name: 'File in collection' });
     if (fileable) expect(filing).toBeInTheDocument();
     else expect(filing).not.toBeInTheDocument();
+  });
+
+  it('shows a monthly-log filing honestly, as an inert option it can move out of', async () => {
+    const user = userEvent.setup();
+    const filed = { ...entry, collection: 'month:2026-07' };
+    const { onUpdate } = renderEntry(filed, { collections: [atlas] });
+
+    const filing = screen.getByRole<HTMLSelectElement>('combobox', { name: 'File in collection' });
+    expect(filing.value).toBe('month:2026-07');
+    expect(screen.getByRole('option', { name: 'Monthly log — July 2026' })).toBeDisabled();
+
+    await user.selectOptions(filing, '');
+    expect(onUpdate).toHaveBeenCalledWith(filed, { collection: null }, 'Entry filed');
+  });
+
+  it('leaves the filing control month-free for an entry outside a monthly log', () => {
+    renderEntry({ ...entry, collection: 'project-atlas' }, { collections: [atlas] });
+    const filing = screen.getByRole<HTMLSelectElement>('combobox', { name: 'File in collection' });
+    expect(filing.value).toBe('project-atlas');
+    expect(screen.queryByRole('option', { name: /Monthly log/ })).not.toBeInTheDocument();
+  });
+
+  it('inerts scheduling a task already sitting in the target month’s log', () => {
+    renderEntry({ ...entry, collection: 'month:2026-07' });
+    expect(screen.getByRole('button', { name: 'To monthly log' })).toBeDisabled();
+
+    cleanup();
+    renderEntry({ ...entry, collection: 'month:2026-08' });
+    expect(screen.getByRole('button', { name: 'To monthly log' })).toBeEnabled();
   });
 
   it('names the schedule action after the month the view is showing', async () => {

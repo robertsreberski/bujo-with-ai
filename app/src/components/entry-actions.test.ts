@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildEntryActions, scheduleTargetMonth, type EntryActionId } from './entry-actions';
+import {
+  buildEntryActions,
+  monthCollectionLabel,
+  scheduleTargetMonth,
+  type EntryActionId,
+} from './entry-actions';
 import { ENTRY_TYPES, type EntryState, type EntryType, type JournalEntry } from './types';
 
 const TODAY = '2026-07-31';
@@ -39,9 +44,10 @@ const actionable = (state: EntryState): EntryActionId[] => {
     case 'logged':
     case 'cancelled':
       return ['edit', 'file-collection'];
+    // Tombstones: nothing left to act on but removing the shell itself.
     case 'migrated':
     case 'scheduled':
-      return ['edit'];
+      return ['edit', 'delete'];
   }
 };
 
@@ -112,6 +118,42 @@ describe('buildEntryActions', () => {
   it('targets the browsed month, falling back to the current one', () => {
     expect(scheduleTargetMonth({ contextMonth: null, today: TODAY })).toBe('2026-07');
     expect(scheduleTargetMonth({ contextMonth: '2026-09', today: TODAY })).toBe('2026-09');
+  });
+
+  it('inerts scheduling a task that already sits in the target month’s log', () => {
+    const disabled = (collection: string | null, contextMonth: string | null = null) =>
+      buildEntryActions(makeEntry({ collection }), { contextMonth, today: TODAY }).find(
+        (action) => action.id === 'schedule-month',
+      )?.disabled;
+    // Fallback target: the current month.
+    expect(disabled('month:2026-07')).toBe(true);
+    expect(disabled('month:2026-08')).toBe(false);
+    // Browsed target: the month the view is showing.
+    expect(disabled('month:2026-09', '2026-09')).toBe(true);
+    expect(disabled('month:2026-07', '2026-09')).toBe(false);
+    // Everything else stays schedulable.
+    expect(disabled('project-atlas')).toBe(false);
+    expect(disabled(null)).toBe(false);
+  });
+
+  it('names a monthly-log filing after its month, and only a monthly one', () => {
+    expect(monthCollectionLabel('month:2026-07')).toBe('Monthly log — July 2026');
+    expect(monthCollectionLabel('month:2025-12')).toBe('Monthly log — December 2025');
+    expect(monthCollectionLabel('project-atlas')).toBeNull();
+    expect(monthCollectionLabel(null)).toBeNull();
+  });
+
+  it('leaves a tombstone of any type deletable, and a dropped task not', () => {
+    const deletable = (entry: JournalEntry) =>
+      buildEntryActions(entry, { contextMonth: null, today: TODAY }).find(
+        (action) => action.id === 'delete',
+      )?.available;
+    expect(deletable(makeEntry({ state: 'scheduled' }))).toBe(true);
+    expect(deletable(makeEntry({ state: 'migrated' }))).toBe(true);
+    expect(deletable(makeEntry({ type: 'habit', state: 'scheduled' }))).toBe(true);
+    // The drop is the record a cancelled task exists to keep.
+    expect(deletable(makeEntry({ state: 'cancelled' }))).toBe(false);
+    expect(deletable(makeEntry())).toBe(false);
   });
 
   it('offers filing to every type still in play, and to none of the forwarded ones', () => {

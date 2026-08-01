@@ -3,6 +3,7 @@ import { AI_PANEL, AI_PANEL_COPY, AI_PANEL_HEADER } from './ui/dialog-classes';
 import { cn } from '../lib/utils';
 import { entryIcon } from './entry-icons';
 import { formatLongDate } from './dates';
+import { monthCollectionLabel } from './entry-actions';
 import { TYPE_LABELS, type JournalCollection, type JournalEntry } from './types';
 
 interface EntryDetailFieldsProps {
@@ -57,10 +58,9 @@ export function EntryDetailFields({ entry, collections }: EntryDetailFieldsProps
         <div className={DETAIL_ROW}>
           <span className={DETAIL_LABEL}>Filed in</span>
           <strong className={DETAIL_VALUE}>
-            {entry.collection?.startsWith('month:')
-              ? 'Monthly log'
-              : (collections.find((collection) => collection.id === entry.collection)?.name ??
-                'Daily log')}
+            {monthCollectionLabel(entry.collection) ??
+              collections.find((collection) => collection.id === entry.collection)?.name ??
+              'Daily log'}
           </strong>
         </div>
         <div className={DETAIL_ROW}>

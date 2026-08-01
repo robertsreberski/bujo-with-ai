@@ -1,4 +1,4 @@
-import { fromDateKey } from './dates';
+import { formatMonth, fromDateKey } from './dates';
 import type { IconName } from './Icon';
 import { isActionable, type JournalEntry } from './types';
 
@@ -49,22 +49,39 @@ const ACTION_ORDER: EntryActionId[] = [
   'delete',
 ];
 
+/** Monthly logs are the server-owned pseudo-collection `month:YYYY-MM` (DM-4). */
+const MONTH_PREFIX = 'month:';
+
 const monthName = (month: string): string =>
   new Intl.DateTimeFormat(undefined, { month: 'long' }).format(fromDateKey(`${month}-01`));
+
+/**
+ * How a monthly-log filing is named wherever one is shown — `month:2026-07` →
+ * `Monthly log — July 2026` — and null for a filing that is not a monthly log.
+ *
+ * A monthly log is never in the fileable-collections list, so each surface
+ * would otherwise have to invent its own name for it; naming it once keeps the
+ * dialog's select, the sheet's picker, and the read-only fact row in step.
+ */
+export const monthCollectionLabel = (collection: string | null): string | null =>
+  collection !== null && collection.startsWith(MONTH_PREFIX)
+    ? `Monthly log — ${formatMonth(collection.slice(MONTH_PREFIX.length))}`
+    : null;
 
 /** The month `schedule-month` files into: the browsed month, else the current one. */
 export const scheduleTargetMonth = (context: EntryActionContext): string =>
   context.contextMonth ?? context.today.slice(0, 7);
 
-const scheduleLabel = (context: EntryActionContext): string => {
-  const target = scheduleTargetMonth(context);
-  return target === context.today.slice(0, 7) ? 'To monthly log' : `To ${monthName(target)} log`;
-};
+const scheduleLabel = (target: string, today: string): string =>
+  target === today.slice(0, 7) ? 'To monthly log' : `To ${monthName(target)} log`;
 
 export function buildEntryActions(entry: JournalEntry, context: EntryActionContext): EntryAction[] {
   const actionable = isActionable(entry);
   const open = entry.state === 'open';
   const done = entry.state === 'done';
+  // The shell a migration or a scheduling leaves behind, pointing at its copy.
+  const tombstone = entry.state === 'migrated' || entry.state === 'scheduled';
+  const scheduleTarget = scheduleTargetMonth(context);
   const byId: Record<EntryActionId, EntryAction> = {
     edit: { id: 'edit', label: 'Edit', icon: 'edit', available: true },
     'toggle-done': {
@@ -85,18 +102,21 @@ export function buildEntryActions(entry: JournalEntry, context: EntryActionConte
     },
     'schedule-month': {
       id: 'schedule-month',
-      label: scheduleLabel(context),
+      label: scheduleLabel(scheduleTarget, context.today),
       icon: 'calendar',
       available: actionable && open,
+      // Scheduling files a *copy* into the target month. A task already sitting
+      // in that month's log would get a second one beside it.
+      disabled: entry.collection === `${MONTH_PREFIX}${scheduleTarget}`,
     },
     // Filing is a property of the entry, not of its type: anything still in
-    // play can be moved into a collection. Migrated and scheduled entries are
-    // tombstones pointing at their copy, so they stay where they are.
+    // play can be moved into a collection. Tombstones point at their copy, so
+    // they stay where they are.
     'file-collection': {
       id: 'file-collection',
       label: 'File in collection',
       icon: 'folder',
-      available: entry.state !== 'migrated' && entry.state !== 'scheduled',
+      available: !tombstone,
     },
     drop: {
       id: 'drop',
@@ -106,12 +126,15 @@ export function buildEntryActions(entry: JournalEntry, context: EntryActionConte
       destructive: true,
     },
     // Tasks and habits are dropped rather than deleted; the other types have no
-    // "dropped" state, so deletion is their only way out.
+    // "dropped" state, so deletion is their only way out. The exception is a
+    // tombstone of any type: nothing else can be done to one, so leaving it
+    // undeletable would strand it in the log forever. A cancelled task keeps
+    // no delete on purpose — the drop *is* the record.
     delete: {
       id: 'delete',
       label: 'Delete',
       icon: 'trash',
-      available: !actionable,
+      available: !actionable || tombstone,
       destructive: true,
     },
   };

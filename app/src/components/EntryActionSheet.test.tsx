@@ -105,16 +105,32 @@ describe('EntryActionSheet', () => {
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
   });
 
-  it.each(['migrated', 'cancelled'] as const)(
-    'does not offer unsupported actions for a %s task',
-    (state) => {
-      renderSheet({ ...entry, state, migrations: state === 'migrated' ? 2 : 0 });
-      expect(screen.queryByRole('button', { name: 'Mark done' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Move to today' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'To monthly log' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: 'Drop' })).not.toBeInTheDocument();
-    },
-  );
+  // The same tombstone rule the dialog applies: a migrated or scheduled shell
+  // can only be removed, a dropped task keeps its record.
+  it.each([
+    ['migrated', true],
+    ['scheduled', true],
+    ['cancelled', false],
+  ] as const)('leaves a %s task no action but edit, and delete: %s', (state, deletable) => {
+    renderSheet({ ...entry, state, migrations: state === 'migrated' ? 2 : 0 });
+    expect(screen.queryByRole('button', { name: 'Mark done' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Move to today' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'To monthly log' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Drop' })).not.toBeInTheDocument();
+    const remove = screen.queryByRole('button', { name: 'Delete' });
+    if (deletable) expect(remove).toBeInTheDocument();
+    else expect(remove).not.toBeInTheDocument();
+  });
+
+  it('deletes the tombstone left behind in the daily log', async () => {
+    const user = userEvent.setup();
+    const tombstone = { ...entry, state: 'scheduled' as const };
+    const { onDelete } = renderSheet(tombstone);
+
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await user.click(screen.getByRole('button', { name: 'Delete entry' }));
+    expect(onDelete).toHaveBeenCalledWith(tombstone);
+  });
 
   it('fires the state actions and closes, exactly as the dialog does', async () => {
     const user = userEvent.setup();
@@ -176,6 +192,31 @@ describe('EntryActionSheet', () => {
     await user.click(screen.getByRole('button', { name: 'Project Atlas' }));
     expect(onUpdate).toHaveBeenCalledWith(entry, { collection: 'project-atlas' }, 'Entry filed');
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('names the monthly log it sits in, and marks it as the picked row', async () => {
+    const user = userEvent.setup();
+    const filed = { ...entry, collection: 'month:2026-07' };
+    renderSheet(filed, { collections: [atlas] });
+
+    const filing = screen.getByRole('button', { name: /File in collection/ });
+    expect(filing).toHaveTextContent('Monthly log — July 2026');
+
+    await user.click(filing);
+    const current = screen.getByRole('button', { name: /Monthly log — July 2026/ });
+    expect(current).toBeDisabled();
+    // Every other row is still an explicit move out of the month.
+    expect(screen.getByRole('button', { name: 'Daily log' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Project Atlas' })).toBeEnabled();
+  });
+
+  it('inerts scheduling a task already sitting in the target month’s log', () => {
+    renderSheet({ ...entry, collection: 'month:2026-07' });
+    expect(screen.getByRole('button', { name: 'To monthly log' })).toBeDisabled();
+
+    cleanup();
+    renderSheet({ ...entry, collection: 'month:2026-08' });
+    expect(screen.getByRole('button', { name: 'To monthly log' })).toBeEnabled();
   });
 
   it('returns from a face to the action list without touching the entry', async () => {

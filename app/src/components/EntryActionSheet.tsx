@@ -5,7 +5,7 @@ import { EntryEditForm } from './EntryEditForm';
 import { Icon } from './Icon';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { buildEntryActions, type EntryActionId } from './entry-actions';
+import { buildEntryActions, monthCollectionLabel, type EntryActionId } from './entry-actions';
 import { entryIcon } from './entry-icons';
 import { cn } from '../lib/utils';
 import {
@@ -119,10 +119,11 @@ export function EntryActionSheet({
     () => buildEntryActions(entry, { contextMonth, today }).filter((action) => action.available),
     [contextMonth, entry, today],
   );
-  const filedIn = entry.collection?.startsWith('month:')
-    ? 'Monthly log'
-    : (visibleCollections.find((collection) => collection.id === entry.collection)?.name ??
-      'Daily log');
+  const filedMonth = monthCollectionLabel(entry.collection);
+  const filedIn =
+    filedMonth ??
+    visibleCollections.find((collection) => collection.id === entry.collection)?.name ??
+    'Daily log';
 
   // Editing is the one face that wants the keyboard immediately; the others are
   // thumb targets and would only lose height to it.
@@ -287,8 +288,25 @@ export function EntryActionSheet({
 
             {view === 'file' ? (
               <>
+                {/* A monthly log is server-owned, so it is not a destination
+                    the picker offers — but it is where this entry is, and the
+                    picker would otherwise show a checkmark on nothing. */}
+                {filedMonth ? (
+                  <button
+                    className={cn(
+                      PICK_ROW,
+                      'border-t border-bg-line pointer-events-none opacity-50',
+                    )}
+                    type="button"
+                    disabled
+                  >
+                    <Icon name="calendar" size={16} />
+                    <span className="min-w-0 flex-1">{filedMonth}</span>
+                    <Icon name="check" size={15} className="flex-none text-primary" />
+                  </button>
+                ) : null}
                 <button
-                  className={cn(PICK_ROW, 'border-t border-bg-line')}
+                  className={cn(PICK_ROW, !filedMonth && 'border-t border-bg-line')}
                   type="button"
                   onClick={() => file(null)}
                 >
