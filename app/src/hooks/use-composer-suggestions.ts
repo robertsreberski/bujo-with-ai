@@ -16,6 +16,8 @@ interface UseComposerSuggestionsArgs {
   enabled: boolean;
   collections: readonly JournalCollection[];
   tags: readonly TagUsage[];
+  /** Server-synced calendar date; the `>` rows resolve against it, not the clock. */
+  today: string;
   /** Fetched lazily, the first time a `#` token appears. */
   onLoadTags?: (() => void) | undefined;
 }
@@ -43,6 +45,7 @@ export function useComposerSuggestions({
   enabled,
   collections,
   tags,
+  today,
   onLoadTags,
 }: UseComposerSuggestionsArgs): ComposerSuggestionsState {
   const baseId = useId();
@@ -53,7 +56,7 @@ export function useComposerSuggestions({
   const queryKey = query === null ? null : `${query.mode}:${query.start}:${query.query}`;
   // Cheap enough to recompute: both inputs are short, screen-sized lists.
   const rows =
-    query === null ? [] : buildSuggestionRows(query, { collections, tags, now: new Date() });
+    query === null ? [] : buildSuggestionRows(query, { collections, tags, now: new Date(), today });
   const open = queryKey !== null && rows.length > 0 && dismissedKey !== queryKey;
   const activeIndex =
     active !== null && active.key === queryKey ? Math.min(active.index, rows.length - 1) : 0;

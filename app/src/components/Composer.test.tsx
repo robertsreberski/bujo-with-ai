@@ -423,16 +423,35 @@ describe('Composer suggestions', () => {
     await caretToEnd(user);
 
     const listbox = await screen.findByRole('listbox', { name: 'Capture suggestions' });
-    expect(within(listbox).getByRole('option', { name: /Tomorrow/ })).toBeInTheDocument();
-    // The caption teaches what the sigil does; the row alone cannot.
-    expect(screen.getByText(/Files this capture into tomorrow/i)).toBeInTheDocument();
+    const options = within(listbox).getAllByRole('option');
+    expect(options).toHaveLength(6);
+    // Tomorrow keeps row 0: `>` then Enter is the migration the hands know.
+    expect(options[0]).toHaveTextContent(/^Tomorrow/);
+    // The rest of the grammar is now offered rather than only documented.
+    expect(within(listbox).getByRole('option', { name: /Next week/ })).toBeInTheDocument();
+    // TODAY is a Friday, so the days behind tomorrow start on the Sunday.
+    expect(within(listbox).getByRole('option', { name: /Sunday/ })).toBeInTheDocument();
+    // The caption teaches what the sigil does; the rows alone cannot.
+    expect(screen.getByText(/Files this capture into the chosen day/i)).toBeInTheDocument();
 
     await user.keyboard('{Enter}');
     expect(input()).toHaveValue('Call the bank >tomorrow ');
     expect(screen.getByRole('button', { name: 'Destination: Tomorrow' })).toBeInTheDocument();
   });
 
-  it('offers upcoming round hours for `@` and teaches the other time formats', async () => {
+  it('completes a weekday from the `>` panel into the day it names', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), 'Call the bank >');
+    await caretToEnd(user);
+    await user.click(await screen.findByRole('option', { name: /^Monday/ }));
+
+    expect(input()).toHaveValue('Call the bank >monday ');
+    // Monday after Friday 2026-07-31 is 2026-08-03.
+    expect(screen.getByRole('button', { name: /^Destination: Aug 3/ })).toBeInTheDocument();
+  });
+
+  it('names the times of day for `@` and teaches the other time formats', async () => {
     const user = userEvent.setup();
     render(<Harness />);
     await user.type(input(), 'Standup @');
@@ -440,14 +459,16 @@ describe('Composer suggestions', () => {
 
     const listbox = await screen.findByRole('listbox', { name: 'Capture suggestions' });
     const options = within(listbox).getAllByRole('option');
-    expect(options).toHaveLength(3);
-    for (const option of options) expect(option).toHaveTextContent(/^@\d{2}:00/);
+    expect(options).toHaveLength(6);
+    // Named times lead whatever the wall clock says; round hours fill behind them.
+    expect(options[0]).toHaveTextContent(/^Morning/);
+    expect(options[3]).toHaveTextContent(/^Evening/);
+    for (const option of options.slice(4)) expect(option).toHaveTextContent(/^@\d{2}:00/);
     expect(screen.getByText(/@4pm/)).toBeInTheDocument();
 
     await user.keyboard('{Enter}');
-    // Whichever hour led the list, the draft now carries a token the parser reads.
-    expect((input() as HTMLInputElement).value).toMatch(/^Standup @\d{2}:00 $/);
-    expect(screen.getByText(/^at \d{2}:00$/)).toBeInTheDocument();
+    expect(input()).toHaveValue('Standup @09:00 ');
+    expect(screen.getByText('at 09:00')).toBeInTheDocument();
   });
 
   it('leaves a handle alone instead of completing it as a time', async () => {

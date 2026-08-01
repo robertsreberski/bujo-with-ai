@@ -1,4 +1,4 @@
-import type { TagUsage } from '@journal/server/contracts/app';
+import { parseCapture, type TagUsage } from '@journal/server/contracts/app';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -9,10 +9,14 @@ import {
   suggestionQuery,
   upcomingHours,
 } from './composer-suggestions';
+import { formatWeekdayShortDate } from './dates';
+import { resolveDateShift } from './destination';
 import type { JournalCollection } from './types';
 
 /** A fixed afternoon, so `@` rows are deterministic wherever they surface. */
-const NOW = new Date(2026, 7, 1, 15, 20);
+const NOW = new Date(2026, 6, 31, 15, 20);
+/** The same day as `NOW`, a Friday: `>` rows resolve against this, not the clock. */
+const TODAY = '2026-07-31';
 
 const collection = (id: string, name = id): JournalCollection => ({
   id,
@@ -113,8 +117,14 @@ describe('suggestionQuery', () => {
     expect(queryAt('>Tom|')).toMatchObject({ mode: 'date-shift', query: 'tom' });
   });
 
+  it('carries a typed date through to the builder, digits and hyphens included', () => {
+    expect(queryAt('>2026-08-04|')).toMatchObject({ mode: 'date-shift', query: '2026-08-04' });
+    expect(queryAt('>next-week|')).toMatchObject({ mode: 'date-shift', query: 'next-week' });
+  });
+
   it('refuses a date-shift query the completion mode cannot read', () => {
-    expect(queryAt('>2026-08-04|')).toBeNull();
+    expect(queryAt('>2026/08/04|')).toBeNull();
+    expect(queryAt('>tomorrow?|')).toBeNull();
   });
 
   it('opens time mode on a leading at-sign', () => {
@@ -141,18 +151,20 @@ describe('suggestionQuery', () => {
 
 describe('upcomingHours', () => {
   it('starts at the next round hour, never the current one', () => {
-    expect(upcomingHours(new Date(2026, 7, 1, 15, 20))).toEqual([16, 17, 18]);
-    expect(upcomingHours(new Date(2026, 7, 1, 15, 0))).toEqual([16, 17, 18]);
+    expect(upcomingHours(new Date(2026, 7, 1, 15, 20), 3)).toEqual([16, 17, 18]);
+    expect(upcomingHours(new Date(2026, 7, 1, 15, 0), 3)).toEqual([16, 17, 18]);
   });
 
   it('wraps past midnight', () => {
-    expect(upcomingHours(new Date(2026, 7, 1, 22, 5))).toEqual([23, 0, 1]);
+    expect(upcomingHours(new Date(2026, 7, 1, 22, 5), 3)).toEqual([23, 0, 1]);
   });
 });
 
 describe('suggestionHint', () => {
   it('teaches the sigils a list of completions cannot explain by itself', () => {
-    expect(suggestionHint('date-shift')).toMatch(/tomorrow/i);
+    // The `>` caption teaches the shapes the rows do not spell out.
+    expect(suggestionHint('date-shift')).toMatch(/>friday/);
+    expect(suggestionHint('date-shift')).toMatch(/>2026-08-12/);
     expect(suggestionHint('time')).toMatch(/@4pm/);
   });
 
@@ -163,11 +175,20 @@ describe('suggestionHint', () => {
 });
 
 describe('buildSuggestionRows', () => {
-  const rows = (marked: string) => {
+  /** `context` swaps the frozen clock or calendar date a case needs to exercise. */
+  const rows = (marked: string, context: { now?: Date; today?: string } = {}) => {
     const query = queryAt(marked);
     if (query === null) throw new Error(`expected a query for ${marked}`);
-    return buildSuggestionRows(query, { collections: COLLECTIONS, tags: TAGS, now: NOW });
+    return buildSuggestionRows(query, {
+      collections: COLLECTIONS,
+      tags: TAGS,
+      now: context.now ?? NOW,
+      today: context.today ?? TODAY,
+    });
   };
+
+  const labelled = (marked: string, context?: { now?: Date; today?: string }) =>
+    rows(marked, context).map((row) => `${row.label} · ${row.detail}`);
 
   it('offers prefix-matched tags with their use counts', () => {
     expect(rows('#wo|')).toEqual([
@@ -190,7 +211,9 @@ describe('buildSuggestionRows', () => {
     const query = suggestionQuery('#', 1);
     if (query === null) throw new Error('expected a query');
     const many = Array.from({ length: 20 }, (_, index) => tag(`t${String(index)}`, 1));
-    expect(buildSuggestionRows(query, { collections: [], tags: many, now: NOW })).toHaveLength(6);
+    expect(
+      buildSuggestionRows(query, { collections: [], tags: many, now: NOW, today: TODAY }),
+    ).toHaveLength(6);
   });
 
   it('matches collections on both id and display name', () => {
@@ -224,53 +247,186 @@ describe('buildSuggestionRows', () => {
     expect(rows('/|')).toHaveLength(2);
   });
 
-  it('completes the one date shift the panel offers', () => {
+  it('opens `>` on tomorrow, the four nearest weekdays behind it, then next week', () => {
+    // TODAY is Friday 2026-07-31, so the list crosses into August immediately.
     expect(rows('Call >|')).toEqual([
       {
         kind: 'date-shift',
         key: 'date-shift:tomorrow',
         label: 'Tomorrow',
-        detail: '>tomorrow',
+        detail: 'Sat, Aug 1',
         insert: '>tomorrow ',
       },
+      {
+        kind: 'date-shift',
+        key: 'date-shift:sunday',
+        label: 'Sunday',
+        detail: 'Sun, Aug 2',
+        insert: '>sunday ',
+      },
+      {
+        kind: 'date-shift',
+        key: 'date-shift:monday',
+        label: 'Monday',
+        detail: 'Mon, Aug 3',
+        insert: '>monday ',
+      },
+      {
+        kind: 'date-shift',
+        key: 'date-shift:tuesday',
+        label: 'Tuesday',
+        detail: 'Tue, Aug 4',
+        insert: '>tuesday ',
+      },
+      {
+        kind: 'date-shift',
+        key: 'date-shift:wednesday',
+        label: 'Wednesday',
+        detail: 'Wed, Aug 5',
+        insert: '>wednesday ',
+      },
+      {
+        kind: 'date-shift',
+        key: 'date-shift:next-week',
+        label: 'Next week',
+        // Next Monday is already offered as `Monday`; the row earns its place by
+        // teaching the token, and both must agree about the day.
+        detail: 'Mon, Aug 3',
+        insert: '>next-week ',
+      },
     ]);
-    expect(rows('Call >tom|')).toHaveLength(1);
   });
 
-  it('offers no date shift for a word `tomorrow` could never become', () => {
-    // The parser reads `>mon`; the panel simply has no row to offer for it yet.
-    expect(rows('Call >mon|')).toEqual([]);
+  it('keeps the bare `>` list six rows long across a year boundary', () => {
+    // New Year's Eve 2026 is a Thursday: tomorrow opens 2027.
+    expect(labelled('Call >|', { today: '2026-12-31' })).toEqual([
+      'Tomorrow · Fri, Jan 1',
+      'Saturday · Sat, Jan 2',
+      'Sunday · Sun, Jan 3',
+      'Monday · Mon, Jan 4',
+      'Tuesday · Tue, Jan 5',
+      'Next week · Mon, Jan 4',
+    ]);
   });
 
-  it('offers the next round hours with their 12-hour gloss', () => {
-    const at = (marked: string, now: Date) => {
-      const query = queryAt(marked);
-      if (query === null) throw new Error(`expected a query for ${marked}`);
-      return buildSuggestionRows(query, { collections: [], tags: [], now });
-    };
-    expect(at('Standup @|', new Date(2026, 7, 1, 15, 20))).toEqual([
+  it('orders a typed word by proximity, today first when it matches', () => {
+    expect(labelled('Call >t|')).toEqual([
+      'Today · Fri, Jul 31',
+      'Tomorrow · Sat, Aug 1',
+      'Tuesday · Tue, Aug 4',
+      'Thursday · Thu, Aug 6',
+    ]);
+    // `>w` is the case the proximity rule exists for: the weekend is tomorrow,
+    // Wednesday is five days out, and the alphabet has no opinion about that.
+    expect(labelled('Call >w|')).toEqual(['Weekend · Sat, Aug 1', 'Wednesday · Wed, Aug 5']);
+    expect(labelled('Call >next-|')).toEqual(['Next week · Mon, Aug 3']);
+  });
+
+  it('never offers more rows than the panel can show, whatever is typed', () => {
+    const letters = 'abcdefghijklmnopqrstuvwxyz'.split('');
+    for (const letter of ['', ...letters]) {
+      expect(rows(`Call >${letter}|`).length).toBeLessThanOrEqual(6);
+    }
+  });
+
+  it('confirms a whole typed date with a single row', () => {
+    expect(rows('Call >2026-08-12|')).toEqual([
+      {
+        kind: 'date-shift',
+        key: 'date-shift:2026-08-12',
+        label: 'Wednesday, August 12',
+        detail: '>2026-08-12',
+        insert: '>2026-08-12 ',
+      },
+    ]);
+  });
+
+  it('offers nothing for a date the calendar refuses, exactly as the parser does', () => {
+    expect(rows('Call >2026-13-40|')).toEqual([]);
+    expect(rows('Call >2026-02-30|')).toEqual([]);
+  });
+
+  it('waits for a typed date to finish before it says anything', () => {
+    // A half-typed date closes the panel rather than guessing, the way `@4pm`
+    // does: there is nothing to complete until the calendar can read it.
+    expect(rows('Call >2|')).toEqual([]);
+    expect(rows('Call >2026-08|')).toEqual([]);
+    expect(rows('Call >2026-08-1|')).toEqual([]);
+  });
+
+  it('offers no date shift for a word the grammar could never become', () => {
+    expect(rows('Call >q|')).toEqual([]);
+  });
+
+  it('never names a day the row it inserts would not actually file into', () => {
+    // Every `>` row promises a date. Run the promise through the real parser and
+    // the real resolver — insert → parse → resolve — so a row cannot show one
+    // day while its token files into another, and cannot insert a token the
+    // parser only half-consumes. Covers the shapes the chip round-trips skip:
+    // `weekend`, `next-week`, and an absolute date.
+    const sample = [...rows('Call >|'), ...rows('Call >w|'), ...rows('Call >2026-08-12|')];
+    expect(sample).toHaveLength(9);
+    for (const row of sample) {
+      const parsed = parseCapture(`x ${row.insert}`);
+      const shift = parsed.dateShift;
+      if (shift === null) throw new Error(`${row.insert} parsed as text, not as a shift`);
+      // Nothing of the token survives as prose: it was consumed whole.
+      expect(parsed.text).toBe('x');
+      const filed = resolveDateShift(shift, TODAY);
+      // The absolute row shows its token; the day rows show the day itself.
+      expect(row.detail).toBe(
+        row.detail.startsWith('>') ? `>${filed}` : formatWeekdayShortDate(filed),
+      );
+    }
+  });
+
+  it('names the times of day first, then fills with upcoming round hours', () => {
+    expect(rows('Standup @|')).toEqual([
+      { kind: 'time', key: 'time:09:00', label: 'Morning', detail: '@09:00', insert: '@09:00 ' },
+      { kind: 'time', key: 'time:12:00', label: 'Noon', detail: '@12:00', insert: '@12:00 ' },
+      { kind: 'time', key: 'time:15:00', label: 'Afternoon', detail: '@15:00', insert: '@15:00 ' },
+      { kind: 'time', key: 'time:19:00', label: 'Evening', detail: '@19:00', insert: '@19:00 ' },
       { kind: 'time', key: 'time:16:00', label: '@16:00', detail: '4 pm', insert: '@16:00 ' },
       { kind: 'time', key: 'time:17:00', label: '@17:00', detail: '5 pm', insert: '@17:00 ' },
-      { kind: 'time', key: 'time:18:00', label: '@18:00', detail: '6 pm', insert: '@18:00 ' },
     ]);
-    // Midnight reads as 12 am, not 0 am.
-    expect(at('Standup @|', new Date(2026, 7, 1, 23, 5))[0]?.detail).toBe('12 am');
   });
 
-  it('matches a typed hour with or without its leading zero', () => {
-    const at = (marked: string) => {
-      const query = queryAt(marked);
-      if (query === null) throw new Error(`expected a query for ${marked}`);
-      return buildSuggestionRows(query, {
-        collections: [],
-        tags: [],
-        now: new Date(2026, 7, 1, 8, 40),
-      }).map((row) => row.label);
-    };
-    expect(at('Standup @|')).toEqual(['@09:00', '@10:00', '@11:00']);
-    expect(at('Standup @9|')).toEqual(['@09:00']);
-    expect(at('Standup @09|')).toEqual(['@09:00']);
-    expect(at('Standup @1|')).toEqual(['@10:00', '@11:00']);
+  it('skips an upcoming hour a named time already offered', () => {
+    // 11:20 makes noon the next round hour, and `Noon` has already said it.
+    expect(labelled('Standup @|', { now: new Date(2026, 6, 31, 11, 20) })).toEqual([
+      'Morning · @09:00',
+      'Noon · @12:00',
+      'Afternoon · @15:00',
+      'Evening · @19:00',
+      '@13:00 · 1 pm',
+      '@14:00 · 2 pm',
+    ]);
+  });
+
+  it('offers both halves of every hour a typed digit reaches', () => {
+    expect(labelled('Standup @16:3|')).toEqual(['@16:30 · 4:30 pm']);
+    expect(labelled('Standup @9|', { now: new Date(2026, 6, 31, 8, 40) })).toEqual([
+      '@09:00 · 9 am',
+      '@09:30 · 9:30 am',
+    ]);
+    expect(labelled('Standup @09|', { now: new Date(2026, 6, 31, 8, 40) })).toEqual([
+      '@09:00 · 9 am',
+      '@09:30 · 9:30 am',
+    ]);
+  });
+
+  it('orders typed hours upcoming-first and stops at the panel budget', () => {
+    // Every hour reading `1…` matches; the ones already gone wrap to the back.
+    expect(labelled('Standup @1|')).toEqual([
+      '@16:00 · 4 pm',
+      '@16:30 · 4:30 pm',
+      '@17:00 · 5 pm',
+      '@17:30 · 5:30 pm',
+      '@18:00 · 6 pm',
+      '@18:30 · 6:30 pm',
+    ]);
+    // Midnight reads as 12 am, not 0 am.
+    expect(labelled('Standup @0|')[0]).toBe('@00:00 · 12 am');
   });
 });
 

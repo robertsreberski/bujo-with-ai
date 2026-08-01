@@ -113,6 +113,7 @@ export function Composer({
     enabled: focused,
     collections,
     tags: tagSuggestions,
+    today,
     onLoadTags: onLoadTagSuggestions,
   });
 

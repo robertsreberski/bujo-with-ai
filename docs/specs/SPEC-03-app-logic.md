@@ -208,8 +208,10 @@ resolved on every keystroke and shown as a chip left of the preview row.
   arithmetic only (LOG-6 step 5); the resolver is pure, so an offline capture
   resolves the same way a replayed one does. Date destinations travel as
   intent, not as a literal date: today sends neither `date` nor `dateShift`,
-  tomorrow sends `dateShift`, and any other day — a weekday, a weekend, an
-  absolute token — sends an absolute `date` (ARC-16).
+  tomorrow sends `dateShift`, and any other **resolved** day sends an absolute
+  `date` (ARC-16). The rule reads the resolved day, not the token that named
+  it: `>saturday` typed on a Friday resolves to tomorrow and travels as
+  `dateShift`, while the same token typed on a Sunday travels as a date.
 - LOG-46 **Create-then-file.** A destination whose slug the mirror has never
   seen is minted on submit: `createCollection` is enqueued first and the
   entry second, so the FIFO outbox creates the collection before the entry
@@ -250,35 +252,59 @@ resolved on every keystroke and shown as a chip left of the preview row.
   discoverable by typing it rather than by reading a legend (LOG-7b). The
   whitespace-delimited run under the caret decides which:
 
-  | Token | Completes      | Rows                                                                        |
-  | ----- | -------------- | --------------------------------------------------------------------------- |
-  | `#…`  | tags           | tags whose name has the query as a prefix, ranked by uses then name         |
-  | `/…`  | collections    | collections matching the query in id or name, plus a create row (below)     |
-  | `>…`  | the date shift | one `Tomorrow` row inserting `>tomorrow`, while the query prefixes it       |
-  | `@…`  | a time         | the next three round hours, each glossed in 12-hour form (`16:00` → `4 pm`) |
+  | Token | Completes      | Rows                                                                    |
+  | ----- | -------------- | ----------------------------------------------------------------------- |
+  | `#…`  | tags           | tags whose name has the query as a prefix, ranked by uses then name     |
+  | `/…`  | collections    | collections matching the query in id or name, plus a create row (below) |
+  | `>…`  | the date shift | the day rows below, each detailed with the date it resolves to          |
+  | `@…`  | a time         | the time rows below, hours glossed in 12-hour form (`16:00` → `4 pm`)   |
 
-  At most six rows. The `>` panel offers **only** `Tomorrow` even though the
-  parser reads the whole shift grammar (LOG-6 step 5): the rest of it is
-  usable by typing, and the panel that completes it is a later phase. So a
-  query the row cannot prefix (`>mon`) shows no rows, and one the mode cannot
-  read at all (`>2026-08-04`, non-alphabetic) closes the panel. A `/` query
-  whose slug is unknown appends a trailing `Create collection “<slug>”` row
-  that mints exactly the slug the parser would have read. The `@` rows are the upcoming hours in local wall time,
-  wrapping past midnight — the clock the owner is looking at, and the one the
-  parser resolves against — and a typed prefix matches either the padded or
+  **At most six rows, in every mode.** A `/` query whose slug is unknown
+  appends a trailing `Create collection “<slug>”` row that mints exactly the
+  slug the parser would have read.
+
+  The `>` panel is the shift grammar (LOG-6 step 5) made browsable, resolved
+  against the server-synced `today` the destination uses (LOG-45), never
+  against the clock. A **bare `>`** offers exactly six rows: `Tomorrow`, then
+  the four nearest weekdays past tomorrow in proximity order, then
+  `Next week`. Tomorrow holds row 0 so `>` then Enter stays the one-key
+  migration; `Next week` closes the list because it names a week rather than a
+  day, and whenever the coming Monday is already offered above it — as a
+  weekday row, or as `Tomorrow` on a Sunday — it repeats that earlier row's
+  date, which is the teaching rather than a defect. A
+  **typed word** offers every candidate it prefixes — `today`, `tomorrow`, the
+  seven weekday names, `next-week`, `weekend` — nearest day first, so `>w`
+  puts a weekend that is tomorrow above a Wednesday five days out and `>t`
+  puts today above tomorrow. Only the full weekday names are offered even
+  though the parser also reads `>mon`: a completion list teaches one spelling
+  per day. A query spelled as a **date** is confirmed rather than completed —
+  one row naming the day in full, and only once the whole date is typed and
+  the parser's own `parseDateShiftToken` accepts it. A half-typed (`>2026-08`)
+  or impossible (`>2026-13-40`) date offers nothing and closes the panel,
+  exactly as `@4pm` does.
+
+  The `@` panel answers "when today?" before it answers "what time?". A
+  **bare `@`** offers `Morning` (09:00), `Noon` (12:00), `Afternoon` (15:00)
+  and `Evening` (19:00), then fills to six with the upcoming round hours,
+  skipping any hour a name has already offered. A **typed digit** drops the
+  names — that question is answered — and offers both halves of every hour it
+  prefixes (`@16:3` → `16:30`; `@9` → `09:00`, `09:30`), upcoming-first in
+  local wall time and wrapping past midnight — the clock the owner is looking
+  at, and the one the parser resolves against — matching either the padded or
   the spoken form, so `@9` still finds `09:00`.
 
   A sigil only counts when it _opens_ the run, so `a#b` and
   `https://example.com` are inert and `//` (the parser's escape) is skipped
   rather than completed. Each sigil also refuses text that is plainly not a
-  completion: `>` takes letters only, and `@` takes `HH`/`HH:MM` digits only,
-  so `@mira` is a handle rather than a half-typed time and neither closes over
-  ordinary prose. Accepting replaces the run with the completion plus one
-  trailing space, absorbing a space that already followed it, and leaves the
-  caret past it.
+  completion: `>` takes lowercase letters, digits and hyphens — the alphabet
+  of its own grammar — and `@` takes `HH`/`HH:MM` digits only, so `@mira` is a
+  handle rather than a half-typed time and neither closes over ordinary prose.
+  Accepting replaces the run with the completion plus one trailing space,
+  absorbing a space that already followed it, and leaves the caret past it.
 
 - LOG-48a **[ext]** Two sigils carry a caption the rows alone cannot: `>`
-  explains that the token files the capture into tomorrow's log, and `@`
+  says that the token files the capture into the chosen day and names the
+  shapes no row shows (`>friday`, `>next-week`, `>2026-08-12`), and `@`
   teaches the shapes the parser also accepts (`@4pm`, `@11`, `@23:59`). The
   caption is a muted line beneath the rows and is a **sibling of the
   listbox, never a child of it** — a `role="listbox"` may only parent options,

@@ -127,6 +127,19 @@ describe('capture parser date shift token', () => {
     });
   });
 
+  /*
+   * The token ends at a `\b`, so a shift word followed by a non-word character
+   * is read and the remainder stays literal text. Pinned as a decision rather
+   * than discovered later: the alternative — refusing anything glued to the
+   * word — would also refuse `>fri.` and `>monday,` mid-sentence.
+   */
+  it.each([
+    ['- Call the bank >fri-day', { kind: 'weekday', day: 5 }, 'Call the bank -day'],
+    ['- Call the bank >moné', { kind: 'weekday', day: 1 }, 'Call the bank é'],
+  ])('reads %s to the word boundary and leaves the tail as text', (draft, expected, text) => {
+    expect(parseCapture(draft)).toMatchObject({ text, dateShift: expected });
+  });
+
   it('skips an impossible date and still catches a later valid shift', () => {
     expect(parseCapture('x >2026-13-40 >friday')).toMatchObject({
       text: 'x >2026-13-40',

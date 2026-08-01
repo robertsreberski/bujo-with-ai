@@ -27,6 +27,12 @@ export const formatLongDate = (value: string): string =>
 export const formatShortDate = (value: string): string =>
   new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(fromDateKey(value));
 
+/** The short date with the weekday it falls on: `Sat, Aug 1`. */
+export const formatWeekdayShortDate = (value: string): string =>
+  new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' }).format(
+    fromDateKey(value),
+  );
+
 export const formatMonth = (value: string): string =>
   new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(
     fromDateKey(`${value}-01`),

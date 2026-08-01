@@ -249,7 +249,12 @@ Every feature below exists in the design prototype unless marked otherwise;
 - FR-37 **Habit tracker grid** (P1, included): per-habit month heatmap.
 - FR-38 **One-tap revert** from activity (P1, included), with FR-30's
   post-image conflict guard.
-- FR-39 Migration targets beyond tomorrow (`>monday`, `>2026-08-04`) (P2).
+- FR-39 Migration targets beyond tomorrow (`>monday`, `>2026-08-04`): the
+  **capture** half is delivered — the `>` grammar reads every shift, capture
+  resolves it against the server-synced today, and the composer's `>` panel
+  offers those days rather than only tomorrow (§SPEC-03 LOG-6, LOG-45,
+  LOG-48). Retargeting an **existing** entry to an arbitrary day stays P2:
+  migrate and schedule still offer only today and the monthly log.
 - FR-40 Multiple journals, journal archiving, and Markdown export are P2.
   Versioned JSON export/import for backup portability is included in v1.
 

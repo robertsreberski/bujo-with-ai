@@ -39,7 +39,7 @@ atomic pointer change.
 | FR-33…36     | Install/offline/iOS/responsive PWA                                          | Playwright + manifest + device handoff                | NOT RUN     |
 | FR-37        | Habit month grid                                                            | component/visual/E2E                                  | NOT RUN     |
 | FR-38        | Conflict-safe one-tap revert                                                | domain/API/browser E2E                                | NOT RUN     |
-| FR-39        | Advanced migration date shortcuts                                           | none                                                  | P2 EXCLUDED |
+| FR-39        | `>` capture targets beyond tomorrow: grammar, resolution, completion panel  | parser/component/browser E2E                          | NOT RUN     |
 | FR-40        | Multiple journals, archiving, Markdown export                               | none; JSON import/export remains included under DM-20 | P2 EXCLUDED |
 | NFR-1        | <16ms optimistic paint, <100ms LAN capture, <300ms local MCP p95            | named-hardware benchmark report                       | NOT RUN     |
 | NFR-2        | Offline read/write/replay, launchd restart, WAL recovery                    | offline E2E + process/recovery drill                  | NOT RUN     |
@@ -142,8 +142,13 @@ The Gate cell must exactly equal the deviating gate above.
 
 ## Approved deviations and exclusions
 
-- P0 and historical P1 ship together; P2 FR-39/FR-40 remain excluded except
-  versioned JSON portability, which is an explicit v1 durability requirement.
+- P0 and historical P1 ship together. FR-39 is now half included and is
+  tracked above for the half that ships: the `>` shift grammar, its
+  resolution at capture, and the completion panel that offers those days.
+  Retargeting an existing entry to an arbitrary day remains excluded — migrate
+  and schedule still offer today and the monthly log — so no ledger row claims
+  it. FR-40 remains excluded except versioned JSON portability, which is an
+  explicit v1 durability requirement.
 - All five MCP writes are automatic. Proposal entities, endpoints, storage,
   badges, and queues are intentionally absent. `journal://proposals` is empty
   compatibility metadata only.

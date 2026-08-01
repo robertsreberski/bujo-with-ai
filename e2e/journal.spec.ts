@@ -701,31 +701,38 @@ test('every capture sigil opens its own completion panel', async ({ page }) => {
   const panel = page.locator('.composer-shell [role="listbox"]');
   const caption = page.locator('.composer-suggestions__hint');
 
-  // `>` completes the one date shift the parser understands, and captions why.
+  // `>` opens on tomorrow and offers the shift grammar behind it, captioning
+  // the shapes no row can show (`>2026-08-12`).
   await input.fill(`- ${uniqueText('Sigil sweep')} >`);
   await expect(panel).toBeVisible();
-  await expect(panel.getByRole('option')).toHaveCount(1);
-  await expect(panel.getByRole('option', { name: /Tomorrow/ })).toBeVisible();
+  await expect(panel.getByRole('option')).toHaveCount(6);
+  await expect(panel.getByRole('option').first()).toHaveText(/^Tomorrow/);
+  await expect(panel.getByRole('option').filter({ hasText: 'Next week' })).toHaveCount(1);
   await expect(caption).toBeVisible();
   await expect(caption).not.toBeEmpty();
   // The caption teaches; it is not a completion, so it must sit outside the listbox.
   await expect(panel.locator('.composer-suggestions__hint')).toHaveCount(0);
 
-  // `@` offers the next three round hours, each glossed in 12-hour form.
+  // `@` names the four times of day, then fills with upcoming round hours.
   await input.fill(`- ${uniqueText('Sigil sweep')} @`);
   await expect(panel).toBeVisible();
-  const hours = panel.getByRole('option');
-  await expect(hours).toHaveCount(3);
-  for (const option of await hours.all()) {
+  const times = panel.getByRole('option');
+  await expect(times).toHaveCount(6);
+  await expect(times.first()).toHaveText(/^Morning@09:00$/);
+  for (const option of (await times.all()).slice(4)) {
     await expect(option).toHaveText(/^@\d{2}:00\d{1,2} (?:am|pm)$/);
   }
   await expect(caption).toContainText('@4pm');
 
   // Accepting a time writes the parsed clock, which the preview then echoes.
-  const clock = ((await hours.first().textContent()) ?? '').slice(1, 6);
-  await page.keyboard.press('Enter');
+  // `@16` reaches exactly one hour and offers both its halves, so the `16:00`
+  // row is there whatever the wall clock reads when this runs.
+  await input.fill(`- ${uniqueText('Sigil sweep')} @16`);
+  await expect(panel).toBeVisible();
+  await expect(times).toHaveCount(2);
+  await panel.getByRole('option').filter({ hasText: '@16:00' }).click();
   await expect(panel).toHaveCount(0);
-  await expect(page.locator('.parse-chip').filter({ hasText: `at ${clock}` })).toHaveCount(1);
+  await expect(page.locator('.parse-chip').filter({ hasText: 'at 16:00' })).toHaveCount(1);
 
   // A sigil that opens no run is inert: `@mira` is a handle, not a half-typed time.
   await input.fill(`- ${uniqueText('Sigil sweep')} @mira`);
