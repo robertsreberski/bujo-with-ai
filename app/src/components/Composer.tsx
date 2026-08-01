@@ -190,19 +190,19 @@ export function Composer({
 
   /*
    * The combobox contract is permanent, per ARIA 1.2: the input is always a
-   * combobox and `aria-expanded` reports whether the popup is showing. The role
-   * must never change on a focused field — WebKit rebuilds the accessibility
-   * and editing context on a role mutation, which drops the caret to the end.
-   * Only the popup-relative attributes come and go, because pointing
-   * `aria-controls`/`aria-activedescendant` at an element that does not exist
-   * is itself an accessibility violation.
+   * combobox, `aria-controls` always names the listbox (which is always in the
+   * DOM, merely hidden while shut), and `aria-expanded` reports whether the
+   * popup is showing. So opening the panel changes exactly one attribute on the
+   * focused field, and `aria-activedescendant` joins it only once the owner
+   * actually navigates. Every one of those mutations is a chance for WebKit to
+   * rebuild a focused field's accessibility and editing context and drop the
+   * caret to the end mid-typing, so the churn is kept to the one that carries
+   * real news.
    */
-  const popupProps = suggestions.open
-    ? ({
-        'aria-controls': suggestions.panelId,
-        'aria-activedescendant': suggestions.activeOptionId,
-      } as const)
-    : {};
+  const popupProps =
+    suggestions.activeOptionId === undefined
+      ? {}
+      : ({ 'aria-activedescendant': suggestions.activeOptionId } as const);
 
   const clearDestination = ((): (() => void) | null => {
     if (resolved.source === 'chip') return () => onChipOverrideChange?.(null);
@@ -467,6 +467,7 @@ export function Composer({
               role="combobox"
               aria-expanded={suggestions.open}
               aria-autocomplete="list"
+              aria-controls={suggestions.panelId}
               {...popupProps}
             />
             {draft ? (

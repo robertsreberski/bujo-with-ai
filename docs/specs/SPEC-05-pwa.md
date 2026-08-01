@@ -209,7 +209,12 @@ it. `visualViewport` is the only truth.
   surface — rows and grammar caption alike — suppresses `pointerdown`
   (PWA-19): blurring the input closes the panel _and_ dismisses the keyboard,
   which on iOS happens between `touchend` and `click`, so the tap would
-  resolve against a surface that had already left.
+  resolve against a surface that had already left. The price of that
+  suppression is that iOS then synthesizes the row's click unreliably, so the
+  rows — real `button[role="option"]` elements — **accept on `pointerup`**,
+  guarded by a 10px travel slop so a scroll is not a choice (LOG-49). The
+  panel's container is always mounted and merely `hidden` when shut, so the
+  input's `aria-controls` never dangles and never churns.
 - PWA-17b **The entry action sheet is anchored to the visible viewport, not
   the layout one.** Its panel sits at
   `bottom: calc(var(--app-height,100dvh) - var(--vv-offset,0px) - var(--vv-height,100dvh))`
@@ -243,7 +248,14 @@ it. `visualViewport` is the only truth.
 - PWA-19 Popover/menu items use `onPointerDown` + `preventDefault` to avoid
   blurring the composer (iOS fires blur between `touchend` and `mousedown`;
   `onMouseDown` handlers act after the blur has already closed the menu),
-  with `onClick` doing the action.
+  with `onClick` doing the action. **One exception, and only one:** the
+  capture suggestion rows act on `pointerup` (PWA-17a, LOG-49), because they
+  sit inside the surface that suppressed the `pointerdown` and iOS will not
+  reliably synthesize their click. Their `onClick` survives as the
+  assistive-technology path only, answering the `detail === 0` clicks that had
+  no press behind them; anything with a press was already handled on
+  `pointerup`, so a tap inserts exactly once. Any new surface starts from the
+  convention; this row is the documented deviation.
 - PWA-20 `window.confirm`/`alert` are banned; destructive confirmations use
   the app's dialog components.
 - PWA-21 Scroll containment: `body` `overscroll-behavior: none`; the main

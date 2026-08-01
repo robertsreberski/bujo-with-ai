@@ -7,3 +7,7 @@ test-results/
 # Immutable source prototype used for visual reference only.
 design/
 .playwright-mcp/
+
+# Agent worktrees: whole checkouts of this repo at other commits, formatted
+# (or not) by whoever owns them. Only `.claude/skills/` here is ours.
+.claude/worktrees/

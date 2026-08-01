@@ -164,3 +164,42 @@ test('the keyboard-open composer pins to the pane box and the visible viewport b
   expect(restored.composer.left).toBeCloseTo(docked.composer.left, 1);
   expect(restored.contentPaddingBottom).toBe(0);
 });
+
+/**
+ * LOG-49/PWA-19. A suggestion row is the one surface in the app that cannot wait
+ * for a click: the panel suppresses `pointerdown` to keep the caret in the
+ * input, and iOS answers a suppressed pointerdown by synthesizing the click
+ * unreliably — the tap closed the panel and inserted nothing. The row accepts on
+ * `pointerup` instead, and only a real touch tap can prove it, so this runs on
+ * the WebKit touch projects and skips the mouse one.
+ */
+test('a tap on a suggestion row completes the capture and keeps the keyboard up', async ({
+  page,
+}, testInfo) => {
+  test.skip(!testInfo.project.use.hasTouch, 'A synthesized click would prove nothing.');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await installKeyboardEmulation(page);
+  await openJournal(page);
+
+  const html = page.locator('html');
+  const input = page.getByRole('combobox', { name: 'Add an entry' });
+  const panel = page.locator('.composer-shell [role="listbox"]');
+
+  // `fill` leaves the caret at the end of the `>` token, and the rows resolve
+  // against the server-synced `today` — no wall clock enters this test.
+  await input.fill('- Pay rent >');
+  await setKeyboardInset(page, KEYBOARD_INSET);
+  await expect(html).toHaveClass(/keyboard-open/);
+  await expect(panel).toBeVisible();
+
+  await page.getByRole('option', { name: /^Tomorrow/ }).tap();
+
+  await expect(input).toHaveValue('- Pay rent >tomorrow ');
+  await expect(panel).toBeHidden();
+  await expect(input).toHaveAttribute('aria-expanded', 'false');
+  // The tap resolved against the composer without ever taking focus off the
+  // field, which is the difference between a keyboard that stays and a sheet
+  // that collapses mid-capture.
+  await expect(input).toBeFocused();
+  await expect(html).toHaveClass(/keyboard-open/);
+});

@@ -291,7 +291,10 @@ resolved on every keystroke and shown as a chip left of the preview row.
   prefixes (`@16:3` → `16:30`; `@9` → `09:00`, `09:30`), upcoming-first in
   local wall time and wrapping past midnight — the clock the owner is looking
   at, and the one the parser resolves against — matching either the padded or
-  the spoken form, so `@9` still finds `09:00`.
+  the spoken form, so `@9` still finds `09:00`. That clock is sampled **once
+  per entry into `@` mode**, not once per render, so an hour turning
+  mid-capture can never renumber the rows under a finger already reaching for
+  one.
 
   A sigil only counts when it _opens_ the run, so `a#b` and
   `https://example.com` are inert and `//` (the parser's escape) is skipped
@@ -311,18 +314,45 @@ resolved on every keystroke and shown as a chip left of the preview row.
   so teaching that is not a completion sits beside them.
 - LOG-49 The panel renders inside the composer shell rather than a portal
   (SPEC-05 §4) and the whole surface suppresses `pointerdown`, so a tap on any
-  part of it — row or caption — never blurs the input. The input wears
-  `role="combobox"` **permanently** (ARIA 1.2), with `aria-autocomplete="list"`
-  and an `aria-expanded` that reports whether the panel is showing;
-  `aria-controls`/`aria-activedescendant` are present only while it is, since
-  they may not dangle. The role is fixed because WebKit rebuilds a focused
-  field's accessibility and editing context when its role changes, which drops
-  the caret to the end mid-typing. Arrow keys move the active row and wrap; Enter
-  and Tab accept it. An Enter that accepts must never also file the entry —
-  the guard that swallows that submission is disarmed in a microtask, so a
-  later click on **Add entry** still submits. Keystrokes steering an IME
-  composition (`isComposing`) belong to the IME: they neither accept nor
-  clear.
+  part of it — row or caption — never blurs the input.
+
+  **The popup contract on the input never churns.** `role="combobox"` is
+  permanent (ARIA 1.2), so is `aria-autocomplete="list"`, and so is
+  `aria-controls`: the container and its `role="listbox"` are always in the
+  DOM and merely `hidden` while shut, so the reference can be permanent
+  without ever dangling. Opening the panel therefore changes exactly one
+  attribute on the focused field — `aria-expanded` — and
+  `aria-activedescendant` joins it only once the owner has actually navigated
+  (arrow keys, or a fine-pointer hover); until then the highlight and the
+  `aria-selected` row 0 that Enter accepts carry the state on their own. Every
+  such mutation is a chance for WebKit to rebuild a focused field's
+  accessibility and editing context and drop the caret to the end mid-typing,
+  which is also why the role is fixed.
+
+  **A row accepts on `pointerup`, not on click.** Rows are real
+  `button[role="option"]` elements (`tabIndex={-1}`: they are reached from the
+  input, never by tab), and a pointerdown/pointerup pair on the same row, same
+  pointer, within **10px** of travel is the accept — anything further was a
+  scroll. This is the one deliberate exception to the app's
+  click-does-the-action convention (PWA-19): iOS synthesizes the click for a
+  bare option inside a surface that suppressed `pointerdown` unreliably, and
+  the tap that reached the device closed the panel without inserting anything.
+  `onClick` then answers **only clicks with `detail === 0`** — the ones with no
+  press counted behind them, which is how assistive technology activates a row
+  on its own (a VoiceOver double-tap sends no pointer sequence). Pointerup
+  already owns every real pointer interaction, mouse and finger alike, so a
+  click that counts a press is either that same tap arriving twice or the tail
+  of a drag the slop guard just refused; neither may insert. The two cases
+  are told apart by the event itself, so no "already accepted" state is kept
+  anywhere — state like that outlives the tap that set it and would eventually
+  swallow the assistive-technology click it was meant to protect.
+
+  Arrow keys move the active row and wrap; Enter and Tab accept it. An Enter
+  that accepts must never also file the entry — the guard that swallows that
+  submission is disarmed in a microtask, so a later click on **Add entry**
+  still submits. Keystrokes steering an IME composition (`isComposing`) belong
+  to the IME: they neither accept nor clear.
+
 - LOG-50 The tag vocabulary is requested lazily, on **every** entry into `#`
   mode rather than once per composer mount: the request answers from the
   mirror synchronously — so it works offline — and TTL-guards its own network

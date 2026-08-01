@@ -676,7 +676,8 @@ test('tag autocomplete completes from the mirror and the accepted tag survives s
   await page.keyboard.press('Enter');
 
   // Enter accepted the completion; it must not also have filed the entry.
-  await expect(panel).toHaveCount(0);
+  // The listbox stays in the DOM and goes hidden, so `aria-controls` never dangles.
+  await expect(panel).toBeHidden();
   await expect(page.getByRole('combobox', { name: 'Add an entry' })).toHaveCount(1);
   await expect(input).toHaveAttribute('aria-expanded', 'false');
   // The chip wears a `#` icon rather than the character, so its text is the bare
@@ -731,12 +732,12 @@ test('every capture sigil opens its own completion panel', async ({ page }) => {
   await expect(panel).toBeVisible();
   await expect(times).toHaveCount(2);
   await panel.getByRole('option').filter({ hasText: '@16:00' }).click();
-  await expect(panel).toHaveCount(0);
+  await expect(panel).toBeHidden();
   await expect(page.locator('.parse-chip').filter({ hasText: 'at 16:00' })).toHaveCount(1);
 
   // A sigil that opens no run is inert: `@mira` is a handle, not a half-typed time.
   await input.fill(`- ${uniqueText('Sigil sweep')} @mira`);
-  await expect(panel).toHaveCount(0);
+  await expect(panel).toBeHidden();
 });
 
 test('the Today and Review tabs announce their counts and Review stays cleared', async ({
