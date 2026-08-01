@@ -244,6 +244,22 @@ describe('Composer', () => {
     expect(screen.queryByRole('button', { name: /^Remove/ })).not.toBeInTheDocument();
   });
 
+  it('answers to the words it shows: every removable chip names its own label', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.type(input(), 'Standup @9:15 #work');
+    const chips = screen.getAllByRole('button', { name: /^Remove/ });
+    expect(chips).toHaveLength(2);
+    for (const chip of chips) {
+      // The chip's ink lives on a span inside the button, so its visible text is
+      // one level down from the element carrying the name. WCAG 2.5.3 asks that
+      // the two still agree: "remove work" has to reach the tag chip.
+      const visible = chip.textContent?.trim() ?? '';
+      expect(visible).not.toBe('');
+      expect(chip.getAttribute('aria-label')).toContain(visible);
+    }
+  });
+
   it('explains a type the leading signifier already decided', async () => {
     const user = userEvent.setup();
     render(<Harness />);

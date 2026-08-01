@@ -31,13 +31,25 @@ const FILTER_THRESHOLD = 6;
 const WRAP = 'inline-flex max-w-[65%] min-w-0 flex-none items-center';
 
 /*
- * Control-sized rather than chip-sized: the destination answers the composer's
- * whole question — where does this land? — so it is control-sized (28px, 40 touch),
- * radius and text size instead of the smaller ramp the derived facts use.
+ * Chip-sized, like every other chip in the context zone: 24px on the `2xs` rung
+ * at radius 4. The destination answers the composer's whole question — where
+ * does this land? — but it says so through the hairline border, the ai tint once
+ * it is no longer the screen's own default, the 12px kind icon, the chevron, and
+ * the "New" badge. Not through size. Reading as one family is what makes the row
+ * scannable; a chip a size larger than its neighbours only reads as a mistake.
+ *
+ * Both halves are a transparent button whose only job is to measure 40px on a
+ * coarse pointer (`touch:-my-2` gives the extra height back, so the row still
+ * occupies 24px), with all the ink on the span inside — the parse-chip idiom.
+ * `INK` carries no horizontal padding: the clear half states its own, and a
+ * `px` plus a `pl` in one recipe leaves the winner to stylesheet order.
  */
-const CHIP =
-  'destination-chip inline-flex h-7 min-w-0 items-center gap-1.5 border px-2.5 text-sm font-medium touch:h-10 touch:min-w-10';
-const CHIP_SCREEN = 'border-border bg-bg-line text-fg-mid hover:bg-bg-raised hover:text-fg-body';
+// `p-0`: preflight is off, so a bare button keeps the UA's 1px/6px padding —
+// outside the ink, where it would open a 12px hole in the seam between halves.
+const HIT = 'group inline-flex h-6 min-w-0 items-center p-0 touch:h-10 touch:min-w-10 touch:-my-2';
+const INK = 'flex h-6 min-w-0 items-center gap-1 border text-2xs font-medium whitespace-nowrap';
+const CHIP_SCREEN =
+  'border-border bg-bg-line text-fg-mid group-hover:bg-bg-raised group-hover:text-fg-body';
 const CHIP_ACTIVE = 'border-ai-border bg-ai-bg text-ai-fg';
 const OPTION =
   'flex min-h-10 w-full items-center gap-2 rounded-md px-[9px] text-md text-fg-body hover:bg-bg-line hover:text-fg';
@@ -100,28 +112,35 @@ export function DestinationChip({
         onCloseAutoFocus={(event) => event.preventDefault()}
         trigger={
           <button
-            className={cn(
-              CHIP,
-              active ? CHIP_ACTIVE : CHIP_SCREEN,
-              onClear ? 'rounded-l-md' : 'rounded-md',
-            )}
+            className={cn('destination-chip', HIT)}
             type="button"
             aria-label={`Destination: ${label}`}
           >
-            {/* Its own element so the kind mark survives a truncation the name
-                causes; a day and a collection are the two things it can be. */}
-            <Icon
-              name={resolved.destination.kind === 'date' ? 'calendar' : 'folder'}
-              size={12}
-              className="flex-none opacity-60"
-            />
-            <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{label}</span>
-            {resolved.createsCollection ? (
-              <Badge variant="count" className="flex-none px-1.5">
-                New
-              </Badge>
-            ) : null}
-            <Icon name="chevronDown" size={11} className="flex-none opacity-60" />
+            <span
+              className={cn(
+                INK,
+                'px-2',
+                active ? CHIP_ACTIVE : CHIP_SCREEN,
+                onClear ? 'rounded-l-sm' : 'rounded-sm',
+              )}
+            >
+              {/* Its own element so the kind mark survives a truncation the name
+                  causes; a day and a collection are the two things it can be. */}
+              <Icon
+                name={resolved.destination.kind === 'date' ? 'calendar' : 'folder'}
+                size={12}
+                className="flex-none opacity-60"
+              />
+              <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                {label}
+              </span>
+              {resolved.createsCollection ? (
+                <Badge variant="count" className="flex-none px-1.5">
+                  New
+                </Badge>
+              ) : null}
+              <Icon name="chevronDown" size={11} className="flex-none opacity-60" />
+            </span>
           </button>
         }
       >
@@ -136,13 +155,10 @@ export function DestinationChip({
       </ComposerPopover>
       {onClear ? (
         <button
-          className={cn(
-            CHIP,
-            active ? CHIP_ACTIVE : CHIP_SCREEN,
-            // No left border of its own: the trigger's right edge is the seam,
-            // so the pair reads as one chip split into two targets.
-            'rounded-r-md justify-center border-l-0 pr-2 pl-1.5',
-          )}
+          // `justify-start` is the seam's guard: on touch the button is 40px
+          // wide around ~26px of ink, and start-aligning it drops every pixel of
+          // that slack outboard, where it cannot open a gap between the halves.
+          className={cn(HIT, 'flex-none touch:justify-start')}
           type="button"
           aria-label="Clear destination"
           onPointerDown={(event) => event.preventDefault()}
@@ -151,7 +167,17 @@ export function DestinationChip({
             onRestoreFocus();
           }}
         >
-          <Icon name="close" size={12} className="flex-none" />
+          <span
+            className={cn(
+              INK,
+              active ? CHIP_ACTIVE : CHIP_SCREEN,
+              // No left border of its own: the trigger's right edge is the seam,
+              // so the pair reads as one chip split into two targets.
+              'rounded-r-sm border-l-0 pr-2 pl-1.5',
+            )}
+          >
+            <Icon name="close" size={12} className="flex-none" />
+          </span>
         </button>
       ) : null}
     </span>

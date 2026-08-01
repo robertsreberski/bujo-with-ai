@@ -333,7 +333,13 @@ export function Composer({
          * and help sits at the top right so it stays put as the facts grow.
          */}
         <div className="flex items-start gap-1.5 pb-1.5">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
+          {/*
+           * `touch:gap-y-2`: each chip's 40px touch box overhangs its 24px ink
+           * by 8px top and bottom, so a wrapped row needs 8px between lines or
+           * the line below reaches back over the ink of the line above and — as
+           * the later element — takes the taps meant for it.
+           */}
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 touch:gap-y-2">
             <DestinationChip
               resolved={resolved}
               route={route}
@@ -346,7 +352,7 @@ export function Composer({
               onRestoreFocus={focusInput}
             />
             <div
-              className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
+              className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 touch:gap-y-2"
               aria-live="polite"
             >
               {parsed.error ? (

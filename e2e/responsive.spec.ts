@@ -153,6 +153,25 @@ test('all mobile form and dialog controls keep 40px touch targets', async ({ pag
   await searchInput.fill('#work');
   await expect(page.getByRole('button', { name: 'Clear search', exact: true })).toHaveCount(1);
   await expectTouchTargets(page, 'Search journal');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Search journal' })).toBeHidden();
+
+  /*
+   * Last, because it leaves a draft standing: the composer's chips only exist
+   * with one in flight. Their ink is the 24px parse-chip pill whatever the
+   * pointer, so the 40px minimum is paid by the transparent button around it —
+   * which is exactly what this sweep measures. The trailing word parks the caret
+   * outside every sigil token, so no completion panel opens over the row.
+   */
+  await page
+    .getByRole('combobox', { name: 'Add an entry' })
+    .fill('Standup @9:15 #work >tomorrow done');
+  await expect(page.getByRole('button', { name: 'Destination: Tomorrow' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Clear destination' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Remove time at 09:15' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Remove tag #work' })).toBeVisible();
+  await expect(page.locator('.composer-shell [role="listbox"]')).toBeHidden();
+  await expectTouchTargets(page, 'Composer with draft');
 });
 
 test('route navigation restores the content scroller to the top', async ({ page }, testInfo) => {
