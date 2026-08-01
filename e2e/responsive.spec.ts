@@ -85,7 +85,7 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
     expect(box?.height).toBeGreaterThanOrEqual(composerMinimum);
   }
 
-  const input = page.getByRole('textbox', { name: 'Add an entry' });
+  const input = page.getByRole('combobox', { name: 'Add an entry' });
   const inputBox = await input.boundingBox();
   expect(inputBox?.height).toBeGreaterThanOrEqual(composerMinimum);
   if (isPhone) await expect(input).toHaveCSS('font-size', '16px');
@@ -136,7 +136,7 @@ test('all mobile form and dialog controls keep 40px touch targets', async ({ pag
 
   await page.getByRole('button', { name: /^Today/ }).click();
   const entryText = uniqueText('Touch target entry');
-  await page.getByRole('textbox', { name: 'Add an entry' }).fill(entryText);
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(entryText);
   await page.getByRole('button', { name: 'Add entry' }).click();
   await page.getByRole('button', { name: entryText, exact: true }).click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -228,7 +228,7 @@ test('a delayed older-day deep link settles on its final section geometry', asyn
 
   await page.goto(`/?date=${selectedDate}`);
   await expect(page.locator('#journal-content')).toBeVisible();
-  await expect(page.getByRole('textbox', { name: 'Add an entry' })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Add an entry' })).toBeVisible();
   await expect(page.getByText(selectedText, { exact: true })).toBeVisible();
 
   const selectedSection = page.locator(`[data-day="${selectedDate}"]`);

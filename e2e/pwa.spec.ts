@@ -209,7 +209,7 @@ test('the cached shell launches offline and an offline capture replays after rec
   await expect(page.getByText('Offline — changes will sync')).toBeVisible();
 
   const text = uniqueText('Offline queued capture');
-  await page.getByRole('textbox', { name: 'Add an entry' }).fill(`- ${text} #offline`);
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text} #offline`);
   await page.getByRole('button', { name: 'Add entry' }).click();
   await expect(page.getByText(text, { exact: true })).toBeVisible();
 
@@ -236,7 +236,7 @@ test('a draft and queued capture survive page loss through the IndexedDB journal
   await openJournal(page);
   const text = uniqueText('Process-safe draft');
   const draft = `- ${text} #draft`;
-  await page.getByRole('textbox', { name: 'Add an entry' }).fill(draft);
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(draft);
 
   // Draft persistence is intentionally short-debounced off the input path.
   await page.waitForTimeout(250);
@@ -245,7 +245,7 @@ test('a draft and queued capture survive page loss through the IndexedDB journal
   const restoredPage = await context.newPage();
   try {
     await openJournal(restoredPage);
-    await expect(restoredPage.getByRole('textbox', { name: 'Add an entry' })).toHaveValue(draft);
+    await expect(restoredPage.getByRole('combobox', { name: 'Add an entry' })).toHaveValue(draft);
 
     await context.setOffline(true);
     await expect(restoredPage.getByText('Offline — changes will sync')).toBeVisible();
@@ -319,7 +319,7 @@ test('an offline tomorrow capture after browser midnight replays to its intended
   await expect(page.locator(`[data-day="${browserTomorrow}"]`)).toBeVisible();
 
   const text = uniqueText('Midnight offline tomorrow');
-  await page.getByRole('textbox', { name: 'Add an entry' }).fill(`- ${text} >tomorrow`);
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text} >tomorrow`);
   await page.getByRole('button', { name: 'Add entry' }).click();
   await expect(page.locator(`[data-day="${intendedDate}"]`)).toContainText(text);
 

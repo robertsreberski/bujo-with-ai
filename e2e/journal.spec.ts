@@ -216,7 +216,7 @@ test('owner capture persists and the four primary views navigate by semantic con
   await openJournal(page);
   const text = uniqueText('Owner E2E capture');
 
-  await page.getByRole('textbox', { name: 'Add an entry' }).fill(`. ${text} #release`);
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`. ${text} #release`);
   await page.getByRole('button', { name: 'Add entry' }).click();
   await expect(page.getByText(text, { exact: true })).toBeVisible();
 
@@ -303,7 +303,7 @@ test('two paired browsers converge through SSE and notify the other device once'
     await Promise.all([openJournal(pageA), openJournal(pageB), deviceBEvents]);
 
     const text = uniqueText('Two-device owner capture');
-    await pageA.getByRole('textbox', { name: 'Add an entry' }).fill(`- ${text} #convergence`);
+    await pageA.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text} #convergence`);
     await pageA.getByRole('button', { name: 'Add entry' }).click();
 
     await expect(pageB.getByText(text, { exact: true })).toBeVisible();
@@ -352,7 +352,7 @@ test('Assistant access reports a live session and persists display preferences',
 }) => {
   await openJournal(page);
   const text = uniqueText('Preference evidence note');
-  await page.getByRole('textbox', { name: 'Add an entry' }).fill(`- ${text}`);
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text}`);
   await page.getByRole('button', { name: 'Add entry' }).click();
   const row = page.locator('.entry-row').filter({ hasText: text });
 
@@ -466,7 +466,7 @@ test('owner capture and automatic add-update-revert stay live and conflict safe'
   await openJournal(page);
 
   const ownerText = uniqueText('Owner anchor capture');
-  await page.getByRole('textbox', { name: 'Add an entry' }).fill(`- ${ownerText} #owner`);
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${ownerText} #owner`);
   await page.getByRole('button', { name: 'Add entry' }).click();
   await expect(page.getByText(ownerText, { exact: true })).toBeVisible();
 
@@ -588,7 +588,7 @@ test('a capture on the month spread lands in the monthly log without leaving it'
   expect(chipLabel).toMatch(/^[A-Z][a-z]+ \d{4}$/);
 
   const text = uniqueText('Month spread capture');
-  await page.getByRole('textbox', { name: 'Add an entry' }).fill(`- ${text}`);
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text}`);
   await page.getByRole('button', { name: 'Add entry' }).click();
 
   const monthlyLog = page.getByRole('region', { name: 'Monthly log' });
@@ -612,7 +612,7 @@ test('an unknown /slug mints its collection, files the capture, and the toast op
   const name = humanizeSlug(slug);
   const text = uniqueText('Buy seeds');
 
-  const input = page.getByRole('textbox', { name: 'Add an entry' });
+  const input = page.getByRole('combobox', { name: 'Add an entry' });
   await input.fill(`${text} /${slug}`);
   const panel = page.locator('.composer-shell [role="listbox"]');
   await expect(panel).toBeVisible();
@@ -654,8 +654,9 @@ test('tag autocomplete completes from the mirror and the accepted tag survives s
   });
 
   await openJournal(page);
-  // Located by class, not by role: the input *changes* role while the panel is
-  // open, which is exactly what the assertions below check.
+  // Located by class, not by role: the input is a combobox in both states —
+  // only `aria-expanded` moves, which is exactly what the assertions below
+  // check.
   const input = page.locator('.composer__input');
   const text = uniqueText('Completed tag capture');
   await input.fill(`- ${text} #`);
@@ -676,8 +677,8 @@ test('tag autocomplete completes from the mirror and the accepted tag survives s
 
   // Enter accepted the completion; it must not also have filed the entry.
   await expect(panel).toHaveCount(0);
-  await expect(page.getByRole('combobox', { name: 'Add an entry' })).toHaveCount(0);
-  await expect(page.getByRole('textbox', { name: 'Add an entry' })).toHaveCount(1);
+  await expect(page.getByRole('combobox', { name: 'Add an entry' })).toHaveCount(1);
+  await expect(input).toHaveAttribute('aria-expanded', 'false');
   await expect(page.locator('.parse-chip').filter({ hasText: `#${tag}` })).toHaveCount(1);
   await expect(page.getByText(text, { exact: true })).toHaveCount(0);
 

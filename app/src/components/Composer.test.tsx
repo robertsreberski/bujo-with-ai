@@ -261,7 +261,24 @@ describe('Composer suggestions', () => {
 
     expect(input()).toHaveValue('Ship it #design-review ');
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
-    expect(input()).not.toHaveAttribute('role', 'combobox');
+    expect(input()).toHaveAttribute('role', 'combobox');
+    expect(input()).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('never changes the role of the input, so the caret cannot be dropped', async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const atRest = input().getAttribute('role');
+    expect(atRest).toBe('combobox');
+
+    await user.type(input(), 'Ship it #des');
+    await caretToEnd(user);
+    await screen.findByRole('listbox', { name: 'Capture suggestions' });
+    expect(input().getAttribute('role')).toBe(atRest);
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(input().getAttribute('role')).toBe(atRest);
   });
 
   it('never files the entry with the Enter that accepted a completion', async () => {

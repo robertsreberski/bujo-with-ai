@@ -139,6 +139,10 @@ export function TodayView({
       if (!changed || animationFrame !== null) return;
       animationFrame = window.requestAnimationFrame(() => {
         animationFrame = null;
+        // Re-pinning the day mid-keystroke would yank the view out from under
+        // whoever is typing, so growth above the day is ignored while the
+        // composer holds focus.
+        if (document.activeElement?.closest('.composer-shell')) return;
         target.scrollIntoView({ block: 'start', behavior: 'auto' });
       });
     });

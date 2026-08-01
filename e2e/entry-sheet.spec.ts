@@ -12,7 +12,7 @@ function entryRow(page: Page, text: string): Locator {
 }
 
 async function captureEntry(page: Page, draft: string, text: string): Promise<Locator> {
-  await page.getByRole('textbox', { name: 'Add an entry' }).fill(draft);
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(draft);
   await page.getByRole('button', { name: 'Add entry' }).click();
   const row = entryRow(page, text);
   await expect(row).toBeVisible();

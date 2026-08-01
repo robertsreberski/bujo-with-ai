@@ -112,7 +112,7 @@ test('the keyboard-open composer pins to the pane box and the visible viewport b
   expect(docked.composer.position).toBe('relative');
   expect(docked.composer.bottom).toBeCloseTo(docked.pane.bottom, 0);
 
-  const input = page.getByRole('textbox', { name: 'Add an entry' });
+  const input = page.getByRole('combobox', { name: 'Add an entry' });
   await input.focus();
   await setKeyboardInset(page, KEYBOARD_INSET);
   await expect(html).toHaveClass(/keyboard-open/);

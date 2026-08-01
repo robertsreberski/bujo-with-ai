@@ -228,10 +228,13 @@ resolved on every keystroke and shown as a chip left of the preview row.
   so teaching that is not a completion sits beside them.
 - LOG-49 The panel renders inside the composer shell rather than a portal
   (SPEC-05 §4) and the whole surface suppresses `pointerdown`, so a tap on any
-  part of it — row or caption — never blurs the input. The input wears `role="combobox"` with
-  `aria-expanded`/`aria-controls`/`aria-activedescendant` **only while the
-  panel exists**; at rest it is an ordinary textbox, which is also what
-  `aria-expanded` requires. Arrow keys move the active row and wrap; Enter
+  part of it — row or caption — never blurs the input. The input wears
+  `role="combobox"` **permanently** (ARIA 1.2), with `aria-autocomplete="list"`
+  and an `aria-expanded` that reports whether the panel is showing;
+  `aria-controls`/`aria-activedescendant` are present only while it is, since
+  they may not dangle. The role is fixed because WebKit rebuilds a focused
+  field's accessibility and editing context when its role changes, which drops
+  the caret to the end mid-typing. Arrow keys move the active row and wrap; Enter
   and Tab accept it. An Enter that accepts must never also file the entry —
   the guard that swallows that submission is disarmed in a microtask, so a
   later click on **Add entry** still submits. Keystrokes steering an IME

@@ -65,7 +65,7 @@ test('the capture suggestion panel and the entry sheet pass the same smoke', asy
   // introduces is offered on the very next token without a reload.
   const tag = `axe-${Math.random().toString(36).slice(2, 8)}`;
   const seeded = uniqueText('Axe seed');
-  await page.getByRole('textbox', { name: 'Add an entry' }).fill(`- ${seeded} #${tag}`);
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${seeded} #${tag}`);
   await page.getByRole('button', { name: 'Add entry' }).click();
   await expect(page.getByText(seeded, { exact: true })).toBeVisible();
   await page.locator('.composer__input').fill(`- ${uniqueText('Axe suggestion')} #`);
@@ -94,7 +94,7 @@ test('the capture suggestion panel and the entry sheet pass the same smoke', asy
     await phone.emulateMedia({ reducedMotion: 'reduce' });
     await openJournal(phone);
     const text = uniqueText('Axe sheet entry');
-    await phone.getByRole('textbox', { name: 'Add an entry' }).fill(`- ${text}`);
+    await phone.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text}`);
     await phone.getByRole('button', { name: 'Add entry' }).click();
     await phone.locator('.entry-row__content').filter({ hasText: text }).click();
     const sheet = phone.locator('.entry-sheet');

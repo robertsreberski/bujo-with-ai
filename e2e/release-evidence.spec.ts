@@ -973,7 +973,7 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
     }, Object.keys(DESIGN_TOKENS));
     expect(tokens).toEqual(DESIGN_TOKENS);
 
-    const composer = page.getByRole('textbox', { name: 'Add an entry' });
+    const composer = page.getByRole('combobox', { name: 'Add an entry' });
     await composer.focus();
     await expect(composer).toBeFocused();
     await expect(composer).toHaveCSS('border-color', 'rgb(228, 101, 46)');
@@ -1092,7 +1092,7 @@ test('normal motion stays within the approved bounds and reduced motion removes 
   await page.keyboard.press('Escape');
 
   const text = uniqueText('Motion evidence');
-  await page.getByRole('textbox', { name: 'Add an entry' }).fill(`- ${text}`);
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text}`);
   await page.getByRole('button', { name: 'Add entry' }).click();
   const toastMotion = await motionStyle(page.locator('.toast'));
   const row = page.locator('.entry-row').filter({ hasText: text });
@@ -1142,7 +1142,7 @@ test('normal motion stays within the approved bounds and reduced motion removes 
     await phone.emulateMedia({ reducedMotion: 'no-preference' });
     await openJournal(phone);
     const sheetText = uniqueText('Sheet motion evidence');
-    await phone.getByRole('textbox', { name: 'Add an entry' }).fill(`- ${sheetText}`);
+    await phone.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${sheetText}`);
     await phone.getByRole('button', { name: 'Add entry' }).click();
     await phone.locator('.entry-row__content').filter({ hasText: sheetText }).click();
 

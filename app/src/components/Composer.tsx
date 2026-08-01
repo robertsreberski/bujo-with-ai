@@ -191,16 +191,17 @@ export function Composer({
   const trackCaret = (element: HTMLInputElement) => setCaret(element.selectionStart);
 
   /*
-   * The combobox contract is worn only while the popup exists. At rest this is
-   * an ordinary textbox — which is also what `aria-expanded` needs, since that
-   * attribute is invalid on `role="textbox"`.
+   * The combobox contract is permanent, per ARIA 1.2: the input is always a
+   * combobox and `aria-expanded` reports whether the popup is showing. The role
+   * must never change on a focused field — WebKit rebuilds the accessibility
+   * and editing context on a role mutation, which drops the caret to the end.
+   * Only the popup-relative attributes come and go, because pointing
+   * `aria-controls`/`aria-activedescendant` at an element that does not exist
+   * is itself an accessibility violation.
    */
-  const comboboxProps = suggestions.open
+  const popupProps = suggestions.open
     ? ({
-        role: 'combobox',
-        'aria-expanded': true,
         'aria-controls': suggestions.panelId,
-        'aria-autocomplete': 'list',
         'aria-activedescendant': suggestions.activeOptionId,
       } as const)
     : {};
@@ -427,7 +428,10 @@ export function Composer({
               onClick={(event) => trackCaret(event.currentTarget)}
               onKeyUp={(event) => trackCaret(event.currentTarget)}
               onKeyDown={handleInputKeyDown}
-              {...comboboxProps}
+              role="combobox"
+              aria-expanded={suggestions.open}
+              aria-autocomplete="list"
+              {...popupProps}
             />
             {draft ? (
               <button
