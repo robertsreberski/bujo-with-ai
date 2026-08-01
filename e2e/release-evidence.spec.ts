@@ -553,7 +553,7 @@ test('a collection can be created, renamed, filled, opened, and archived without
   await expect(page.getByRole('status').filter({ hasText: 'Collection updated' })).toBeVisible();
   await expect(collectionsSection.getByText(renamedCollection, { exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Today', exact: true }).click();
+  await page.getByRole('button', { name: /^Today/ }).click();
   const entryRow = page.locator(`[data-entry-id="${entry.id}"]`);
   await entryRow.locator('.entry-row__content').click();
   const entryDialog = page.getByRole('dialog', { name: entryText });
@@ -993,7 +993,7 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
     await expect(aiBadge).toHaveCSS('color', 'rgb(240, 154, 112)');
     await expect(aiBadge.locator('path')).toHaveAttribute('d', SPARKLE_PATH);
 
-    await page.getByRole('button', { name: 'Review', exact: true }).click();
+    await page.getByRole('button', { name: /^Review/ }).click();
     const activity = page.getByRole('article').filter({ hasText: aiText });
     await expect(activity).toBeVisible();
     await expect(page.locator('.review-intro__icon path')).toHaveAttribute('d', SPARKLE_PATH);

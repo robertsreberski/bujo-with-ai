@@ -39,8 +39,12 @@ export const sameDestination = (left: Destination, right: Destination): boolean 
     ? right.kind === 'date' && left.date === right.date
     : right.kind === 'collection' && left.id === right.id;
 
-/** Calendar arithmetic on the passed date only; deliberately clock-free and pure. */
-function nextCalendarDate(date: string): string {
+/**
+ * Calendar arithmetic on the passed date only; deliberately clock-free and pure.
+ * Exported so the submit planner's "is this tomorrow?" test and the label's
+ * `Tomorrow` string can never drift apart.
+ */
+export function nextCalendarDate(date: string): string {
   const parsed = new Date(`${date}T12:00:00Z`);
   parsed.setUTCDate(parsed.getUTCDate() + 1);
   return parsed.toISOString().slice(0, 10);
@@ -51,6 +55,23 @@ export function humanizeSlug(slug: string): string {
   const words = slug.replace(/-+/g, ' ').trim();
   if (words.length === 0) return slug;
   return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+}
+
+/**
+ * The index view's slug rule, restated here so composer autocomplete mints the
+ * same id the collection editor would for the same name. The cap is 80 rather
+ * than the editor's 48 because a slug typed as `/slug` is bounded by the
+ * parser's `[A-Za-z0-9-]{1,80}` collection token, and the two must agree about
+ * what the owner just typed.
+ */
+export function slugifyCollection(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+    .slice(0, 80);
 }
 
 /**
@@ -77,6 +98,25 @@ function screenDestination(
     }
     default:
       return { kind: 'date', date: today };
+  }
+}
+
+/**
+ * The destination a screen is currently *showing*, or null for the screens that
+ * show none. Distinct from `screenDestination`: the index and the review log
+ * both file into today without displaying it, which is exactly the difference
+ * that decides whether a capture needs a "View" affordance.
+ */
+export function viewedDestination(route: JournalRoute, today: string): Destination | null {
+  switch (route.name) {
+    case 'today':
+      return { kind: 'date', date: route.date ?? today };
+    case 'month':
+      return { kind: 'collection', id: monthCollectionId(route.month ?? today.slice(0, 7)) };
+    case 'collection':
+      return { kind: 'collection', id: route.collectionId };
+    default:
+      return null;
   }
 }
 

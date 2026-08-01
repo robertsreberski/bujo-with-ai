@@ -5,8 +5,11 @@ import {
   destinationLabel,
   destinationRoute,
   humanizeSlug,
+  nextCalendarDate,
   resolveDestination,
   sameDestination,
+  slugifyCollection,
+  viewedDestination,
   type Destination,
 } from './destination';
 import type { JournalCollection } from './types';
@@ -282,5 +285,67 @@ describe('sameDestination', () => {
     expect(sameDestination({ kind: 'collection', id: 'a' }, { kind: 'collection', id: 'b' })).toBe(
       false,
     );
+  });
+});
+
+describe('slugifyCollection', () => {
+  it('mints the id the collection editor would mint for the same name', () => {
+    expect(slugifyCollection('Project Atlas')).toBe('project-atlas');
+    expect(slugifyCollection('  Q3 — goals!  ')).toBe('q3-goals');
+    expect(slugifyCollection('Café notes')).toBe('cafe-notes');
+  });
+
+  it('collapses to nothing when a name has no slug in it', () => {
+    expect(slugifyCollection('!!!')).toBe('');
+    expect(slugifyCollection('')).toBe('');
+  });
+
+  it('round trips through humanizeSlug for ordinary names', () => {
+    expect(humanizeSlug(slugifyCollection('Reading list'))).toBe('Reading list');
+  });
+
+  it('stops at the collection token width the parser accepts', () => {
+    expect(slugifyCollection('a'.repeat(120))).toHaveLength(80);
+  });
+});
+
+describe('nextCalendarDate', () => {
+  it('crosses month and year boundaries', () => {
+    expect(nextCalendarDate('2026-07-31')).toBe('2026-08-01');
+    expect(nextCalendarDate('2026-12-31')).toBe('2027-01-01');
+    expect(nextCalendarDate('2028-02-28')).toBe('2028-02-29');
+  });
+});
+
+describe('viewedDestination', () => {
+  it('reports the day, month, and collection a screen is showing', () => {
+    expect(viewedDestination({ name: 'today', date: null }, TODAY)).toEqual({
+      kind: 'date',
+      date: TODAY,
+    });
+    expect(viewedDestination({ name: 'today', date: '2026-07-12' }, TODAY)).toEqual({
+      kind: 'date',
+      date: '2026-07-12',
+    });
+    expect(viewedDestination({ name: 'month', month: '2026-09' }, TODAY)).toEqual({
+      kind: 'collection',
+      id: 'month:2026-09',
+    });
+    expect(viewedDestination({ name: 'collection', collectionId: 'reading' }, TODAY)).toEqual({
+      kind: 'collection',
+      id: 'reading',
+    });
+  });
+
+  it('reports nothing for the screens that display no destination', () => {
+    expect(viewedDestination({ name: 'index' }, TODAY)).toBeNull();
+    expect(viewedDestination({ name: 'review' }, TODAY)).toBeNull();
+  });
+
+  it('names an archived collection route, which files elsewhere but still shows it', () => {
+    expect(viewedDestination({ name: 'collection', collectionId: 'old-sprint' }, TODAY)).toEqual({
+      kind: 'collection',
+      id: 'old-sprint',
+    });
   });
 });

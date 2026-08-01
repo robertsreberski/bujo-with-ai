@@ -1,4 +1,6 @@
+import type { TagUsage } from '@journal/server/contracts/app';
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -8,15 +10,35 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react';
+import { CaptureHelp } from './CaptureHelp';
+import { ComposerSuggestions } from './ComposerSuggestions';
+import { DestinationChip } from './DestinationChip';
 import { Icon } from './Icon';
-import { parseDraft } from './capture';
+import { parseDraft, removeCaptureToken } from './capture';
+import { resolveDestination, sameDestination, type Destination } from './destination';
 import { entryIcon } from './entry-icons';
+import { SIGNIFIER_BY_TYPE, typeForSignifier } from './signifiers';
+import { useComposerSuggestions } from '../hooks/use-composer-suggestions';
 import { cn } from '../lib/utils';
-import { ENTRY_TYPES, TYPE_LABELS, type EntryType, type ParsedDraft } from './types';
+import type { JournalRoute } from '../routes/useJournalRoute';
+import {
+  ENTRY_TYPES,
+  TYPE_LABELS,
+  type EntryType,
+  type JournalCollection,
+  type ParsedDraft,
+} from './types';
 
 /** Preview chip shared by the parse result and its error variant. */
 const CHIP =
   'parse-chip inline-flex h-5 flex-none items-center rounded-sm bg-bg-line px-[7px] text-2xs font-medium text-fg-mid';
+
+/*
+ * `text-(length:--text-tag)`: tailwind-merge reads the bare `text-tag` size as a
+ * text *color* and drops it when a real color utility follows it in one cn().
+ */
+const KBD =
+  'ml-auto inline-flex min-w-4 flex-none items-center justify-center rounded-sm border border-border px-1 text-(length:--text-tag) font-mono text-fg-faint';
 
 interface ComposerProps {
   draft: string;
@@ -25,6 +47,18 @@ interface ComposerProps {
   onDefaultTypeChange: (type: EntryType) => void;
   onSubmit: (parsed: ParsedDraft) => void;
   onInputFocus?: (() => void) | undefined;
+  /** Screen context for the ambient destination. */
+  route: JournalRoute;
+  today: string;
+  collectionsById: Record<string, JournalCollection>;
+  /** Filing targets for the picker and `/slug` completion. */
+  collections?: readonly JournalCollection[] | undefined;
+  tagSuggestions?: readonly TagUsage[] | undefined;
+  onLoadTagSuggestions?: (() => void) | undefined;
+  chipOverride?: Destination | null | undefined;
+  onChipOverrideChange?: ((destination: Destination | null) => void) | undefined;
+  /** Bumped by `focusComposer`; every change pulls focus into the input. */
+  focusRequest?: number | undefined;
 }
 
 export function Composer({
@@ -34,14 +68,58 @@ export function Composer({
   onDefaultTypeChange,
   onSubmit,
   onInputFocus,
+  route,
+  today,
+  collectionsById,
+  collections = [],
+  tagSuggestions = [],
+  onLoadTagSuggestions,
+  chipOverride = null,
+  onChipOverrideChange,
+  focusRequest,
 }: ComposerProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [caret, setCaret] = useState<number | null>(null);
+  const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const focusMenuOnOpenRef = useRef(false);
+  const pendingCaretRef = useRef<number | null>(null);
+  // Set when Enter accepted a completion, so the submit it would otherwise
+  // trigger is swallowed without also disarming a click on "Add entry" —
+  // iOS Safari never blurs the input for that click, so it would still look open.
+  const consumedEnterRef = useRef(false);
   const labelId = useId();
   const menuLabelId = useId();
   const parsed = parseDraft(draft, defaultType);
+
+  const resolved = resolveDestination({
+    route,
+    today,
+    chipOverride,
+    parsedCollection: parsed.collection,
+    dateShift: parsed.dateShift === 'tomorrow' ? 1 : 0,
+    collectionsById,
+  });
+  const screenDestination = resolveDestination({
+    route,
+    today,
+    chipOverride: null,
+    parsedCollection: null,
+    dateShift: 0,
+    collectionsById,
+  }).destination;
+
+  const suggestions = useComposerSuggestions({
+    value: draft,
+    caret,
+    enabled: focused,
+    collections,
+    tags: tagSuggestions,
+    onLoadTags: onLoadTagSuggestions,
+  });
+
+  const focusInput = useCallback(() => inputRef.current?.focus(), []);
 
   useLayoutEffect(() => {
     if (menuOpen && focusMenuOnOpenRef.current) {
@@ -49,6 +127,21 @@ export function Composer({
       focusMenuOnOpenRef.current = false;
     }
   }, [menuOpen]);
+
+  // An accepted completion rewrites the draft through the store, so the caret is
+  // restored once the new value has actually landed in the DOM node.
+  useLayoutEffect(() => {
+    const position = pendingCaretRef.current;
+    if (position === null) return;
+    pendingCaretRef.current = null;
+    inputRef.current?.setSelectionRange(position, position);
+    setCaret(position);
+  }, [draft]);
+
+  useEffect(() => {
+    if (focusRequest === undefined) return;
+    inputRef.current?.focus();
+  }, [focusRequest]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -68,15 +161,127 @@ export function Composer({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    // A completion accepted with Enter must never also file the entry.
+    if (consumedEnterRef.current) {
+      consumedEnterRef.current = false;
+      return;
+    }
     if (!parsed.text || parsed.error) return;
     onSubmit(parsed);
     setMenuOpen(false);
     inputRef.current?.focus();
   };
 
+  const acceptSuggestion = (index: number) => {
+    const next = suggestions.accept(index);
+    if (next === null) return;
+    if (next.value === draft) {
+      // No draft change means no layout effect will fire — place the caret now
+      // instead of arming a ref that a later unrelated edit would consume.
+      pendingCaretRef.current = null;
+      inputRef.current?.setSelectionRange(next.caret, next.caret);
+      setCaret(next.caret);
+    } else {
+      pendingCaretRef.current = next.caret;
+      onDraftChange(next.value);
+    }
+    inputRef.current?.focus();
+  };
+
+  const trackCaret = (element: HTMLInputElement) => setCaret(element.selectionStart);
+
+  /*
+   * The combobox contract is worn only while the popup exists. At rest this is
+   * an ordinary textbox — which is also what `aria-expanded` needs, since that
+   * attribute is invalid on `role="textbox"`.
+   */
+  const comboboxProps = suggestions.open
+    ? ({
+        role: 'combobox',
+        'aria-expanded': true,
+        'aria-controls': suggestions.panelId,
+        'aria-autocomplete': 'list',
+        'aria-activedescendant': suggestions.activeOptionId,
+      } as const)
+    : {};
+
+  const clearDestination = ((): (() => void) | null => {
+    if (resolved.source === 'chip') return () => onChipOverrideChange?.(null);
+    if (resolved.source !== 'token') return null;
+    const destination = resolved.destination;
+    if (destination.kind === 'collection') {
+      return () => onDraftChange(removeCaptureToken(draft, 'collection', destination.id));
+    }
+    return () => onDraftChange(removeCaptureToken(draft, 'tomorrow'));
+  })();
+
+  const selectDestination = (destination: Destination) => {
+    // Re-picking the screen's own default retires the override rather than
+    // pinning a chip that only repeats what the screen already said.
+    onChipOverrideChange?.(sameDestination(destination, screenDestination) ? null : destination);
+  };
+
+  const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    // Keys pressed to steer an IME composition are the IME's, not ours: Enter
+    // confirms the composition and Escape cancels it — never accept, never
+    // clear the draft.
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === 'Enter') consumedEnterRef.current = false;
+    if (suggestions.open) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        suggestions.move(event.key === 'ArrowDown' ? 1 : -1);
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        if (event.key === 'Enter') {
+          // Swallow only the implicit form submission this same Enter would
+          // dispatch (synchronously, within this task). Disarming in a
+          // microtask keeps a later Add-entry *click* from being eaten —
+          // preventDefault() usually stops the submit from ever firing.
+          consumedEnterRef.current = true;
+          queueMicrotask(() => {
+            consumedEnterRef.current = false;
+          });
+        }
+        acceptSuggestion(suggestions.activeIndex);
+        return;
+      }
+    }
+    if (event.key !== 'Escape') return;
+    // One ladder, rung by rung: the panel, then the type menu, then the draft,
+    // and only an already-empty composer gives the keyboard back to the page.
+    event.preventDefault();
+    event.stopPropagation();
+    if (suggestions.open) {
+      suggestions.dismiss();
+      return;
+    }
+    if (menuOpen) {
+      setMenuOpen(false);
+      return;
+    }
+    if (draft) {
+      onDraftChange('');
+      return;
+    }
+    inputRef.current?.blur();
+  };
+
   const keepComposerFocus = (event: PointerEvent) => event.preventDefault();
 
   const handleMenuKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    // A bare signifier keystroke is the shortcut; Ctrl+O is the browser's.
+    const bareKey = event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey;
+    const signifierType = bareKey ? typeForSignifier(event.key) : null;
+    if (signifierType !== null) {
+      event.preventDefault();
+      onDefaultTypeChange(signifierType);
+      setMenuOpen(false);
+      inputRef.current?.focus();
+      return;
+    }
     if (
       event.key !== 'ArrowDown' &&
       event.key !== 'ArrowUp' &&
@@ -101,36 +306,51 @@ export function Composer({
 
   return (
     <div className="composer-shell relative z-(--z-composer) flex-none border-t border-border bg-bg pb-(--sab) keyboard-open:fixed keyboard-open:right-auto keyboard-open:bottom-[calc(100%_-_var(--vv-offset,0px)_-_var(--vv-height,100%))] keyboard-open:left-[var(--pane-left,var(--sal))] keyboard-open:w-[var(--pane-width,calc(100%_-_var(--sal)_-_var(--sar)))] keyboard-open:pb-0">
-      <div className="mx-auto w-full max-w-(--content-width) px-3 pt-2 pb-2.5">
-        <div
-          className="flex min-h-[22px] items-center gap-[5px] overflow-x-auto pb-1 [scrollbar-width:none]"
-          aria-live="polite"
-        >
-          {parsed.error ? (
-            <span
-              className={cn(
-                CHIP,
-                'parse-chip--error border border-danger-border bg-danger-bg text-danger',
-              )}
-            >
-              {parsed.error}
-            </span>
-          ) : draft ? (
-            <>
-              <span className={CHIP}>{TYPE_LABELS[parsed.type]}</span>
-              {parsed.time ? <span className={CHIP}>at {parsed.time}</span> : null}
-              {parsed.tags.map((tag) => (
-                <span className={CHIP} key={tag}>
-                  #{tag}
-                </span>
-              ))}
-              {parsed.dateShift ? <span className={CHIP}>tomorrow</span> : null}
-            </>
-          ) : (
-            <span className="overflow-hidden text-tag text-fg-mute text-ellipsis whitespace-nowrap [&>b]:font-medium">
-              Shortcuts: <b>.</b> task · <b>o</b> event · <b>-</b> note · #tag · @3pm · &gt;tomorrow
-            </span>
-          )}
+      <div className="relative mx-auto w-full max-w-(--content-width) px-3 pt-2 pb-2.5">
+        <ComposerSuggestions state={suggestions} onAccept={acceptSuggestion} />
+        <div className="flex min-h-[22px] items-center gap-[5px] pb-1">
+          <DestinationChip
+            resolved={resolved}
+            route={route}
+            today={today}
+            collections={collections}
+            collectionsById={collectionsById}
+            screenDestination={screenDestination}
+            onSelect={selectDestination}
+            onClear={clearDestination}
+            onRestoreFocus={focusInput}
+          />
+          <div
+            className="flex min-w-0 flex-1 items-center gap-[5px] overflow-x-auto [scrollbar-width:none]"
+            aria-live="polite"
+          >
+            {parsed.error ? (
+              <span
+                className={cn(
+                  CHIP,
+                  'parse-chip--error border border-danger-border bg-danger-bg text-danger',
+                )}
+              >
+                {parsed.error}
+              </span>
+            ) : draft ? (
+              <>
+                <span className={CHIP}>{TYPE_LABELS[parsed.type]}</span>
+                {parsed.time ? <span className={CHIP}>at {parsed.time}</span> : null}
+                {parsed.tags.map((tag) => (
+                  <span className={CHIP} key={tag}>
+                    #{tag}
+                  </span>
+                ))}
+              </>
+            ) : (
+              <span className="overflow-hidden text-tag text-fg-mute text-ellipsis whitespace-nowrap [&>b]:font-medium">
+                Shortcuts: <b>.</b> task · <b>o</b> event · <b>-</b> note · #tag · @3pm ·
+                &gt;tomorrow
+              </span>
+            )}
+          </div>
+          <CaptureHelp />
         </div>
         <form className="flex items-center gap-2" onSubmit={submit}>
           <button
@@ -142,7 +362,16 @@ export function Composer({
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             aria-controls={`${labelId}-menu`}
-            aria-label={`Entry type: ${TYPE_LABELS[parsed.type]}`}
+            aria-label={
+              parsed.signifierWon
+                ? `Entry type: ${TYPE_LABELS[parsed.type]}. Type set by leading '${SIGNIFIER_BY_TYPE[parsed.type]}' — remove it to choose`
+                : `Entry type: ${TYPE_LABELS[parsed.type]}`
+            }
+            title={
+              parsed.signifierWon
+                ? `Type set by leading '${SIGNIFIER_BY_TYPE[parsed.type]}' — remove it to choose`
+                : undefined
+            }
             onClick={() => setMenuOpen((value) => !value)}
             onPointerDown={(event) => {
               focusMenuOnOpenRef.current = false;
@@ -172,17 +401,45 @@ export function Composer({
           <label className="sr-only" id={labelId} htmlFor={`${labelId}-input`}>
             Add an entry
           </label>
-          <input
-            ref={inputRef}
-            id={`${labelId}-input`}
-            className="composer__input h-9 min-w-0 flex-1 touch:h-10"
-            value={draft}
-            onChange={(event) => onDraftChange(event.currentTarget.value)}
-            placeholder="Add an entry…"
-            autoComplete="off"
-            enterKeyHint="done"
-            onFocus={onInputFocus}
-          />
+          <div className="relative flex min-w-0 flex-1 items-center">
+            <input
+              ref={inputRef}
+              id={`${labelId}-input`}
+              className={cn('composer__input h-9 w-full min-w-0 touch:h-10', draft && 'pr-10')}
+              value={draft}
+              onChange={(event) => {
+                trackCaret(event.currentTarget);
+                onDraftChange(event.currentTarget.value);
+              }}
+              placeholder="Add an entry…"
+              autoComplete="off"
+              enterKeyHint="done"
+              onFocus={(event) => {
+                setFocused(true);
+                trackCaret(event.currentTarget);
+                onInputFocus?.();
+              }}
+              onBlur={() => setFocused(false)}
+              onClick={(event) => trackCaret(event.currentTarget)}
+              onKeyUp={(event) => trackCaret(event.currentTarget)}
+              onKeyDown={handleInputKeyDown}
+              {...comboboxProps}
+            />
+            {draft ? (
+              <button
+                className="absolute top-1/2 right-1 grid size-7 -translate-y-1/2 place-items-center rounded-sm text-fg-mute hover:bg-bg-line hover:text-fg touch:size-10"
+                type="button"
+                aria-label="Clear draft"
+                onPointerDown={keepComposerFocus}
+                onClick={() => {
+                  onDraftChange('');
+                  inputRef.current?.focus();
+                }}
+              >
+                <Icon name="close" size={13} />
+              </button>
+            ) : null}
+          </div>
           <button
             className="composer__submit grid size-9 min-w-9 place-items-center rounded-md bg-primary text-primary-fg hover:bg-primary-hover touch:size-10 touch:min-w-10"
             type="submit"
@@ -229,6 +486,11 @@ export function Composer({
                 <Icon name={entryIcon[type]} size={14} />
                 <span className="flex-1 text-left">{TYPE_LABELS[type]}</span>
                 {defaultType === type ? <Icon name="check" size={13} /> : null}
+                {/* Hidden from the name: the label already says "Task", and the
+                    legend behind the help button teaches the signifier. */}
+                <kbd className={KBD} aria-hidden="true">
+                  {SIGNIFIER_BY_TYPE[type]}
+                </kbd>
               </button>
             ))}
           </div>

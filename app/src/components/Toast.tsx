@@ -1,9 +1,16 @@
 import { Icon } from './Icon';
+import { Button } from './ui/button';
 import { cn } from '../lib/utils';
+
+export interface ToastAction {
+  label: string;
+  onAction: () => void;
+}
 
 interface ToastProps {
   message: string;
   tone?: 'success' | 'error';
+  action?: ToastAction | undefined;
 }
 
 /*
@@ -16,7 +23,7 @@ interface ToastProps {
 const TOAST =
   'toast fixed right-[max(12px,var(--sar))] bottom-[calc(var(--composer-height,calc(88px_+_var(--sab)))_+_6px)] left-[max(12px,var(--sal))] z-(--z-toast) mx-auto flex min-h-10 w-max max-w-[calc(100%_-_24px)] items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium shadow-(--shadow-toast) animate-(--animate-toast-in) motion-reduce:animate-none keyboard-open:bottom-[calc(var(--composer-height,88px)_+_6px_+_(100%_-_var(--vv-offset,0px)_-_var(--vv-height,100%)))]';
 
-export function Toast({ message, tone = 'success' }: ToastProps) {
+export function Toast({ message, tone = 'success', action }: ToastProps) {
   return (
     <div
       className={cn(
@@ -24,12 +31,30 @@ export function Toast({ message, tone = 'success' }: ToastProps) {
         tone === 'error'
           ? 'toast--error border border-danger-border bg-danger-bg text-danger'
           : 'bg-primary text-primary-fg',
+        action && 'pr-1.5',
       )}
       role={tone === 'error' ? 'alert' : 'status'}
       aria-live="polite"
     >
       <Icon name={tone === 'error' ? 'warning' : 'check'} size={14} />
       <span>{message}</span>
+      {action ? (
+        <Button
+          className={cn(
+            'toast__action -my-1 flex-none underline underline-offset-2',
+            // The toast owns a saturated background, so the ghost variant's
+            // muted foreground and hover tint are both restated against it.
+            tone === 'error'
+              ? 'text-danger hover:bg-danger-border'
+              : 'text-primary-fg hover:bg-primary-hover',
+          )}
+          variant="ghost"
+          size="sm"
+          onClick={action.onAction}
+        >
+          {action.label}
+        </Button>
+      ) : null}
     </div>
   );
 }

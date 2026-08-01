@@ -66,7 +66,7 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
 
   const visiblePrimaryButtons = page
     .getByRole('button')
-    .filter({ hasText: /^(Today|Month|Index|Review)$/ });
+    .filter({ hasText: /^(Today|Month|Index|Review)\s*(\d+\+?)?$/ });
   await expect(visiblePrimaryButtons).toHaveCount(4);
   for (const button of await visiblePrimaryButtons.all()) {
     const box = await button.boundingBox();
@@ -127,7 +127,7 @@ test('all mobile form and dialog controls keep 40px touch targets', async ({ pag
   await expectTouchTargets(page, 'New collection');
   await page.keyboard.press('Escape');
 
-  await page.getByRole('button', { name: 'Today', exact: true }).click();
+  await page.getByRole('button', { name: /^Today/ }).click();
   const entryText = uniqueText('Touch target entry');
   await page.getByRole('textbox', { name: 'Add an entry' }).fill(entryText);
   await page.getByRole('button', { name: 'Add entry' }).click();

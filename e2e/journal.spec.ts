@@ -117,7 +117,8 @@ test('owner capture persists and the four primary views navigate by semantic con
   ] as const;
 
   for (const route of routes) {
-    await page.getByRole('button', { name: route.button, exact: true }).click();
+    // Prefix match: nav names may carry a count badge suffix ("Today — 1 open task").
+    await page.getByRole('button', { name: new RegExp(`^${route.button}`) }).click();
     await expect(page).toHaveURL(new RegExp(`${route.path.replace('/', '\\/')}(?:\\?|$)`));
     await expect(page.getByRole('region', { name: route.landmark })).toBeVisible();
   }
@@ -321,7 +322,7 @@ test('an automatic MCP write appears in Activity and can be reverted by the owne
     await client.close();
   }
 
-  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await page.getByRole('button', { name: /^Review/ }).click();
   const activity = page.getByRole('article').filter({ hasText: text });
   await expect(activity).toBeVisible();
   await activity.getByRole('button', { name: 'Revert' }).click();
@@ -332,7 +333,7 @@ test('an automatic MCP write appears in Activity and can be reverted by the owne
   await expect(page.getByText('Change reverted')).toBeVisible();
   await expect(activity.getByText('Reverted', { exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Today', exact: true }).click();
+  await page.getByRole('button', { name: /^Today/ }).click();
   await expect(page.getByText(text, { exact: true })).toHaveCount(0);
 });
 
@@ -397,7 +398,7 @@ test('owner capture and automatic add-update-revert stay live and conflict safe'
     await client.close();
   }
 
-  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await page.getByRole('button', { name: /^Review/ }).click();
   const updateActivity = page.getByRole('article').filter({ hasText: updateReason });
   const addActivity = page
     .getByRole('article')
@@ -414,7 +415,7 @@ test('owner capture and automatic add-update-revert stay live and conflict safe'
   await expect(addActivity.getByText('Changed since — newer work preserved')).toBeVisible();
   await expect(addActivity.getByRole('button', { name: 'Revert' })).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Today', exact: true }).click();
+  await page.getByRole('button', { name: /^Today/ }).click();
   const restoredRow = page.locator(`[data-entry-id="${added.entry.id}"]`);
   await expect(restoredRow.getByText(originalText, { exact: true })).toBeVisible();
   await expect(restoredRow.getByText(updatedText, { exact: true })).toHaveCount(0);

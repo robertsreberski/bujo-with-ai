@@ -4,6 +4,7 @@ import { Icon } from '../components/Icon';
 import { Button } from '../components/ui/button';
 import { daysInMonth, formatLongDate, formatMonth, mondayStartOffset } from '../components/dates';
 import { cn } from '../lib/utils';
+import { journalActions } from '../store/journal-store';
 import {
   CALENDAR_DAY,
   CARD,
@@ -77,6 +78,10 @@ export function MonthView({
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
     [entries, month],
   );
+  // The month log is a server-owned collection, so an invite files into it by
+  // id rather than by date — the same address the schedule action uses.
+  const addToMonthlyLog = () =>
+    journalActions.focusComposer({ kind: 'collection', id: `month:${month}` });
   const habits = useMemo(() => {
     const names = [
       ...new Set(
@@ -180,7 +185,18 @@ export function MonthView({
             </h2>
             <p className={SECTION_COPY}>Things that belong to the month, not to a day.</p>
           </div>
-          <span className={SECTION_COUNT}>{monthlyEntries.length} items</span>
+          <div className="flex flex-none items-center gap-1.5">
+            <span className={SECTION_COUNT}>{monthlyEntries.length} items</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="-mr-1.5 size-8"
+              aria-label={`Add to ${formatMonth(month)} log`}
+              onClick={() => addToMonthlyLog()}
+            >
+              <Icon name="plus" size={15} />
+            </Button>
+          </div>
         </header>
         {monthlyEntries.length > 0 ? (
           monthlyEntries.map((entry) => (
@@ -193,7 +209,17 @@ export function MonthView({
             />
           ))
         ) : (
-          <div className={SECTION_EMPTY}>Nothing belongs to this month yet.</div>
+          <div className={SECTION_EMPTY}>
+            <p>Nothing belongs to {formatMonth(month)} yet.</p>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="mt-2.5"
+              onClick={() => addToMonthlyLog()}
+            >
+              <Icon name="plus" size={13} /> Add to {formatMonth(month)} log
+            </Button>
+          </div>
         )}
       </section>
 

@@ -119,6 +119,12 @@ export interface JournalClientRecord {
   deadLetters: DeadLetter[];
   /** Secret-free token metadata retained for offline Activity attribution. */
   agentTokens: AgentToken[];
+  /**
+   * When the owner last opened Review, for the unseen-change count. Optional
+   * because records written before the count existed simply do not have it;
+   * they hydrate as `null`, which reads every recorded change as unseen.
+   */
+  lastReviewSeenAt?: string | null;
 }
 
 export interface CreateEntryInput {

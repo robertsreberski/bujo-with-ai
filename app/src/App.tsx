@@ -6,13 +6,22 @@ import { ReviewView } from './views/ReviewView';
 import { TodayView } from './views/TodayView';
 import { Composer } from './components/Composer';
 import { DeadLetterDialog } from './components/DeadLetterDialog';
-import { EntryDialog } from './components/EntryDialog';
+import { EntryDetailHost } from './components/EntryDetailHost';
 import { MigrationDialog } from './components/MigrationDialog';
 import { SearchDialog } from './components/SearchDialog';
 import { SettingsDialog, type AgentTokenView } from './components/SettingsDialog';
 import { Shell } from './components/Shell';
-import { Toast } from './components/Toast';
+import { Toast, type ToastAction } from './components/Toast';
 import { formatLongDate, formatMonth } from './components/dates';
+import {
+  destinationLabel,
+  destinationRoute,
+  resolveDestination,
+  sameDestination,
+  viewedDestination,
+  type Destination,
+} from './components/destination';
+import { planSubmit } from './components/submit';
 import type {
   ActivityItem,
   DisplayPreferences,
@@ -23,7 +32,13 @@ import type {
 import { isTextEntryTarget, useViewportLayout } from './hooks/use-viewport-layout';
 import { useJournalRoute } from './routes/useJournalRoute';
 import { createUlid } from './store/ids';
-import { journalActions, useJournalStore } from './store/journal-store';
+import {
+  journalActions,
+  selectActiveCollections,
+  selectOpenTodayCount,
+  selectUnseenReviewCount,
+  useJournalStore,
+} from './store/journal-store';
 
 type Overlay = 'search' | 'settings' | 'deadLetters' | null;
 
@@ -31,7 +46,11 @@ interface ToastState {
   id: number;
   message: string;
   tone: 'success' | 'error';
+  action?: ToastAction | undefined;
 }
+
+/** A toast with something to do stays long enough to be acted on. */
+const TOAST_MS = { plain: 2_400, withAction: 4_000 };
 
 const messageFromError = (error: unknown): string => {
   if (error instanceof Error && error.message) return error.message;
@@ -47,9 +66,16 @@ export default function App() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [migrationEntries, setMigrationEntries] = useState<JournalEntry[] | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
+  // Keyed by the focus key so a picked destination survives repeated captures on
+  // one screen and lapses the moment the owner navigates somewhere else.
+  const [chipState, setChipState] = useState<{ key: string; destination: Destination } | null>(
+    null,
+  );
+  const [focusRequest, setFocusRequest] = useState<number | undefined>(undefined);
   const latestNoticeRef = useRef<string | null>(null);
   const reviewTokensLoadedRef = useRef(false);
   const loadedRoutesRef = useRef(new Set<string>());
+  const routeFocusKeyRef = useRef('');
 
   const entries = useMemo(
     () => Object.values(store.entriesById).filter((entry) => entry.deletedAt === null),
@@ -68,10 +94,30 @@ export default function App() {
   // The month a detail surface should file into and name in its schedule label:
   // the browsed month while the month log is open, the current month elsewhere.
   const contextMonth = route.name === 'month' ? displayedMonth : null;
+  const routeFocusKey =
+    route.name === 'today'
+      ? `today:${route.date ?? store.today}`
+      : route.name === 'month'
+        ? `month:${displayedMonth}`
+        : route.name === 'collection'
+          ? `collection:${route.collectionId}`
+          : route.name;
 
-  const say = useCallback((message: string, tone: 'success' | 'error' = 'success') => {
-    setToast({ id: Date.now(), message, tone });
-  }, []);
+  // Memoised, never subscribed: the selector builds a fresh array per call, and
+  // `useJournalStore(selector)` would hand React a new snapshot every render.
+  const activeCollections = useMemo(() => selectActiveCollections(store), [store]);
+  const chipOverride = chipState?.key === routeFocusKey ? chipState.destination : null;
+  const counts = useMemo(
+    () => ({ today: selectOpenTodayCount(store), review: selectUnseenReviewCount(store) }),
+    [store],
+  );
+
+  const say = useCallback(
+    (message: string, tone: 'success' | 'error' = 'success', action?: ToastAction) => {
+      setToast({ id: Date.now(), message, tone, action });
+    },
+    [],
+  );
 
   const perform = useCallback(
     async <T,>(operation: () => Promise<T>, success?: string): Promise<T> => {
@@ -101,11 +147,19 @@ export default function App() {
     return () => journalActions.shutdown();
   }, [say]);
 
+  // Visiting Review stamps everything seen; the activity-length dep also clears
+  // items that stream in while the screen is open. No lastReviewSeenAt dep — a
+  // stamp must not retrigger itself.
+  useEffect(() => {
+    if (route.name !== 'review') return;
+    journalActions.markReviewSeen();
+  }, [route.name, store.activityOrder.length]);
+
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(
       () => setToast((current) => (current?.id === toast.id ? null : current)),
-      2400,
+      toast.action ? TOAST_MS.withAction : TOAST_MS.plain,
     );
     return () => window.clearTimeout(timer);
   }, [toast]);
@@ -124,11 +178,53 @@ export default function App() {
         if (document.querySelector('[role="dialog"]')) return;
         setSearchQuery('');
         setOverlay('search');
+        return;
       }
+      // `/` jumps to the composer, but only when it is not already a character
+      // the owner is typing somewhere — including into the composer itself.
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (document.querySelector('[role="dialog"]')) return;
+      if (isTextEntryTarget(event.target as Element | null)) return;
+      event.preventDefault();
+      journalActions.focusComposer();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  useEffect(() => {
+    routeFocusKeyRef.current = routeFocusKey;
+  }, [routeFocusKey]);
+
+  const screenDestinationRef = useRef<Destination | null>(null);
+  useEffect(() => {
+    screenDestinationRef.current = viewedDestination(route, store.today);
+  }, [route, store.today]);
+
+  // The cross-agent contract: a view asks for the composer, App applies the
+  // destination as this screen's chip and pushes focus down to the input. Read
+  // as a store subscription rather than a render-time effect so a preset never
+  // re-applies when something unrelated re-renders App.
+  useEffect(
+    () =>
+      useJournalStore.subscribe((state, previous) => {
+        const preset = state.composerPreset;
+        if (preset === null || preset === previous.composerPreset) return;
+        if (preset.destination !== null) {
+          // A preset that only repeats the screen's own default would pin a
+          // chip whose clear button does nothing — retire it instead, exactly
+          // as the picker does when the default is re-picked.
+          const screenDest = screenDestinationRef.current;
+          setChipState(
+            screenDest !== null && sameDestination(preset.destination, screenDest)
+              ? null
+              : { key: routeFocusKeyRef.current, destination: preset.destination },
+          );
+        }
+        setFocusRequest(preset.nonce);
+      }),
+    [],
+  );
 
   const openSearch = useCallback((query = '') => {
     setSearchQuery(query);
@@ -190,24 +286,38 @@ export default function App() {
 
   const submitDraft = useCallback(
     (parsed: ParsedDraft) => {
-      const id = createUlid();
-      run(
-        () =>
-          journalActions.createEntry({
-            id,
-            text: parsed.text,
-            type: parsed.type,
-            time: parsed.time,
-            tags: parsed.tags,
-            collection: null,
-            dateShift: parsed.dateShift,
-          }),
-        parsed.dateShift ? 'Added to tomorrow' : 'Added to today',
-      );
+      const resolved = resolveDestination({
+        route,
+        today: store.today,
+        chipOverride,
+        parsedCollection: parsed.collection,
+        dateShift: parsed.dateShift === 'tomorrow' ? 1 : 0,
+        collectionsById: store.collectionsById,
+      });
+      const plan = planSubmit(parsed, resolved, store.today);
+      // Both calls enqueue and return; the outbox is FIFO, so a brand new
+      // collection is always created before the entry that files into it —
+      // offline included.
+      if (plan.collection) {
+        void journalActions.createCollection(plan.collection).catch(() => undefined);
+      }
+      const label = destinationLabel(resolved.destination, store.collectionsById, store.today);
+      // "View" is only worth offering when the entry landed off-screen.
+      const viewed = viewedDestination(route, store.today);
+      const onScreen = viewed !== null && sameDestination(viewed, resolved.destination);
+      const target = destinationRoute(resolved.destination, store.today);
+      void perform(() => journalActions.createEntry({ id: createUlid(), ...plan.entry }))
+        .then(() => {
+          say(
+            `Added to ${label}`,
+            'success',
+            onScreen ? undefined : { label: 'View', onAction: () => navigate(target) },
+          );
+        })
+        .catch(() => undefined);
       journalActions.setDraft('');
-      navigate({ name: 'today', date: parsed.dateShift ? null : store.today });
     },
-    [navigate, run, store.today],
+    [chipOverride, navigate, perform, route, say, store.collectionsById, store.today],
   );
 
   // PWA-16: focusing the composer brings the newest day back under the
@@ -394,14 +504,6 @@ export default function App() {
     route.name === 'today'
       ? formatLongDate(route.date ?? store.today)
       : `${dayCount} ${dayCount === 1 ? 'day' : 'days'} logged`;
-  const routeFocusKey =
-    route.name === 'today'
-      ? `today:${route.date ?? store.today}`
-      : route.name === 'month'
-        ? `month:${displayedMonth}`
-        : route.name === 'collection'
-          ? `collection:${route.collectionId}`
-          : route.name;
   const selectedTodayDate = route.name === 'today' ? route.date : null;
 
   useEffect(() => {
@@ -420,7 +522,9 @@ export default function App() {
         return;
       }
       const content = document.getElementById('journal-content');
-      content?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      if (typeof content?.scrollTo === 'function') {
+        content.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      }
       content?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(frame);
@@ -447,6 +551,7 @@ export default function App() {
         route={route}
         today={store.today}
         dayCount={dayCount}
+        counts={counts}
         online={
           store.online && store.connectionStatus !== 'offline' && store.connectionStatus !== 'error'
         }
@@ -467,6 +572,17 @@ export default function App() {
             onDefaultTypeChange={journalActions.setDefaultType}
             onSubmit={submitDraft}
             onInputFocus={route.name === 'today' ? revealNewestDay : undefined}
+            route={route}
+            today={store.today}
+            collectionsById={store.collectionsById}
+            collections={activeCollections}
+            tagSuggestions={store.tagSuggestions}
+            onLoadTagSuggestions={journalActions.loadTagSuggestions}
+            chipOverride={chipOverride}
+            onChipOverrideChange={(destination) =>
+              setChipState(destination === null ? null : { key: routeFocusKey, destination })
+            }
+            focusRequest={focusRequest}
           />
         }
       >
@@ -474,7 +590,7 @@ export default function App() {
       </Shell>
 
       {detailEntry ? (
-        <EntryDialog
+        <EntryDetailHost
           entry={detailEntry}
           collections={collections}
           today={store.today}
@@ -541,7 +657,9 @@ export default function App() {
           }
         />
       ) : null}
-      {toast ? <Toast message={toast.message} tone={toast.tone} key={toast.id} /> : null}
+      {toast ? (
+        <Toast message={toast.message} tone={toast.tone} action={toast.action} key={toast.id} />
+      ) : null}
     </>
   );
 }

@@ -7,6 +7,14 @@ import { Button } from './ui/button';
 import { formatLongDate } from './dates';
 import { cn } from '../lib/utils';
 
+/** The two nav destinations that carry a count, and what that count means. */
+export interface ShellCounts {
+  /** Open tasks and habits due today or earlier, outside collections. */
+  today?: number;
+  /** Automatic changes recorded since Review was last opened. */
+  review?: number;
+}
+
 interface ShellProps {
   route: JournalRoute;
   today: string;
@@ -15,6 +23,7 @@ interface ShellProps {
   syncing: boolean;
   outboxCount: number;
   deadLetterCount: number;
+  counts?: ShellCounts;
   title: string;
   subtitle: string;
   children: ReactNode;
@@ -25,16 +34,23 @@ interface ShellProps {
   onDeadLetters: () => void;
 }
 
+type NavName = 'today' | 'month' | 'index' | 'review';
+
 const navItems: Array<{
-  name: 'today' | 'month' | 'index' | 'review';
+  name: NavName;
   label: string;
   icon: IconName;
+  /** The count's unit, singular, for the accessible name. */
+  unit?: string;
 }> = [
-  { name: 'today', label: 'Today', icon: 'check' },
+  { name: 'today', label: 'Today', icon: 'check', unit: 'open task' },
   { name: 'month', label: 'Month', icon: 'calendar' },
   { name: 'index', label: 'Index', icon: 'folder' },
-  { name: 'review', label: 'Review', icon: 'sparkle' },
+  { name: 'review', label: 'Review', icon: 'sparkle', unit: 'unseen change' },
 ];
+
+/** Two digits is all the badge has room for; past that the number stops mattering. */
+const badgeLabel = (count: number): string => (count > 9 ? '9+' : String(count));
 
 /** The 720px reading measure the header, tabs, status strip, and content share. */
 const contentColumn = 'mx-auto w-full max-w-(--content-width)';
@@ -43,7 +59,11 @@ const contentColumn = 'mx-auto w-full max-w-(--content-width)';
    to the 40px coarse-pointer minimum through the `touch:` variant. */
 const navItemClassName =
   'flex h-[34px] items-center gap-[9px] rounded-md px-[9px] text-left text-md hover:bg-bg-line hover:text-fg touch:min-h-10';
-const tabClassName = 'h-[30px] min-w-0 rounded-md text-sm font-medium touch:min-h-10';
+/* A counted segment carries label + badge, so the tab is a centred flex row and
+   clips rather than wraps: two lines would not fit its 30px box, and an
+   overflowing one would widen the 320px frame the narrow sweep measures. */
+const tabClassName =
+  'flex h-[30px] min-w-0 items-center justify-center gap-1.5 overflow-hidden rounded-md text-sm font-medium whitespace-nowrap touch:min-h-10';
 
 export function Shell({
   route,
@@ -53,6 +73,7 @@ export function Shell({
   syncing,
   outboxCount,
   deadLetterCount,
+  counts,
   title,
   subtitle,
   children,
@@ -73,12 +94,22 @@ export function Shell({
   });
   useChromeGeometry(paneRef, composerRef);
 
-  const isActive = (name: (typeof navItems)[number]['name']) =>
+  const isActive = (name: NavName) =>
     name === route.name || (name === 'index' && route.name === 'collection');
-  const navigate = (name: (typeof navItems)[number]['name']) => {
+  const navigate = (name: NavName) => {
     if (name === 'today') onNavigate({ name: 'today', date: null });
     else if (name === 'month') onNavigate({ name: 'month', month: null });
     else onNavigate({ name });
+  };
+  // Counts are announced, not just drawn: the badge itself is decorative, so the
+  // number joins the button's accessible name instead of being read as a digit
+  // floating after the label.
+  const countFor = (name: NavName): number =>
+    name === 'today' ? (counts?.today ?? 0) : name === 'review' ? (counts?.review ?? 0) : 0;
+  const accessibleName = (item: (typeof navItems)[number]): string | undefined => {
+    const count = countFor(item.name);
+    if (count === 0 || !item.unit) return undefined;
+    return `${item.label} — ${count} ${item.unit}${count === 1 ? '' : 's'}`;
   };
   const dateCaption = formatLongDate(today);
   const mobileSubtitle = `${dateCaption} · ${dayCount} ${dayCount === 1 ? 'day' : 'days'} logged`;
@@ -107,11 +138,21 @@ export function Shell({
                   isActive(item.name) ? 'nav-item--active bg-bg-raised text-fg' : 'text-fg-body',
                 )}
                 aria-current={isActive(item.name) ? 'page' : undefined}
+                aria-label={accessibleName(item)}
                 key={item.name}
                 onClick={() => navigate(item.name)}
               >
                 <Icon name={item.icon} size={15} />
                 <span className="min-w-0 flex-1">{item.label}</span>
+                {countFor(item.name) > 0 ? (
+                  <Badge
+                    variant={isActive(item.name) ? 'countActive' : 'count'}
+                    className="nav-item__count flex-none"
+                    aria-hidden="true"
+                  >
+                    {badgeLabel(countFor(item.name))}
+                  </Badge>
+                ) : null}
               </button>
             ))}
           </nav>
@@ -195,10 +236,20 @@ export function Shell({
                       : 'text-fg-mute hover:bg-bg-line hover:text-fg',
                   )}
                   aria-current={isActive(item.name) ? 'page' : undefined}
+                  aria-label={accessibleName(item)}
                   key={item.name}
                   onClick={() => navigate(item.name)}
                 >
                   {item.label}
+                  {countFor(item.name) > 0 ? (
+                    <Badge
+                      variant={isActive(item.name) ? 'countActive' : 'count'}
+                      className="tab__count flex-none"
+                      aria-hidden="true"
+                    >
+                      {badgeLabel(countFor(item.name))}
+                    </Badge>
+                  ) : null}
                 </button>
               ))}
             </nav>

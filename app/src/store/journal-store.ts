@@ -28,6 +28,7 @@ import {
   registerJournalServiceWorker,
   subscribePwaRegistration,
 } from '../pwa/registration';
+import type { Destination } from '../components/destination';
 import { createUlid } from './ids';
 import type {
   ConnectionStatus,
@@ -163,6 +164,9 @@ export interface JournalState extends MirrorData {
   /** Capture tag vocabulary; in-memory only, never part of the persisted record. */
   tagSuggestions: TagUsage[];
   tagsFetchedAt: string | null;
+  /** When the owner last opened Review; null until they ever have. */
+  lastReviewSeenAt: string | null;
+  markReviewSeen(): void;
   initialize(): Promise<void>;
   shutdown(): void;
   setDraft(draft: string): void;
@@ -198,6 +202,13 @@ export interface JournalState extends MirrorData {
   createToken(label: string): Promise<{ token: AgentToken; secret: string }>;
   revokeToken(id: string): Promise<void>;
   activateUpdate(): Promise<void>;
+  /**
+   * A standing request from a view to take over the composer. `nonce` rises on
+   * every call so repeating the same destination still pulls focus, and a null
+   * `destination` means "just focus" — the screen's own default already applies.
+   */
+  composerPreset: { destination: Destination | null; nonce: number } | null;
+  focusComposer(destination?: Destination): void;
 }
 
 const persistence = new SingleRecordPersistence<JournalClientRecord>();
@@ -271,6 +282,7 @@ function recordFromState(
     outbox: state.outbox,
     deadLetters: state.deadLetters,
     agentTokens: state.agentTokens,
+    lastReviewSeenAt: state.lastReviewSeenAt,
   };
 }
 
@@ -1897,6 +1909,7 @@ async function initializeJournal(): Promise<void> {
         outboxCount: saved.outbox.length,
         deadLetters: saved.deadLetters,
         agentTokens: saved.agentTokens ?? [],
+        lastReviewSeenAt: saved.lastReviewSeenAt ?? null,
         activityHasMore: saved.mirror.activityOrder.length >= 50,
         activityNextCursor:
           saved.mirror.activityById[saved.mirror.activityOrder.at(-1) ?? '']?.at ?? null,
@@ -1915,6 +1928,7 @@ async function initializeJournal(): Promise<void> {
         outboxCount: 0,
         deadLetters: [],
         agentTokens: [],
+        lastReviewSeenAt: null,
         activityHasMore: false,
         activityNextCursor: null,
         hydrated: true,
@@ -2157,8 +2171,24 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
     activityNextCursor: null,
     tagSuggestions: [],
     tagsFetchedAt: null,
+    lastReviewSeenAt: null,
     initialize: initializeJournal,
     shutdown: shutdownJournal,
+    // Opening Review is what marks it read, so the write is a local, debounced
+    // one: it never reaches the server and never blocks the route change.
+    // Stamped at max(now, newest activity.at): activity timestamps are
+    // server-issued, so a client clock running behind would otherwise leave
+    // just-seen items forever "newer" than the mark.
+    markReviewSeen: () => {
+      const { activityOrder, activityById } = get();
+      const newestAt = activityOrder.reduce((max, id) => {
+        const at = activityById[id]?.at;
+        return at !== undefined && at > max ? at : max;
+      }, '');
+      const now = new Date().toISOString();
+      set({ lastReviewSeenAt: newestAt > now ? newestAt : now });
+      persistSoon();
+    },
     setDraft: (draft) => {
       set({ draft });
       persistSoon();
@@ -2622,6 +2652,17 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
       await flushJournalPersistence();
       if (lifecycle === lifecycleGeneration) activateJournalUpdate();
     },
+    composerPreset: null,
+    // Never persisted: a preset is a gesture from the screen the owner is
+    // looking at now, not a preference that should survive a reload.
+    focusComposer: (destination) => {
+      set((state) => ({
+        composerPreset: {
+          destination: destination ?? null,
+          nonce: (state.composerPreset?.nonce ?? 0) + 1,
+        },
+      }));
+    },
   }),
 );
 
@@ -2655,6 +2696,7 @@ export const journalActions = {
     patch: Partial<Pick<Settings, 'density' | 'showTypeBadges' | 'highlightAiEntries'>>,
   ): Promise<Settings> => useJournalStore.getState().updateSettings(patch),
   setDraft: (draft: string): void => useJournalStore.getState().setDraft(draft),
+  markReviewSeen: (): void => useJournalStore.getState().markReviewSeen(),
   setDefaultType: (type: EntryType): void => useJournalStore.getState().setDefaultType(type),
   searchEntries: (query: string): Promise<Entry[]> =>
     useJournalStore.getState().searchEntries(query),
@@ -2673,6 +2715,8 @@ export const journalActions = {
     useJournalStore.getState().createToken(label),
   revokeToken: (id: string): Promise<void> => useJournalStore.getState().revokeToken(id),
   activateUpdate: (): Promise<void> => useJournalStore.getState().activateUpdate(),
+  focusComposer: (destination?: Destination): void =>
+    useJournalStore.getState().focusComposer(destination),
   flush: flushOutbox,
   reconnect: (): Promise<void> => reconnectJournal(),
 };
@@ -2687,6 +2731,34 @@ export const selectActiveCollections = (state: JournalState): Collection[] =>
     .filter((collection) => !collection.archivedAt && !collection.id.startsWith('month:'))
     .sort((left, right) => left.name.localeCompare(right.name));
 export const selectTagSuggestions = (state: JournalState): TagUsage[] => state.tagSuggestions;
+/**
+ * What the Today badge counts: work still waiting in the daily log. Only tasks
+ * and habits can be open, collections have their own screens, and anything
+ * dated ahead of today is not yet due — so the count is exactly the set the
+ * Today screen shows as actionable.
+ */
+export const selectOpenTodayCount = (state: JournalState): number =>
+  Object.values(state.entriesById).filter(
+    (entry) =>
+      entry.deletedAt === null &&
+      entry.state === 'open' &&
+      (entry.type === 'task' || entry.type === 'habit') &&
+      entry.collection === null &&
+      entry.date <= state.today,
+  ).length;
+/**
+ * What the Review badge counts: recorded changes newer than the last time the
+ * owner opened Review (everything, when they never have). `revert` is excluded
+ * because it is the owner's own action taken *on* the Review screen — no MCP
+ * tool can produce one — so counting it would re-badge the screen for using it.
+ */
+export const selectUnseenReviewCount = (state: JournalState): number =>
+  state.activityOrder.reduce((count, id) => {
+    const activity = state.activityById[id];
+    if (!activity || activity.kind === 'revert') return count;
+    if (state.lastReviewSeenAt !== null && activity.at <= state.lastReviewSeenAt) return count;
+    return count + 1;
+  }, 0);
 export const selectActivity = (state: JournalState): ActivityView[] =>
   state.activityOrder.flatMap((id) => {
     const activity = state.activityById[id];

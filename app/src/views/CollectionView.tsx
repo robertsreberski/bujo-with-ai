@@ -2,6 +2,7 @@ import { EntryRow } from '../components/EntryRow';
 import { Icon } from '../components/Icon';
 import { Button } from '../components/ui/button';
 import { cn } from '../lib/utils';
+import { journalActions } from '../store/journal-store';
 import { EMPTY_PANEL } from './view-classes';
 import type { DisplayPreferences, JournalCollection, JournalEntry } from '../components/types';
 
@@ -68,8 +69,15 @@ export function CollectionView({
       ) : (
         <div className={cn(EMPTY_PANEL, 'min-h-[280px]')}>
           <Icon name="folder" size={18} />
-          <h3 className="text-base font-medium text-fg">This collection is empty</h3>
-          <p className="text-sm">File an entry here from its detail dialog.</p>
+          <h3 className="text-base font-medium text-fg">Nothing filed here yet.</h3>
+          <p className="text-sm">Add one below — it lands in {collection.name}.</p>
+          <Button
+            variant="secondary"
+            className="mt-[9px]"
+            onClick={() => journalActions.focusComposer({ kind: 'collection', id: collection.id })}
+          >
+            <Icon name="plus" size={14} /> Add to {collection.name}
+          </Button>
         </div>
       )}
       <div className="h-6" aria-hidden="true" />

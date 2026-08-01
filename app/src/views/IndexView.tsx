@@ -11,6 +11,7 @@ import {
 } from '../components/ui/dialog-classes';
 import { formatMonth, monthKey } from '../components/dates';
 import { cn } from '../lib/utils';
+import { journalActions } from '../store/journal-store';
 import {
   CARD,
   SECTION,
@@ -29,6 +30,9 @@ const INDEX_ROW_SOLO = cn(INDEX_ROW_MAIN, 'w-full border-b border-bg-line pr-3 l
 const INDEX_ROW_LABEL =
   'min-w-0 flex-1 overflow-hidden text-base text-fg text-ellipsis whitespace-nowrap';
 const INDEX_ROW_COUNT = 'flex-none text-xs text-fg-mute';
+/** The trailing 42px cells: hairline-split square affordances on the row's edge. */
+const INDEX_ROW_ACTION =
+  'grid w-[42px] place-items-center border-l border-bg-line text-fg-mute hover:bg-bg-hover hover:text-fg';
 
 interface IndexViewProps {
   collections: JournalCollection[];
@@ -179,7 +183,7 @@ export function IndexView({
           {visibleCollections.length > 0 ? (
             visibleCollections.map((collection) => (
               <div
-                className="index-row grid grid-cols-[minmax(0,1fr)_42px] border-b border-bg-line last:border-b-0"
+                className="index-row grid grid-cols-[minmax(0,1fr)_42px_42px] border-b border-bg-line last:border-b-0"
                 key={collection.id}
               >
                 <button
@@ -194,7 +198,17 @@ export function IndexView({
                   <Icon name="chevronRight" size={14} className="flex-none text-fg-faint" />
                 </button>
                 <button
-                  className="grid w-[42px] place-items-center border-l border-bg-line text-fg-mute hover:bg-bg-hover hover:text-fg"
+                  className={INDEX_ROW_ACTION}
+                  type="button"
+                  aria-label={`Add to ${collection.name}`}
+                  onClick={() =>
+                    journalActions.focusComposer({ kind: 'collection', id: collection.id })
+                  }
+                >
+                  <Icon name="plus" size={14} />
+                </button>
+                <button
+                  className={INDEX_ROW_ACTION}
                   type="button"
                   aria-label={`Edit ${collection.name}`}
                   onClick={() => setEditing(collection)}
