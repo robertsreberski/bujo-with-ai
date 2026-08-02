@@ -82,6 +82,17 @@ export const EntryQuerySchema = z
     message: 'to cannot precede from.',
   });
 
+/**
+ * The chronological feed is deliberately narrower than general search. A
+ * page may be anchored at a day and may continue from one opaque tuple cursor;
+ * it cannot silently widen into an unbounded archive request.
+ */
+export const TimelineQuerySchema = z.strictObject({
+  to: CalendarDateSchema.optional(),
+  limit: z.number().int().min(1).max(100).default(100),
+  cursor: z.string().trim().min(1).max(500).optional(),
+});
+
 export const CreateCollectionRequestSchema = z.strictObject({
   id: CollectionIdSchema,
   name: z.string().trim().min(1).max(120),
@@ -160,6 +171,18 @@ export const AssistantStatusSchema = z.strictObject({
   activeSessions: z.number().int().nonnegative(),
 });
 
+export const TimelinePageResponseSchema = z.strictObject({
+  today: CalendarDateSchema,
+  timezone: TimeZoneSchema,
+  items: z.array(EntrySchema).max(100),
+  /** Only destinations referenced by this page, including archived/month logs. */
+  collections: z.array(CollectionSchema),
+  nextCursor: z.string().min(1).nullable(),
+  /** Extension slots owned by the later Activity and Reflection features. */
+  latestAgentTouch: ActivityViewSchema.nullable().optional(),
+  weeklyReflection: SummarySchema.nullable().optional(),
+});
+
 export const BootstrapResponseSchema = z.strictObject({
   today: CalendarDateSchema,
   timezone: TimeZoneSchema,
@@ -170,6 +193,8 @@ export const BootstrapResponseSchema = z.strictObject({
   latestSummary: SummarySchema.nullable(),
   activity: z.array(ActivityViewSchema),
   settings: SettingsSchema,
+  /** Optional during the additive compatibility window. */
+  timeline: TimelinePageResponseSchema.optional(),
 });
 
 export const EntryListResponseSchema = z.strictObject({
@@ -469,11 +494,13 @@ export type MigrateEntryRequest = z.infer<typeof MigrateEntryRequestSchema>;
 export type ScheduleMonthlyRequest = z.infer<typeof ScheduleMonthlyRequestSchema>;
 export type CaptureRequest = z.infer<typeof CaptureRequestSchema>;
 export type EntryQuery = z.infer<typeof EntryQuerySchema>;
+export type TimelineQuery = z.infer<typeof TimelineQuerySchema>;
 export type CreateCollectionRequest = z.infer<typeof CreateCollectionRequestSchema>;
 export type UpdateCollectionRequest = z.infer<typeof UpdateCollectionRequestSchema>;
 export type ActivityQuery = z.infer<typeof ActivityQuerySchema>;
 export type SettingsPatch = z.infer<typeof SettingsPatchSchema>;
 export type BootstrapResponse = z.infer<typeof BootstrapResponseSchema>;
+export type TimelinePageResponse = z.infer<typeof TimelinePageResponseSchema>;
 export type EntryListResponse = z.infer<typeof EntryListResponseSchema>;
 export type RecentlyDeletedEntry = z.infer<typeof RecentlyDeletedEntrySchema>;
 export type RecentlyDeletedListResponse = z.infer<typeof RecentlyDeletedListResponseSchema>;

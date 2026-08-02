@@ -29,6 +29,7 @@ interface EntryRowProps {
   /** Presentation-only text, used for search snippets without changing the entry. */
   textContent?: ReactNode;
   highlightedTag?: string;
+  destinationLabel?: string | undefined;
 }
 
 /*
@@ -70,6 +71,7 @@ export function EntryRow({
   showDate = false,
   textContent,
   highlightedTag,
+  destinationLabel,
 }: EntryRowProps) {
   const previewId = useId();
   const previewRef = useRef<HTMLSpanElement>(null);
@@ -92,7 +94,12 @@ export function EntryRow({
   const showType = preferences.showTypeBadges && entry.type !== 'task';
   const showAi = preferences.highlightAiEntries && entry.author === 'ai';
   const metaVisible =
-    showDate || showType || showAi || displayState !== null || entry.tags.length > 0;
+    showDate ||
+    destinationLabel !== undefined ||
+    showType ||
+    showAi ||
+    displayState !== null ||
+    entry.tags.length > 0;
   const toggleLabel = `${done ? 'Mark as not done' : 'Mark as done'}: ${entry.text}`;
 
   const measurePreview = useCallback(() => {
@@ -221,6 +228,11 @@ export function EntryRow({
             {showDate ? (
               <span className="entry-row__date mr-0.5 font-mono text-tag text-fg-mute">
                 {formatShortDate(entry.date)}
+              </span>
+            ) : null}
+            {destinationLabel ? (
+              <span className="entry-row__destination text-tag text-fg-mid">
+                {destinationLabel}
               </span>
             ) : null}
             {showType ? (

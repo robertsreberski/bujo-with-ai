@@ -8,6 +8,7 @@ import {
   MigrateEntryRequestSchema,
   ScheduleMonthlyRequestSchema,
   SettingsPatchSchema,
+  TimelineQuerySchema,
   UlidSchema,
   UpdateCollectionRequestSchema,
   UpdateEntryRequestSchema,
@@ -237,15 +238,29 @@ function calendar(date: string) {
   };
 }
 
-function uniqueEntries(groups: readonly (readonly Entry[])[]): Entry[] {
-  const byId = new Map<string, Entry>();
-  for (const group of groups) for (const entry of group) byId.set(entry.id, entry);
-  return [...byId.values()].sort(
-    (left, right) =>
-      right.date.localeCompare(left.date) ||
-      right.createdAt.localeCompare(left.createdAt) ||
-      right.id.localeCompare(left.id),
+function timelinePage(domain: JournalDomain, config: JournalConfig, raw: unknown) {
+  const query = TimelineQuerySchema.parse(raw);
+  const cursor = decodeEntryCursor(query.cursor);
+  const page = domain.pageEntries(
+    {
+      ...(query.to === undefined ? {} : { dateTo: query.to }),
+      limit: query.limit,
+    },
+    cursor,
   );
+  const items = page.items;
+  const collectionIds = items.flatMap((entry) =>
+    entry.collection === null ? [] : [entry.collection],
+  );
+  return {
+    today: domain.today(),
+    timezone: config.timezone,
+    items,
+    collections: domain.listCollectionsByIds(collectionIds),
+    nextCursor: page.hasMore ? encodeEntryCursor(items[items.length - 1]!) : null,
+    // Activity and Reflection own these optional extension slots. Timeline v1
+    // intentionally does not guess what counts as a meaningful card.
+  };
 }
 
 function summaryOrLatest(domain: JournalDomain, id: string | undefined) {
@@ -278,20 +293,23 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
 
     bootstrap: (owner) => {
       const today = domain.today();
-      const recent = searchAll(domain, { dateFrom: addDays(today, -13) });
-      const openTasks = searchAll(domain, { type: 'task', state: 'open' });
-      const monthly = searchAll(domain, { collection: `month:${today.slice(0, 7)}` });
+      const timeline = timelinePage(domain, config, { limit: 100 });
       return {
         today,
         timezone: config.timezone,
         deviceId: owner.deviceId,
-        entries: uniqueEntries([recent, openTasks, monthly]),
+        // Kept for additive compatibility. New clients use the bounded page
+        // below; old clients still receive the same rows, never a lifetime set.
+        entries: timeline.items,
         collections: domain.listCollections(),
         latestSummary: domain.getLatestSummary(),
         activity: domain.listActivityViews(50),
         settings: domain.getSettings() as Settings,
+        timeline,
       };
     },
+
+    timeline: (raw) => timelinePage(domain, config, raw),
 
     listEntries: (raw) => {
       const query = EntryQuerySchema.parse(raw);

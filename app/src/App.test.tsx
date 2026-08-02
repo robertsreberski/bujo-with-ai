@@ -104,6 +104,15 @@ describe('App resource loading', () => {
 });
 
 describe('App capture', () => {
+  it('canonicalizes a current-date Timeline deep link to the root', async () => {
+    window.history.replaceState(null, '', `/?date=${TODAY}`);
+    render(<App />);
+
+    await waitFor(() => expect(window.location.href).not.toContain('date='));
+    expect(window.location.pathname).toBe('/');
+    expect(screen.getAllByText('Timeline').length).toBeGreaterThan(0);
+  });
+
   it('stays on the screen the capture was typed on', async () => {
     const user = userEvent.setup();
     render(<App />);

@@ -3,7 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JournalEntry } from '../components/types';
-import { TodayView } from './TodayView';
+import { TimelineView } from './TimelineView';
 
 afterEach(cleanup);
 
@@ -28,15 +28,88 @@ const entry: JournalEntry = {
 const props = {
   today: '2026-07-31',
   selectedDate: '2026-08-03',
+  loading: false,
+  collectionsById: {},
+  hasEarlier: false,
+  loadingEarlier: false,
   preferences: { density: 'comfortable' as const, showTypeBadges: true, highlightAiEntries: true },
   onOpenEntry: vi.fn(),
   onToggleEntry: vi.fn(),
   onStartMigration: vi.fn(),
+  onLoadEarlier: vi.fn(),
 };
 
-describe('TodayView', () => {
+describe('TimelineView', () => {
+  it('shows daily and collection destinations exactly once with a compact label', () => {
+    const collectionEntry = {
+      ...entry,
+      id: '01J00000000000000000000001',
+      text: 'Filed thought',
+      collection: 'projects',
+    };
+    const { container } = render(
+      <TimelineView
+        entries={[entry, collectionEntry, collectionEntry]}
+        {...props}
+        collectionsById={{
+          projects: {
+            id: 'projects',
+            name: 'Projects',
+            note: null,
+            createdAt: '2026-07-01T08:00:00.000Z',
+            archivedAt: null,
+          },
+        }}
+      />,
+    );
+
+    expect(container.querySelectorAll('.entry-row')).toHaveLength(2);
+    expect(screen.getByText('Projects')).toHaveClass('entry-row__destination');
+  });
+
+  it('renders a collection-only day as one chronological section', () => {
+    const collectionEntry = {
+      ...entry,
+      id: '01J00000000000000000000002',
+      text: 'Collection-only thought',
+      collection: 'projects',
+    };
+    const { container } = render(
+      <TimelineView
+        entries={[collectionEntry]}
+        {...props}
+        collectionsById={{
+          projects: {
+            id: 'projects',
+            name: 'Projects',
+            note: null,
+            createdAt: '2026-07-01T08:00:00.000Z',
+            archivedAt: null,
+          },
+        }}
+      />,
+    );
+
+    expect(container.querySelectorAll(`[data-day="${entry.date}"]`)).toHaveLength(1);
+    expect(screen.getByText('Collection-only thought')).toBeInTheDocument();
+    expect(screen.getByText('Projects')).toBeInTheDocument();
+  });
+
+  it('names a future deep link as planning without adding an empty Today section', () => {
+    const { container } = render(<TimelineView entries={[]} {...props} />);
+    expect(screen.getByRole('heading', { name: /^Planning / })).toBeInTheDocument();
+    expect(container.querySelector(`[data-day="${props.today}"]`)).not.toBeInTheDocument();
+  });
+
+  it('loads one explicit earlier page', () => {
+    const onLoadEarlier = vi.fn();
+    render(<TimelineView entries={[entry]} {...props} hasEarlier onLoadEarlier={onLoadEarlier} />);
+    screen.getByRole('button', { name: 'Earlier' }).click();
+    expect(onLoadEarlier).toHaveBeenCalledTimes(1);
+  });
+
   it('creates a named empty section for a deep-linked calendar day', () => {
-    const { container } = render(<TodayView entries={[]} {...props} />);
+    const { container } = render(<TimelineView entries={[]} {...props} />);
     const selected = container.querySelector('[data-day="2026-08-03"]');
     expect(selected).toBeInTheDocument();
     expect(selected).toHaveTextContent('No entries yet');
@@ -47,10 +120,12 @@ describe('TodayView', () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
     try {
-      const { rerender } = render(<TodayView entries={[entry]} {...props} />);
+      const { rerender } = render(<TimelineView entries={[entry]} {...props} />);
       const toggle = screen.getByRole('button', { name: 'Mark as done: Deep-linked task' });
       toggle.focus();
-      rerender(<TodayView entries={[{ ...entry, tags: ['updated'], revision: 2 }]} {...props} />);
+      rerender(
+        <TimelineView entries={[{ ...entry, tags: ['updated'], revision: 2 }]} {...props} />,
+      );
       expect(scrollIntoView).toHaveBeenCalledTimes(1);
       expect(toggle).toHaveFocus();
     } finally {
@@ -70,13 +145,13 @@ describe('TodayView', () => {
     };
     try {
       const { rerender } = render(
-        <TodayView entries={[historical]} {...props} selectedDate={historical.date} />,
+        <TimelineView entries={[historical]} {...props} selectedDate={historical.date} />,
       );
       const toggle = screen.getByRole('button', { name: 'Mark as done: Selected historical task' });
       toggle.focus();
 
       rerender(
-        <TodayView
+        <TimelineView
           entries={[
             {
               ...historical,
@@ -117,13 +192,13 @@ describe('TodayView', () => {
       state: 'done' as const,
     };
     try {
-      const { rerender } = render(<TodayView entries={[newer, entry, oldClosed]} {...props} />);
+      const { rerender } = render(<TimelineView entries={[newer, entry, oldClosed]} {...props} />);
       const toggle = screen.getByRole('button', { name: 'Mark as done: Deep-linked task' });
       toggle.focus();
       expect(scrollIntoView).toHaveBeenCalledTimes(1);
 
       rerender(
-        <TodayView
+        <TimelineView
           entries={[
             {
               ...newer,
@@ -156,12 +231,12 @@ describe('TodayView', () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
     try {
-      const { rerender } = render(<TodayView entries={[entry]} {...props} />);
+      const { rerender } = render(<TimelineView entries={[entry]} {...props} />);
       const toggle = screen.getByRole('button', { name: 'Mark as done: Deep-linked task' });
       toggle.focus();
 
       rerender(
-        <TodayView
+        <TimelineView
           entries={[entry]}
           {...props}
           preferences={{ ...props.preferences, density: 'compact' }}

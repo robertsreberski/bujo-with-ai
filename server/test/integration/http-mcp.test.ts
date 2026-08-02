@@ -137,6 +137,16 @@ class MockOperations implements ApiJournalOperations {
     return { today: '2026-07-31', entries: [entry], settings: { density: 'comfortable' } };
   }
 
+  timeline() {
+    return {
+      today: '2026-07-31',
+      timezone: 'UTC',
+      items: [entry],
+      collections: [],
+      nextCursor: null,
+    };
+  }
+
   listEntries() {
     return { today: '2026-07-31', total: 1, entries: [entry] };
   }
@@ -771,6 +781,30 @@ describe('one-origin HTTP application', () => {
       .set('Idempotency-Key', MUTATION_ID)
       .send({ copyId: '01J00000000000000000000005', month: '2026-08' })
       .expect(404);
+  });
+
+  it('serves the paired Timeline through its bounded query contract', async () => {
+    const { application } = await build();
+    openApplications.push(application);
+    await request(application.app).get('/api/timeline').set('Host', 'localhost:5178').expect(401);
+    const cookie = await pair(application);
+
+    await request(application.app)
+      .get('/api/timeline?to=2026-07-31&limit=100')
+      .set('Host', 'localhost:5178')
+      .set('Cookie', cookie)
+      .expect(200, {
+        today: '2026-07-31',
+        timezone: 'UTC',
+        items: [entry],
+        collections: [],
+        nextCursor: null,
+      });
+    await request(application.app)
+      .get('/api/timeline?limit=101')
+      .set('Host', 'localhost:5178')
+      .set('Cookie', cookie)
+      .expect(400);
   });
 
   it('serves the tag vocabulary to a paired device only', async () => {

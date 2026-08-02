@@ -177,6 +177,15 @@ export interface JournalClientRecord {
   monthLogView?: LogViewConfig | null;
   /** One shared per-device arrangement for every collection screen. */
   collectionLogView?: LogViewConfig | null;
+  /** One bounded chronological page, retained so the Timeline works offline. */
+  timeline?: {
+    loaded: boolean;
+    entryIds: string[];
+    nextCursor: string | null;
+    anchorDate: string | null;
+    latestAgentTouch: ActivityView | null;
+    weeklyReflection: Summary | null;
+  };
 }
 
 export interface CreateEntryInput {

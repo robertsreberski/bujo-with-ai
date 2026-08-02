@@ -43,7 +43,7 @@ vi.mock('../pwa/registration', () => ({
   subscribePwaRegistration: pwaMocks.subscribe,
 }));
 
-import { journalActions, useJournalStore } from './journal-store';
+import { journalActions, selectTimelineEntries, useJournalStore } from './journal-store';
 
 const settings: Settings = {
   density: 'comfortable',
@@ -160,6 +160,61 @@ describe('collection log view hydration', () => {
     persistenceMocks.load.mockResolvedValue(savedRecord({ collectionLogView: narrowedView }));
     await journalActions.initialize();
     expect(useJournalStore.getState().collectionLogView).toEqual(narrowedView);
+  });
+});
+
+describe('Timeline page hydration', () => {
+  it('reads an older client record as an unloaded bounded Timeline', async () => {
+    await journalActions.initialize();
+    expect(useJournalStore.getState()).toMatchObject({
+      timelineLoaded: false,
+      timelineEntryIds: [],
+      timelineNextCursor: null,
+    });
+  });
+
+  it('restores the last bounded page for an offline launch', async () => {
+    const cachedId = canonicalId('02');
+    const record = savedRecord({
+      timeline: {
+        loaded: true,
+        entryIds: [cachedId],
+        nextCursor: 'stable-cursor',
+        anchorDate: null,
+        latestAgentTouch: null,
+        weeklyReflection: null,
+      },
+    });
+    record.mirror.entriesById[cachedId] = {
+      id: cachedId,
+      date: '2026-07-31',
+      type: 'note',
+      text: 'Cached Timeline note',
+      state: 'logged',
+      time: null,
+      tags: [],
+      author: 'me',
+      source: null,
+      migrations: 0,
+      collection: null,
+      createdAt: '2026-07-31T08:00:00.000Z',
+      updatedAt: '2026-07-31T08:00:00.000Z',
+      revision: 1,
+      deletedAt: null,
+    };
+    persistenceMocks.load.mockResolvedValue(record);
+
+    await journalActions.initialize();
+
+    expect(useJournalStore.getState()).toMatchObject({
+      timelineLoaded: true,
+      timelineEntryIds: [cachedId],
+      timelineNextCursor: 'stable-cursor',
+      timelineAnchorDate: null,
+    });
+    expect(selectTimelineEntries(useJournalStore.getState()).map((entry) => entry.text)).toEqual([
+      'Cached Timeline note',
+    ]);
   });
 });
 

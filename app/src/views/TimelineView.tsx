@@ -3,16 +3,22 @@ import { EntryRow } from '../components/EntryRow';
 import { Icon } from '../components/Icon';
 import { Button } from '../components/ui/button';
 import { formatLongDate } from '../components/dates';
-import type { DisplayPreferences, JournalEntry } from '../components/types';
+import { destinationLabel } from '../components/destination';
+import type { DisplayPreferences, JournalCollection, JournalEntry } from '../components/types';
 
-interface TodayViewProps {
+interface TimelineViewProps {
   entries: JournalEntry[];
+  collectionsById: Record<string, JournalCollection>;
   today: string;
   selectedDate: string | null;
+  loading: boolean;
+  hasEarlier: boolean;
+  loadingEarlier: boolean;
   preferences: DisplayPreferences;
   onOpenEntry: (entry: JournalEntry) => void;
   onToggleEntry: (entry: JournalEntry) => void;
   onStartMigration: (entries: JournalEntry[]) => void;
+  onLoadEarlier: () => void;
 }
 
 function entryLayoutSignature(entry: JournalEntry): string {
@@ -31,18 +37,33 @@ function entryLayoutSignature(entry: JournalEntry): string {
   ]);
 }
 
-export function TodayView({
+export function TimelineView({
   entries,
+  collectionsById,
   today,
   selectedDate,
+  loading,
+  hasEarlier,
+  loadingEarlier,
   preferences,
   onOpenEntry,
   onToggleEntry,
   onStartMigration,
-}: TodayViewProps) {
+  onLoadEarlier,
+}: TimelineViewProps) {
   const focusedDateRef = useRef<string | null>(null);
   const scrolledLayoutRef = useRef<string | null>(null);
-  const dayEntries = useMemo(() => entries.filter((entry) => entry.collection === null), [entries]);
+  // A row can be discovered through several mirrors (bootstrap, paging, SSE,
+  // optimistic outbox), but the chronological projection owns one position per
+  // canonical entry id.
+  const timelineEntries = useMemo(
+    () => [...new Map(entries.map((entry) => [entry.id, entry])).values()],
+    [entries],
+  );
+  const dayEntries = useMemo(
+    () => timelineEntries.filter((entry) => entry.collection === null),
+    [timelineEntries],
+  );
   const leftovers = useMemo(
     () =>
       dayEntries
@@ -52,13 +73,13 @@ export function TodayView({
   );
   const sections = useMemo(() => {
     const grouped = new Map<string, JournalEntry[]>();
-    for (const entry of dayEntries) {
+    for (const entry of timelineEntries) {
       const group = grouped.get(entry.date) ?? [];
       group.push(entry);
       grouped.set(entry.date, group);
     }
-    if (!grouped.has(today)) grouped.set(today, []);
-    if (selectedDate && !grouped.has(selectedDate)) grouped.set(selectedDate, []);
+    const requiredDate = selectedDate ?? today;
+    if (!grouped.has(requiredDate)) grouped.set(requiredDate, []);
     return [...grouped.entries()]
       .sort(([left], [right]) => right.localeCompare(left))
       .map(([date, dateEntries]) => ({
@@ -68,7 +89,7 @@ export function TodayView({
             right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
         ),
       }));
-  }, [dayEntries, selectedDate, today]);
+  }, [selectedDate, timelineEntries, today]);
   const selectedDateFocusKey = useMemo(() => {
     if (!selectedDate) return null;
     const index = sections.findIndex((section) => section.date === selectedDate);
@@ -154,7 +175,7 @@ export function TodayView({
   }, [selectedDate, selectedDateFocusKey]);
 
   return (
-    <section className="min-h-full" aria-label="Daily log">
+    <section className="min-h-full" aria-label="Timeline">
       {leftovers.length > 0 ? (
         <aside className="mx-4 mt-3.5 mb-1 flex items-start gap-[11px] rounded-lg border border-border px-[14px] py-[13px] text-fg-mute">
           <Icon name="info" size={16} className="mt-0.5 flex-none" />
@@ -197,7 +218,11 @@ export function TodayView({
                   className="overflow-hidden text-base font-semibold tracking-[-0.005em] text-ellipsis whitespace-nowrap"
                   id={`day-${date}`}
                 >
-                  {date === today ? 'Today' : formatLongDate(date)}
+                  {date > today
+                    ? `Planning ${formatLongDate(date)}`
+                    : date === today
+                      ? 'Today'
+                      : formatLongDate(date)}
                 </h2>
                 {date === today ? (
                   <span className="flex-none text-xs text-fg-mute">{formatLongDate(date)}</span>
@@ -210,6 +235,15 @@ export function TodayView({
                 <EntryRow
                   entry={entry}
                   preferences={preferences}
+                  destinationLabel={
+                    entry.collection === null
+                      ? undefined
+                      : destinationLabel(
+                          { kind: 'collection', id: entry.collection },
+                          collectionsById,
+                          today,
+                        )
+                  }
                   onOpen={onOpenEntry}
                   onToggle={onToggleEntry}
                   key={entry.id}
@@ -217,12 +251,23 @@ export function TodayView({
               ))
             ) : (
               <div className="border-b border-bg-line px-4 pt-[13px] pb-4 text-sm text-fg-mute">
-                <p>No entries yet. The composer is ready when you are.</p>
+                <p>
+                  {loading
+                    ? 'Loading timeline…'
+                    : 'No entries yet. The composer is ready when you are.'}
+                </p>
               </div>
             )}
           </section>
         );
       })}
+      {hasEarlier ? (
+        <div className="flex justify-center px-4 py-4">
+          <Button variant="secondary" disabled={loadingEarlier} onClick={onLoadEarlier}>
+            {loadingEarlier ? 'Loading earlier…' : 'Earlier'}
+          </Button>
+        </div>
+      ) : null}
       <div className="h-6" aria-hidden="true" />
     </section>
   );

@@ -386,6 +386,93 @@ describe('journal store reconciliation', () => {
     expect(listEntries).toHaveBeenCalledTimes(11);
   });
 
+  it('loads one bounded Timeline page and only advances through explicit Earlier', async () => {
+    useJournalStore.setState({
+      entriesById: {},
+      entryIdsByDate: {},
+      entryIdsByCollection: {},
+      collectionsById: {},
+      outbox: [],
+      outboxCount: 0,
+      networkOnline: true,
+      online: true,
+      connectionStatus: 'connected',
+      timelineEntryIds: [],
+      timelineNextCursor: null,
+      timelineAnchorDate: null,
+      timelineLoaded: false,
+      timelineLoading: false,
+      timelineLoadingEarlier: false,
+      today: '2026-07-31',
+      serverToday: '2026-07-31',
+      timezone: 'Europe/Amsterdam',
+    });
+    const first = Array.from({ length: 100 }, (_, index) => entry(index));
+    const older = entry(100, { date: '2026-07-30' });
+    const timeline = vi
+      .spyOn(journalApi, 'timeline')
+      .mockResolvedValueOnce({
+        items: first,
+        collections: [],
+        nextCursor: 'stable-cursor',
+        today: '2026-07-31',
+        timezone: 'Europe/Amsterdam',
+      })
+      .mockResolvedValueOnce({
+        items: [first.at(-1)!, older],
+        collections: [],
+        nextCursor: null,
+        today: '2026-07-31',
+        timezone: 'Europe/Amsterdam',
+      });
+    const lifetimeLoader = vi.spyOn(journalApi, 'listEntries');
+
+    await journalActions.loadTimeline();
+
+    expect(timeline).toHaveBeenCalledTimes(1);
+    expect(timeline).toHaveBeenLastCalledWith({ limit: 100 });
+    expect(lifetimeLoader).not.toHaveBeenCalled();
+    expect(useJournalStore.getState()).toMatchObject({
+      timelineLoaded: true,
+      timelineEntryIds: first.map((row) => row.id),
+      timelineNextCursor: 'stable-cursor',
+    });
+
+    await journalActions.loadEarlierTimeline();
+
+    expect(timeline).toHaveBeenLastCalledWith({ limit: 100, cursor: 'stable-cursor' });
+    expect(useJournalStore.getState().timelineEntryIds).toHaveLength(101);
+    expect(useJournalStore.getState().timelineNextCursor).toBeNull();
+  });
+
+  it('anchors a future Timeline page without silently following its cursor', async () => {
+    useJournalStore.setState({
+      online: true,
+      networkOnline: true,
+      connectionStatus: 'connected',
+      timelineEntryIds: [],
+      timelineLoaded: false,
+      timelineAnchorDate: null,
+      timelineNextCursor: null,
+    });
+    const timeline = vi.spyOn(journalApi, 'timeline').mockResolvedValue({
+      items: [],
+      collections: [],
+      nextCursor: 'earlier-page',
+      today: '2026-07-31',
+      timezone: 'Europe/Amsterdam',
+    });
+
+    await journalActions.loadTimeline('2026-08-03');
+
+    expect(timeline).toHaveBeenCalledOnce();
+    expect(timeline).toHaveBeenCalledWith({ to: '2026-08-03', limit: 100 });
+    expect(useJournalStore.getState()).toMatchObject({
+      timelineAnchorDate: '2026-08-03',
+      timelineNextCursor: 'earlier-page',
+    });
+  });
+
   it('refreshes MCP connectivity together with token metadata', async () => {
     useJournalStore.setState({ online: true, networkOnline: true, agentTokens: [], settings });
     vi.spyOn(journalApi, 'listTokens').mockResolvedValue({ tokens: [] });
@@ -767,7 +854,6 @@ describe('journal store reconciliation', () => {
   });
 
   it('rebuilds old entries canonically after an SSE reset without retaining deleted rows', async () => {
-    mockBootstrap();
     const changed = entry(2, {
       id: canonicalId('05'),
       date: '2026-01-10',
@@ -786,12 +872,19 @@ describe('journal store reconciliation', () => {
       revision: 2,
       updatedAt: '2026-07-31T08:20:00.000Z',
     };
-    vi.spyOn(journalApi, 'listEntries').mockResolvedValue({
-      items: [canonical],
-      nextCursor: null,
-      today: '2026-07-31',
-      timezone: 'Europe/Amsterdam',
+    mockBootstrap({
+      entries: [canonical],
+      timeline: {
+        items: [canonical],
+        collections: [],
+        nextCursor: null,
+        today: '2026-07-31',
+        timezone: 'Europe/Amsterdam',
+      },
     });
+    const listEntries = vi
+      .spyOn(journalApi, 'listEntries')
+      .mockRejectedValue(new Error('Reset must not request lifetime entry history.'));
     useJournalStore.setState({
       entriesById: { [changed.id]: changed, [deleted.id]: deleted },
       entryIdsByDate: { [changed.date]: [changed.id], [deleted.date]: [deleted.id] },
@@ -807,8 +900,43 @@ describe('journal store reconciliation', () => {
 
     await reconcileAfterReset();
 
+    expect(listEntries).not.toHaveBeenCalled();
     expect(useJournalStore.getState().entriesById).toEqual({ [canonical.id]: canonical });
     expect(useJournalStore.getState().entriesById[deleted.id]).toBeUndefined();
+  });
+
+  it('keeps older cached entries during a non-authoritative bounded bootstrap', async () => {
+    const cached = entry(2, {
+      id: canonicalId('05'),
+      date: '2026-01-10',
+      state: 'done',
+      text: 'Cached older history',
+    });
+    mockBootstrap({
+      timeline: {
+        items: [],
+        collections: [],
+        nextCursor: null,
+        today: '2026-07-31',
+        timezone: 'Europe/Amsterdam',
+      },
+    });
+    useJournalStore.setState({
+      entriesById: { [cached.id]: cached },
+      entryIdsByDate: { [cached.date]: [cached.id] },
+      activityById: {},
+      activityOrder: [],
+      summariesByMonth: {},
+      latestSummary: null,
+      outbox: [],
+      outboxCount: 0,
+      online: true,
+      networkOnline: true,
+    });
+
+    await reconcileFromBootstrap();
+
+    expect(useJournalStore.getState().entriesById[cached.id]).toEqual(cached);
   });
 
   it('canonically refetches retained activity depth and summary months after an SSE reset', async () => {
