@@ -1463,7 +1463,7 @@ describe('JournalDomain summaries and credentials', () => {
   });
 
   it('redacts expired entry content from audit snapshots without weakening revert safety', () => {
-    const { domain, agent, advance } = fixture();
+    const { domain, database, agent, advance } = fixture();
     const sentinel = 'Private expired recovery text';
     const created = domain.createEntry(
       {
@@ -1482,6 +1482,13 @@ describe('JournalDomain summaries and credentials', () => {
       reason: 'Retention fixture cleanup.',
     });
     if (deleted.activityId === undefined) throw new Error('Expected agent delete activity');
+
+    // Legacy/imported audit rows may retain the entry only in their snapshots.
+    // Purge must discover both the create post-image and delete pre-image even
+    // when refs.entryIds is absent.
+    database.raw
+      .prepare('UPDATE activity SET refs = ? WHERE id IN (?, ?)')
+      .run('{"entryIds":[]}', created.activityId, deleted.activityId);
 
     advance(30 * 86_400_000 + 1);
     expect(domain.purgeExpired().entries).toBe(1);

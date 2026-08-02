@@ -417,15 +417,26 @@ export class CollectionRecovery {
         }
 
         const expiredSet = new Set(expiredIds);
+        const expiredIdsJson = JSON.stringify(expiredIds);
         const rows = this.db
           .prepare(
             `SELECT id, kind, pre_images, post_images FROM activity
              WHERE EXISTS (
                SELECT 1 FROM json_each(activity.refs, '$.entryIds')
                WHERE value IN (SELECT value FROM json_each(?))
+             )
+             OR EXISTS (
+               SELECT 1 FROM json_each(activity.pre_images) AS snapshot
+               WHERE json_extract(snapshot.value, '$.entity') = 'entry'
+                 AND json_extract(snapshot.value, '$.id') IN (SELECT value FROM json_each(?))
+             )
+             OR EXISTS (
+               SELECT 1 FROM json_each(activity.post_images) AS snapshot
+               WHERE json_extract(snapshot.value, '$.entity') = 'entry'
+                 AND json_extract(snapshot.value, '$.id') IN (SELECT value FROM json_each(?))
              )`,
           )
-          .all(JSON.stringify(expiredIds)) as Array<{
+          .all(expiredIdsJson, expiredIdsJson, expiredIdsJson) as Array<{
           id: string;
           kind: ActivityKind;
           pre_images: string;
