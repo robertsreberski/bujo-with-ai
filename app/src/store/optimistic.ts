@@ -5,6 +5,7 @@ import {
   AgentTokenSchema,
   CollectionSchema,
   EntrySchema,
+  ReflectionSchema,
   SettingsSchema,
   SummarySchema,
 } from '@journal/server/contracts/app';
@@ -392,6 +393,19 @@ export function applyServerChangeBatch(mirror: MirrorData, batch: ChangeBatch): 
       } else {
         const id = tombstoneId(change.payload, 'summary');
         if (id) next = removeServerSummary(next, id);
+      }
+      continue;
+    }
+    if (change.kind === 'reflection.changed') {
+      const parsed = ReflectionSchema.safeParse(change.payload);
+      if (parsed.success) {
+        next = {
+          ...next,
+          reflectionsByWeek: {
+            ...(next.reflectionsByWeek ?? {}),
+            [parsed.data.weekStart]: parsed.data,
+          },
+        };
       }
       continue;
     }

@@ -17,6 +17,8 @@ import {
   LatestSummaryResponseSchema,
   PairResponseSchema,
   RecentlyDeletedListResponseSchema,
+  ReflectionListResponseSchema,
+  ReflectionResponseSchema,
   RestoreEntryResponseSchema,
   RewriteSummaryResponseSchema,
   SaveSummaryResponseSchema,
@@ -34,6 +36,8 @@ import {
   type OwnerEntryCreate,
   type PairResponse,
   type RecentlyDeletedListResponse,
+  type ReflectionListResponse,
+  type ReflectionResponse,
   type RestoreEntryResponse,
   type Settings,
   type SettingsPayload,
@@ -266,6 +270,43 @@ export class JournalApiClient {
       body: expectedRevision === undefined ? {} : { expectedRevision },
       schema: RestoreEntryResponseSchema,
     });
+  }
+
+  listReflections(from: string, to: string): Promise<ReflectionListResponse> {
+    return this.request(`/api/reflections${searchParams({ from, to })}`, {
+      schema: ReflectionListResponseSchema,
+    });
+  }
+
+  requestReflection(id: string, expectedRevision: number): Promise<ReflectionResponse> {
+    return this.request(`/api/reflections/${encodeURIComponent(id)}/request`, {
+      method: 'POST',
+      body: { expectedRevision },
+      schema: ReflectionResponseSchema,
+    });
+  }
+
+  retryReflection(id: string, expectedRevision: number): Promise<ReflectionResponse> {
+    return this.request(`/api/reflections/${encodeURIComponent(id)}/retry`, {
+      method: 'POST',
+      body: { expectedRevision },
+      schema: ReflectionResponseSchema,
+    });
+  }
+
+  restoreReflectionVersion(
+    id: string,
+    versionId: string,
+    expectedRevision: number,
+  ): Promise<ReflectionResponse> {
+    return this.request(
+      `/api/reflections/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/restore`,
+      {
+        method: 'POST',
+        body: { expectedRevision },
+        schema: ReflectionResponseSchema,
+      },
+    );
   }
 
   migrateEntry(

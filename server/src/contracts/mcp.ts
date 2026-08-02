@@ -10,6 +10,7 @@ import {
   EntryAuthorSchema,
   EntryStateSchema,
   EntryTypeSchema,
+  ReflectionSchema,
   SummarySchema,
   entryStateLabel,
   isActionableEntryType,
@@ -105,6 +106,13 @@ export const McpAddEntryInputSchema = z
     summaryWeekStart: WeekStartSchema.optional().describe(
       'Explicit Monday week start when filing a weekly Summary.',
     ),
+    reflectionAction: z
+      .enum(['claim', 'complete', 'fail'])
+      .optional()
+      .describe('Lifecycle phase for a durable weekly Reflection request.'),
+    reflectionRequestId: UlidSchema.optional().describe(
+      'Request id returned by the Reflection card. Required for claim, complete, and fail.',
+    ),
     ...OptionalIdempotencyField,
   })
   .superRefine((input, context) => {
@@ -116,6 +124,20 @@ export const McpAddEntryInputSchema = z
         code: 'custom',
         path: ['summaryWeekStart'],
         message: 'Summary filing requires type note and the summary tag.',
+      });
+    }
+    if ((input.reflectionAction === undefined) !== (input.reflectionRequestId === undefined)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['reflectionRequestId'],
+        message: 'Reflection lifecycle actions require a reflectionRequestId.',
+      });
+    }
+    if (input.reflectionAction !== undefined && input.summaryWeekStart === undefined) {
+      context.addIssue({
+        code: 'custom',
+        path: ['summaryWeekStart'],
+        message: 'Reflection lifecycle actions require the requested Monday week start.',
       });
     }
     if (
@@ -139,6 +161,11 @@ export const McpAddEntryOutputSchema = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('summary'),
     summary: SummarySchema,
+    activityId: UlidSchema,
+  }),
+  z.strictObject({
+    kind: z.literal('reflection'),
+    reflection: ReflectionSchema,
     activityId: UlidSchema,
   }),
 ]);

@@ -551,6 +551,15 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
       );
       return { summary: result.summary };
     },
+    listReflections: (range) => ({
+      items: domain.listReflections(range.from, range.to),
+    }),
+    requestReflection: (id, expectedRevision, owner) =>
+      domain.requestReflection(id, owner, { expectedRevision }),
+    retryReflection: (id, expectedRevision, owner) =>
+      domain.retryReflection(id, owner, { expectedRevision }),
+    restoreReflectionVersion: (id, versionId, expectedRevision, owner) =>
+      domain.restoreReflectionVersion(id, versionId, owner, { expectedRevision }),
 
     getSettings: () => domain.getSettings(),
     updateSettings: (raw, owner) => {
@@ -593,14 +602,23 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
             ...(input.summaryWeekStart === undefined
               ? {}
               : { summaryWeekStart: input.summaryWeekStart }),
+            ...(input.reflectionAction === undefined
+              ? {}
+              : { reflectionAction: input.reflectionAction }),
+            ...(input.reflectionRequestId === undefined
+              ? {}
+              : { reflectionRequestId: input.reflectionRequestId }),
           },
           domainAgent(agent),
           mcpMutation(idempotencyKey, input),
         ),
       );
-      return result.kind === 'entry'
-        ? { kind: 'entry', entry: agentEntry(result.entry), activityId: result.activityId }
-        : { kind: 'summary', summary: result.summary, activityId: result.activityId };
+      if (result.kind === 'entry') {
+        return { kind: 'entry', entry: agentEntry(result.entry), activityId: result.activityId };
+      }
+      return result.kind === 'summary'
+        ? { kind: 'summary', summary: result.summary, activityId: result.activityId }
+        : { kind: 'reflection', reflection: result.reflection, activityId: result.activityId };
     },
 
     addToCollection: (raw, agent, idempotencyKey) => {
@@ -698,6 +716,7 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
       const summary = domain.getLatestSummary();
       return { summary, status: summary?.status ?? 'stale' };
     },
+    reflectionRequests: () => ({ items: domain.listPendingReflections() }),
   };
 
   return { api, mcp };

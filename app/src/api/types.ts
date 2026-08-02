@@ -8,6 +8,8 @@ import {
   LatestSummaryResponseSchema,
   PairResponseSchema,
   RecentlyDeletedListResponseSchema,
+  ReflectionListResponseSchema,
+  ReflectionResponseSchema,
   RestoreEntryResponseSchema,
   RewriteSummaryResponseSchema,
   SaveSummaryResponseSchema,
@@ -32,6 +34,8 @@ import {
   type IndexResponse,
   type OwnerEntryCreate,
   type RecentlyDeletedEntry,
+  type Reflection,
+  type ReflectionVersion,
   type Settings,
   type Summary,
   type TagUsage,
@@ -56,6 +60,8 @@ export type {
   IndexResponse,
   OwnerEntryCreate,
   RecentlyDeletedEntry,
+  Reflection,
+  ReflectionVersion,
   Settings,
   Summary,
   TagUsage,
@@ -66,6 +72,8 @@ export type PairResponse = z.infer<typeof PairResponseSchema>;
 export type TagListResponse = z.infer<typeof TagListResponseSchema>;
 export type EntryListResponse = z.infer<typeof EntryListResponseSchema>;
 export type RecentlyDeletedListResponse = z.infer<typeof RecentlyDeletedListResponseSchema>;
+export type ReflectionListResponse = z.infer<typeof ReflectionListResponseSchema>;
+export type ReflectionResponse = z.infer<typeof ReflectionResponseSchema>;
 export type RestoreEntryResponse = z.infer<typeof RestoreEntryResponseSchema>;
 export type CollectionListResponse = z.infer<typeof CollectionListResponseSchema>;
 export type ActivityListResponse = z.infer<typeof ActivityListResponseSchema>;
@@ -84,6 +92,8 @@ export {
   LatestSummaryResponseSchema,
   PairResponseSchema,
   RecentlyDeletedListResponseSchema,
+  ReflectionListResponseSchema,
+  ReflectionResponseSchema,
   RestoreEntryResponseSchema,
   RewriteSummaryResponseSchema,
   SaveSummaryResponseSchema,

@@ -23,6 +23,7 @@ import type {
   Summary,
   TagUsage,
   RecentlyDeletedEntry,
+  Reflection,
 } from '../api/types';
 import {
   calendarDateInTimeZone,
@@ -97,6 +98,7 @@ export type {
   Summary,
   TagUsage,
   RecentlyDeletedEntry,
+  Reflection,
 } from '../api/types';
 
 export interface RestoreResult {
@@ -140,7 +142,7 @@ function addCalendarDays(date: string, amount: number): string {
   return parsed.toISOString().slice(0, 10);
 }
 
-function initialMirror(): MirrorData {
+function initialMirror(): MirrorData & { reflectionsByWeek: Record<string, Reflection> } {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const today = dateInTimezone(timezone);
   return {
@@ -152,6 +154,7 @@ function initialMirror(): MirrorData {
     activityOrder: [],
     summariesByMonth: {},
     latestSummary: null,
+    reflectionsByWeek: {},
     settings: DEFAULT_SETTINGS,
     index: null,
     mcpStatus: null,
@@ -165,6 +168,7 @@ function initialMirror(): MirrorData {
 
 export interface JournalState extends MirrorData {
   index: IndexResponse | null;
+  reflectionsByWeek: Record<string, Reflection>;
   hydrated: boolean;
   loading: boolean;
   /** Canonical rows are kept separate from service availability. */
@@ -235,6 +239,10 @@ export interface JournalState extends MirrorData {
   ): Promise<Collection>;
   saveSummary(id?: string): Promise<Summary>;
   rewriteSummary(id?: string): Promise<Summary>;
+  loadReflections(): Promise<Reflection[]>;
+  requestReflection(id: string): Promise<Reflection>;
+  retryReflection(id: string): Promise<Reflection>;
+  restoreReflectionVersion(id: string, versionId: string): Promise<Reflection>;
   revertActivity(id: string): Promise<ActivityView>;
   updateSettings(
     patch: Partial<
@@ -317,6 +325,7 @@ function mirrorFromState(state: JournalState): MirrorData {
     activityOrder: state.activityOrder,
     summariesByMonth: state.summariesByMonth,
     latestSummary: state.latestSummary,
+    reflectionsByWeek: state.reflectionsByWeek,
     settings: state.settings,
     index: state.index,
     mcpStatus: state.mcpStatus,
@@ -822,6 +831,9 @@ async function prepareBootstrapReconciliation(
       .map((activity) => activity.id),
     summariesByMonth: options.authoritative ? {} : state.summariesByMonth,
     latestSummary: options.preserveLatestSummary ? state.latestSummary : null,
+    reflectionsByWeek: {
+      ...(options.authoritative ? {} : state.reflectionsByWeek),
+    },
     settings: response.settings,
     index: state.index,
     mcpStatus: assistant,
@@ -2336,6 +2348,7 @@ async function initializeJournal(): Promise<void> {
         ...saved.mirror,
         index: saved.mirror.index ?? null,
         summariesByMonth: saved.mirror.summariesByMonth ?? {},
+        reflectionsByWeek: saved.mirror.reflectionsByWeek ?? {},
         serverToday: saved.mirror.serverToday ?? saved.mirror.today,
         ...buildEntryIndexes(saved.mirror.entriesById),
       });
@@ -2625,6 +2638,18 @@ function localRecoveryRecords(
         (right.entry.deletedAt ?? '').localeCompare(left.entry.deletedAt ?? '') ||
         right.entry.id.localeCompare(left.entry.id),
     );
+}
+
+function upsertReflection(mirror: MirrorData, reflection: Reflection): MirrorData {
+  const current = mirror.reflectionsByWeek?.[reflection.weekStart];
+  if (current && current.revision > reflection.revision) return mirror;
+  return {
+    ...mirror,
+    reflectionsByWeek: {
+      ...(mirror.reflectionsByWeek ?? {}),
+      [reflection.weekStart]: reflection,
+    },
+  };
 }
 
 /**
@@ -3093,6 +3118,75 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
       }
       return response.summary;
     },
+    loadReflections: async () => {
+      const state = get();
+      const cached = Object.values(state.reflectionsByWeek).sort((left, right) =>
+        right.weekStart.localeCompare(left.weekStart),
+      );
+      if (!state.online) return cached;
+      const liveDates = state.timelineEntryIds
+        .flatMap((id) => {
+          const entry = state.entriesById[id];
+          return entry && entry.deletedAt === null ? [entry.date] : [];
+        })
+        .sort();
+      const from = liveDates[0];
+      if (!from) return cached;
+      const newest = liveDates.at(-1)!;
+      const to = newest < state.today ? newest : addCalendarDays(state.today, -1);
+      if (from > to) return cached;
+      const lifecycle = lifecycleGeneration;
+      const generation = sseGeneration;
+      const response = await authenticated(() => journalApi.listReflections(from, to));
+      if (lifecycle === lifecycleGeneration && generation === sseGeneration) {
+        let mirror = mirrorFromState(get());
+        for (const reflection of response.items) mirror = upsertReflection(mirror, reflection);
+        set(mirror);
+        await persistNow();
+      }
+      return response.items;
+    },
+    requestReflection: async (id) => {
+      requireOnline();
+      const target = Object.values(get().reflectionsByWeek).find((item) => item.id === id);
+      if (!target) throw new Error('Reflection no longer exists.');
+      const lifecycle = lifecycleGeneration;
+      const generation = sseGeneration;
+      const response = await authenticated(() => journalApi.requestReflection(id, target.revision));
+      if (lifecycle === lifecycleGeneration && generation === sseGeneration) {
+        set(upsertReflection(mirrorFromState(get()), response.reflection));
+        await persistNow();
+      }
+      return response.reflection;
+    },
+    retryReflection: async (id) => {
+      requireOnline();
+      const target = Object.values(get().reflectionsByWeek).find((item) => item.id === id);
+      if (!target) throw new Error('Reflection no longer exists.');
+      const lifecycle = lifecycleGeneration;
+      const generation = sseGeneration;
+      const response = await authenticated(() => journalApi.retryReflection(id, target.revision));
+      if (lifecycle === lifecycleGeneration && generation === sseGeneration) {
+        set(upsertReflection(mirrorFromState(get()), response.reflection));
+        await persistNow();
+      }
+      return response.reflection;
+    },
+    restoreReflectionVersion: async (id, versionId) => {
+      requireOnline();
+      const target = Object.values(get().reflectionsByWeek).find((item) => item.id === id);
+      if (!target) throw new Error('Reflection no longer exists.');
+      const lifecycle = lifecycleGeneration;
+      const generation = sseGeneration;
+      const response = await authenticated(() =>
+        journalApi.restoreReflectionVersion(id, versionId, target.revision),
+      );
+      if (lifecycle === lifecycleGeneration && generation === sseGeneration) {
+        set(upsertReflection(mirrorFromState(get()), response.reflection));
+        await persistNow();
+      }
+      return response.reflection;
+    },
     revertActivity: async (id) => {
       requireOnline();
       const lifecycle = lifecycleGeneration;
@@ -3414,6 +3508,13 @@ export const journalActions = {
   ): Promise<Collection> => useJournalStore.getState().updateCollection(id, patch),
   saveSummary: (id?: string): Promise<Summary> => useJournalStore.getState().saveSummary(id),
   rewriteSummary: (id?: string): Promise<Summary> => useJournalStore.getState().rewriteSummary(id),
+  loadReflections: (): Promise<Reflection[]> => useJournalStore.getState().loadReflections(),
+  requestReflection: (id: string): Promise<Reflection> =>
+    useJournalStore.getState().requestReflection(id),
+  retryReflection: (id: string): Promise<Reflection> =>
+    useJournalStore.getState().retryReflection(id),
+  restoreReflectionVersion: (id: string, versionId: string): Promise<Reflection> =>
+    useJournalStore.getState().restoreReflectionVersion(id, versionId),
   revertActivity: (id: string): Promise<ActivityView> =>
     useJournalStore.getState().revertActivity(id),
   updateSettings: (

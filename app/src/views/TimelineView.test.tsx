@@ -2,6 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Reflection } from '../api/types';
 import type { JournalEntry } from '../components/types';
 import { TimelineView } from './TimelineView';
 
@@ -33,10 +34,18 @@ const props = {
   hasEarlier: false,
   loadingEarlier: false,
   preferences: { density: 'comfortable' as const, showTypeBadges: true, highlightAiEntries: true },
+  reflections: [],
+  entriesById: { [entry.id]: entry },
+  online: true,
+  timezone: 'Europe/Amsterdam',
   onOpenEntry: vi.fn(),
   onToggleEntry: vi.fn(),
   onStartMigration: vi.fn(),
   onLoadEarlier: vi.fn(),
+  onRequestReflection: vi.fn(),
+  onRetryReflection: vi.fn(),
+  onRestoreReflection: vi.fn(),
+  onWriteReflection: vi.fn(),
 };
 
 describe('TimelineView', () => {
@@ -106,6 +115,47 @@ describe('TimelineView', () => {
     render(<TimelineView entries={[entry]} {...props} hasEarlier onLoadEarlier={onLoadEarlier} />);
     screen.getByRole('button', { name: 'Earlier' }).click();
     expect(onLoadEarlier).toHaveBeenCalledTimes(1);
+  });
+
+  it('places a compact Reflection at a completed-week boundary even without a Monday entry', () => {
+    const weekReflection: Reflection = {
+      id: '01J00000000000000000000010',
+      weekStart: '2026-07-20',
+      weekEnd: '2026-07-26',
+      status: 'notRequested',
+      revision: 1,
+      requestId: null,
+      requestedAt: null,
+      claimedAt: null,
+      claimedBy: null,
+      failure: null,
+      currentVersionId: null,
+      currentVersion: null,
+      versions: [],
+      createdAt: '2026-07-27T08:00:00.000Z',
+      updatedAt: '2026-07-27T08:00:00.000Z',
+    };
+    const newer = { ...entry, id: 'newer', date: '2026-07-21', text: 'After boundary' };
+    const older = { ...entry, id: 'older', date: '2026-07-19', text: 'Before boundary' };
+    const { container } = render(
+      <TimelineView
+        {...props}
+        today="2026-07-31"
+        selectedDate={null}
+        entries={[newer, older]}
+        entriesById={{ newer, older }}
+        reflections={[weekReflection]}
+      />,
+    );
+    const timeline = [...container.querySelectorAll('.day-section, .reflection-card')].map(
+      (node) => node.textContent,
+    );
+    expect(timeline.findIndex((text) => text?.includes('Weekly Reflection'))).toBeGreaterThan(
+      timeline.findIndex((text) => text?.includes('After boundary')),
+    );
+    expect(timeline.findIndex((text) => text?.includes('Weekly Reflection'))).toBeLessThan(
+      timeline.findIndex((text) => text?.includes('Before boundary')),
+    );
   });
 
   it('creates a named empty section for a deep-linked calendar day', () => {

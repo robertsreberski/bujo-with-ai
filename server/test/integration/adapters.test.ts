@@ -67,6 +67,75 @@ function createdEntry(
 }
 
 describe('HTTP and MCP domain adapters', () => {
+  it('uses add_entry to claim and complete a durable Reflection request', async () => {
+    const { domain, owner, adapters } = fixture();
+    createdEntry(domain, owner, {
+      id: ulid(),
+      date: '2026-07-22',
+      type: 'note',
+      text: 'A bounded weekly source',
+    });
+    const listed = (await adapters.api.listReflections(
+      { from: '2026-07-20', to: '2026-07-26' },
+      owner,
+    )) as { items: Array<{ id: string; revision: number; weekStart: string }> };
+    const slot = listed.items[0];
+    if (!slot) throw new Error('Expected Reflection slot');
+    const queued = (await adapters.api.requestReflection(slot.id, slot.revision, owner)) as {
+      reflection: { requestId: string; status: string };
+    };
+    expect(await adapters.mcp.reflectionRequests()).toMatchObject({
+      items: [
+        {
+          id: slot.id,
+          weekStart: slot.weekStart,
+          status: 'queued',
+          requestId: queued.reflection.requestId,
+        },
+      ],
+    });
+    const agent = {
+      kind: 'agent' as const,
+      tokenId: ulid(),
+      tokenLabel: 'weekly helper',
+      scopes: ['journal:full'] as const,
+      tool: 'add_entry',
+    };
+    const claim = (await adapters.mcp.addEntry(
+      {
+        text: 'Claim weekly Reflection',
+        type: 'note',
+        tags: ['summary'],
+        source: 'Weekly Reflection worker.',
+        summaryWeekStart: slot.weekStart,
+        reflectionAction: 'claim',
+        reflectionRequestId: queued.reflection.requestId,
+      },
+      agent,
+      'adapter-reflection-claim',
+    )) as { kind: string; reflection: { status: string } };
+    expect(claim).toMatchObject({ kind: 'reflection', reflection: { status: 'running' } });
+    const complete = (await adapters.mcp.addEntry(
+      {
+        text: 'The bounded source shows a deliberate week.',
+        type: 'note',
+        tags: ['summary'],
+        source: 'Bounded weekly source synthesis.',
+        summaryWeekStart: slot.weekStart,
+        reflectionAction: 'complete',
+        reflectionRequestId: queued.reflection.requestId,
+      },
+      agent,
+      'adapter-reflection-complete',
+    )) as {
+      kind: string;
+      reflection: { status: string; versions: Array<{ sourceEntries: unknown[] }> };
+    };
+    expect(complete).toMatchObject({ kind: 'reflection', reflection: { status: 'current' } });
+    expect(complete.reflection.versions[0]?.sourceEntries).toHaveLength(1);
+    expect(await adapters.mcp.reflectionRequests()).toEqual({ items: [] });
+  });
+
   it('creates least-privilege tokens through the owner API adapter', async () => {
     const { domain, owner, adapters } = fixture();
     const issued = (await adapters.api.createToken(

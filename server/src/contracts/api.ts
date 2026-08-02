@@ -19,6 +19,7 @@ import {
   EntryTypeSchema,
   SavedViewSchema,
   SavedViewsSchema,
+  ReflectionSchema,
   SettingsSchema,
   SummarySchema,
 } from './entities.js';
@@ -120,6 +121,22 @@ export const ActivityQuerySchema = z.strictObject({
     .describe('Opaque activity cursor, or a legacy ISO timestamp.'),
   limit: z.number().int().min(1).max(100).default(50),
 });
+
+export const ReflectionQuerySchema = z
+  .strictObject({
+    from: CalendarDateSchema,
+    to: CalendarDateSchema,
+  })
+  .refine((input) => input.from <= input.to, {
+    path: ['to'],
+    message: 'to cannot precede from.',
+  });
+
+export const ReflectionRequestSchema = z.strictObject({
+  expectedRevision: ExpectedRevisionSchema,
+});
+
+export const ReflectionRestoreRequestSchema = ReflectionRequestSchema;
 
 export const RevertActivityRequestSchema = z
   .strictObject({
@@ -325,6 +342,14 @@ export const RewriteSummaryResponseSchema = z.strictObject({
   summary: SummarySchema,
 });
 
+export const ReflectionListResponseSchema = z.strictObject({
+  items: z.array(ReflectionSchema),
+});
+
+export const ReflectionResponseSchema = z.strictObject({
+  reflection: ReflectionSchema,
+});
+
 export const ApiErrorSchema = z.strictObject({
   error: z.strictObject({
     code: z.string().min(1),
@@ -350,6 +375,7 @@ export const ChangeSchema = z.discriminatedUnion('kind', [
     kind: z.literal('summary.changed'),
     payload: z.union([SummarySchema, z.strictObject({ id: UlidSchema })]),
   }),
+  z.strictObject({ kind: z.literal('reflection.changed'), payload: ReflectionSchema }),
   z.strictObject({
     kind: z.literal('collection.changed'),
     payload: z.union([CollectionSchema, z.strictObject({ id: CollectionIdSchema })]),
@@ -527,6 +553,9 @@ export type TimelineQuery = z.infer<typeof TimelineQuerySchema>;
 export type CreateCollectionRequest = z.infer<typeof CreateCollectionRequestSchema>;
 export type UpdateCollectionRequest = z.infer<typeof UpdateCollectionRequestSchema>;
 export type ActivityQuery = z.infer<typeof ActivityQuerySchema>;
+export type ReflectionQuery = z.infer<typeof ReflectionQuerySchema>;
+export type ReflectionListResponse = z.infer<typeof ReflectionListResponseSchema>;
+export type ReflectionResponse = z.infer<typeof ReflectionResponseSchema>;
 export type SettingsPatch = z.infer<typeof SettingsPatchSchema>;
 export type BootstrapResponse = z.infer<typeof BootstrapResponseSchema>;
 export type TimelinePageResponse = z.infer<typeof TimelinePageResponseSchema>;

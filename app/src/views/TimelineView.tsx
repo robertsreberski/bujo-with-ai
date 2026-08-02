@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { Fragment, useEffect, useMemo, useRef } from 'react';
 import { EntryRow } from '../components/EntryRow';
+import { ReflectionCard } from '../components/ReflectionCard';
 import { Icon } from '../components/Icon';
 import { Button } from '../components/ui/button';
 import { formatLongDate } from '../components/dates';
 import { destinationLabel } from '../components/destination';
 import type { DisplayPreferences, JournalCollection, JournalEntry } from '../components/types';
+import type { Entry, Reflection } from '../api/types';
 
 interface TimelineViewProps {
   entries: JournalEntry[];
@@ -15,10 +17,18 @@ interface TimelineViewProps {
   hasEarlier: boolean;
   loadingEarlier: boolean;
   preferences: DisplayPreferences;
+  reflections: Reflection[];
+  entriesById: Record<string, Entry>;
+  online: boolean;
+  timezone: string;
   onOpenEntry: (entry: JournalEntry) => void;
   onToggleEntry: (entry: JournalEntry) => void;
   onStartMigration: (entries: JournalEntry[]) => void;
   onLoadEarlier: () => void;
+  onRequestReflection: (id: string) => void;
+  onRetryReflection: (id: string) => void;
+  onRestoreReflection: (id: string, versionId: string) => void;
+  onWriteReflection: (weekEnd: string) => void;
 }
 
 function entryLayoutSignature(entry: JournalEntry): string {
@@ -46,10 +56,18 @@ export function TimelineView({
   hasEarlier,
   loadingEarlier,
   preferences,
+  reflections,
+  entriesById,
+  online,
+  timezone,
   onOpenEntry,
   onToggleEntry,
   onStartMigration,
   onLoadEarlier,
+  onRequestReflection,
+  onRetryReflection,
+  onRestoreReflection,
+  onWriteReflection,
 }: TimelineViewProps) {
   const focusedDateRef = useRef<string | null>(null);
   const scrolledLayoutRef = useRef<string | null>(null);
@@ -113,6 +131,21 @@ export function TimelineView({
     ]);
     return `${selectedDate}:preferences:${preferencesSignature}:leftovers:${leftoversSignature}:sections:${layoutSignature}`;
   }, [leftovers, preferences, sections, selectedDate]);
+  const sectionsByDate = useMemo(
+    () => new Map(sections.map((section) => [section.date, section] as const)),
+    [sections],
+  );
+  const reflectionsByWeek = useMemo(
+    () => new Map(reflections.map((reflection) => [reflection.weekStart, reflection] as const)),
+    [reflections],
+  );
+  const timelineDates = useMemo(
+    () =>
+      [...new Set([...sections.map((section) => section.date), ...reflectionsByWeek.keys()])].sort(
+        (left, right) => right.localeCompare(left),
+      ),
+    [reflectionsByWeek, sections],
+  );
 
   useEffect(() => {
     if (!selectedDate || !selectedDateFocusKey) {
@@ -197,7 +230,10 @@ export function TimelineView({
           </div>
         </aside>
       ) : null}
-      {sections.map(({ date, entries: sectionEntries }) => {
+      {timelineDates.map((date) => {
+        const section = sectionsByDate.get(date);
+        const sectionEntries = section?.entries ?? [];
+        const reflection = reflectionsByWeek.get(date);
         const openCount = sectionEntries.filter(
           (entry) => (entry.type === 'task' || entry.type === 'habit') && entry.state === 'open',
         ).length;
@@ -205,60 +241,76 @@ export function TimelineView({
           ? `${openCount} open`
           : `${sectionEntries.length} ${sectionEntries.length === 1 ? 'entry' : 'entries'}`;
         return (
-          <section
-            className="day-section scroll-mt-1 outline-none"
-            data-day={date}
-            key={date}
-            tabIndex={-1}
-            aria-labelledby={`day-${date}`}
-          >
-            <header className="sticky top-0 z-(--z-day-header) flex min-h-[42px] items-baseline justify-between gap-2.5 bg-bg px-4 pt-3.5 pb-1.5">
-              <div className="flex min-w-0 items-baseline gap-2">
-                <h2
-                  className="overflow-hidden text-base font-semibold tracking-[-0.005em] text-ellipsis whitespace-nowrap"
-                  id={`day-${date}`}
-                >
-                  {date > today
-                    ? `Planning ${formatLongDate(date)}`
-                    : date === today
-                      ? 'Today'
-                      : formatLongDate(date)}
-                </h2>
-                {date === today ? (
-                  <span className="flex-none text-xs text-fg-mute">{formatLongDate(date)}</span>
-                ) : null}
-              </div>
-              <span className="flex-none text-xs text-fg-mute">{count}</span>
-            </header>
-            {sectionEntries.length > 0 ? (
-              sectionEntries.map((entry) => (
-                <EntryRow
-                  entry={entry}
-                  preferences={preferences}
-                  destinationLabel={
-                    entry.collection === null
-                      ? undefined
-                      : destinationLabel(
-                          { kind: 'collection', id: entry.collection },
-                          collectionsById,
-                          today,
-                        )
-                  }
-                  onOpen={onOpenEntry}
-                  onToggle={onToggleEntry}
-                  key={entry.id}
-                />
-              ))
-            ) : (
-              <div className="border-b border-bg-line px-4 pt-[13px] pb-4 text-sm text-fg-mute">
-                <p>
-                  {loading
-                    ? 'Loading timeline…'
-                    : 'No entries yet. The composer is ready when you are.'}
-                </p>
-              </div>
-            )}
-          </section>
+          <Fragment key={date}>
+            {section ? (
+              <section
+                className="day-section scroll-mt-1 outline-none"
+                data-day={date}
+                tabIndex={-1}
+                aria-labelledby={`day-${date}`}
+              >
+                <header className="sticky top-0 z-(--z-day-header) flex min-h-[42px] items-baseline justify-between gap-2.5 bg-bg px-4 pt-3.5 pb-1.5">
+                  <div className="flex min-w-0 items-baseline gap-2">
+                    <h2
+                      className="overflow-hidden text-base font-semibold tracking-[-0.005em] text-ellipsis whitespace-nowrap"
+                      id={`day-${date}`}
+                    >
+                      {date > today
+                        ? `Planning ${formatLongDate(date)}`
+                        : date === today
+                          ? 'Today'
+                          : formatLongDate(date)}
+                    </h2>
+                    {date === today ? (
+                      <span className="flex-none text-xs text-fg-mute">{formatLongDate(date)}</span>
+                    ) : null}
+                  </div>
+                  <span className="flex-none text-xs text-fg-mute">{count}</span>
+                </header>
+                {sectionEntries.length > 0 ? (
+                  sectionEntries.map((entry) => (
+                    <EntryRow
+                      entry={entry}
+                      preferences={preferences}
+                      destinationLabel={
+                        entry.collection === null
+                          ? undefined
+                          : destinationLabel(
+                              { kind: 'collection', id: entry.collection },
+                              collectionsById,
+                              today,
+                            )
+                      }
+                      onOpen={onOpenEntry}
+                      onToggle={onToggleEntry}
+                      key={entry.id}
+                    />
+                  ))
+                ) : (
+                  <div className="border-b border-bg-line px-4 pt-[13px] pb-4 text-sm text-fg-mute">
+                    <p>
+                      {loading
+                        ? 'Loading timeline…'
+                        : 'No entries yet. The composer is ready when you are.'}
+                    </p>
+                  </div>
+                )}
+              </section>
+            ) : null}
+            {reflection ? (
+              <ReflectionCard
+                reflection={reflection}
+                entriesById={entriesById}
+                online={online}
+                timezone={timezone}
+                onRequest={onRequestReflection}
+                onRetry={onRetryReflection}
+                onRestore={onRestoreReflection}
+                onOpenEntry={onOpenEntry}
+                onWrite={onWriteReflection}
+              />
+            ) : null}
+          </Fragment>
         );
       })}
       {hasEarlier ? (

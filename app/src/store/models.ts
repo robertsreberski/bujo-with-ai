@@ -9,6 +9,7 @@ import type {
   IndexResponse,
   McpStatus,
   OwnerEntryCreate,
+  Reflection,
   Settings,
   Summary,
 } from '../api/types';
@@ -70,6 +71,8 @@ export interface MirrorData extends EntryIndexes {
   /** Greatest-weekStart summary fetched for each displayed YYYY-MM month. */
   summariesByMonth: Record<string, Summary | null>;
   latestSummary: Summary | null;
+  /** Versioned weekly Reflections keyed by their Monday boundary. */
+  reflectionsByWeek?: Record<string, Reflection>;
   settings: Settings;
   /** Bounded server-owned aggregate snapshot; optional on pre-index persisted records. */
   index?: IndexResponse | null;

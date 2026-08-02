@@ -13,6 +13,9 @@ import {
   MutationIdHeaderSchema,
   PairRequestSchema,
   RestoreEntryRequestSchema,
+  ReflectionQuerySchema,
+  ReflectionRequestSchema,
+  ReflectionRestoreRequestSchema,
   RevertActivityRequestSchema,
   ScheduleMonthlyRequestSchema,
   SettingsPatchSchema,
@@ -126,6 +129,26 @@ export interface ApiJournalOperations extends DeviceAuthenticator {
   rewriteLatestSummary(
     summaryId: string | undefined,
     expectedRevision: number | undefined,
+    actor: OwnerActor,
+  ): unknown | Promise<unknown>;
+  listReflections(
+    range: { from: string; to: string },
+    actor: OwnerActor,
+  ): unknown | Promise<unknown>;
+  requestReflection(
+    id: string,
+    expectedRevision: number,
+    actor: OwnerActor,
+  ): unknown | Promise<unknown>;
+  retryReflection(
+    id: string,
+    expectedRevision: number,
+    actor: OwnerActor,
+  ): unknown | Promise<unknown>;
+  restoreReflectionVersion(
+    id: string,
+    versionId: string,
+    expectedRevision: number,
     actor: OwnerActor,
   ): unknown | Promise<unknown>;
   getSettings(actor: OwnerActor): unknown | Promise<unknown>;
@@ -472,6 +495,51 @@ export function createApiRouter(options: ApiRouterOptions): Router {
       const body = SummaryRewriteRequestSchema.parse(request.body ?? {});
       return options.operations.rewriteLatestSummary(
         body.summaryId,
+        body.expectedRevision,
+        actor(request),
+      );
+    }),
+  );
+
+  router.get(
+    '/reflections',
+    asyncRoute((request) => {
+      const range = ReflectionQuerySchema.parse({
+        from: scalarQuery(request, 'from'),
+        to: scalarQuery(request, 'to'),
+      });
+      return options.operations.listReflections(range, actor(request));
+    }),
+  );
+  router.post(
+    '/reflections/:id/request',
+    asyncRoute((request) => {
+      const body = ReflectionRequestSchema.parse(request.body ?? {});
+      return options.operations.requestReflection(
+        idSchema.parse(request.params.id),
+        body.expectedRevision,
+        actor(request),
+      );
+    }),
+  );
+  router.post(
+    '/reflections/:id/retry',
+    asyncRoute((request) => {
+      const body = ReflectionRequestSchema.parse(request.body ?? {});
+      return options.operations.retryReflection(
+        idSchema.parse(request.params.id),
+        body.expectedRevision,
+        actor(request),
+      );
+    }),
+  );
+  router.post(
+    '/reflections/:id/versions/:versionId/restore',
+    asyncRoute((request) => {
+      const body = ReflectionRestoreRequestSchema.parse(request.body ?? {});
+      return options.operations.restoreReflectionVersion(
+        idSchema.parse(request.params.id),
+        idSchema.parse(request.params.versionId),
         body.expectedRevision,
         actor(request),
       );

@@ -29,4 +29,5 @@ export const migrations: readonly Migration[] = [
   migration(2, 'fts', '002_fts.sql'),
   migration(3, 'entry-page', '003_entry_page.sql'),
   migration(4, 'saved-views', '004_saved_views.sql'),
+  migration(5, 'reflections', '005_reflections.sql'),
 ];
