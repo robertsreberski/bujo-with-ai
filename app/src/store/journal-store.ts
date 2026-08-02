@@ -171,6 +171,11 @@ function initialMirror(): MirrorData & { reflectionsByWeek: Record<string, Refle
 
 export interface JournalState extends MirrorData {
   index: IndexResponse | null;
+  /** Request lifecycle is separate from the last bounded aggregate snapshot. */
+  indexStatus: 'idle' | 'loading' | 'ready' | 'error';
+  /** Cached snapshots stay renderable, but are never presented as freshly counted. */
+  indexSource: 'none' | 'cached' | 'journal';
+  indexError: string | null;
   reflectionsByWeek: Record<string, Reflection>;
   hydrated: boolean;
   loading: boolean;
@@ -622,6 +627,12 @@ export async function applyChangeBatch(
   if (expectedGeneration !== lifecycleGeneration || pairingExpired) return;
   sseGeneration += 1;
   const before = useJournalStore.getState();
+  const invalidatesIndex = batch.changes.some(
+    (change) =>
+      change.kind.startsWith('entry.') ||
+      change.kind === 'collection.changed' ||
+      change.kind === 'settings.changed',
+  );
   const removedLatestSummary = batch.changes.some(
     (change) =>
       change.kind === 'summary.changed' &&
@@ -675,6 +686,9 @@ export async function applyChangeBatch(
   }
   useJournalStore.setState({
     ...mirror,
+    ...(invalidatesIndex
+      ? { indexSource: mirror.index === null ? ('none' as const) : ('cached' as const) }
+      : {}),
     timelineEntryIds: [...timelineEntryIds],
     outbox: remaining,
     outboxCount: remaining.length,
@@ -1609,6 +1623,7 @@ async function enqueueCommand(command: QueueableCommand): Promise<void> {
     }
     return {
       ...mirror,
+      indexSource: mirror.index === null ? 'none' : 'cached',
       timelineEntryIds,
       outbox,
       outboxCount: outbox.length,
@@ -2216,43 +2231,59 @@ async function loadEarlierTimelinePage(): Promise<Entry[]> {
 }
 
 async function loadIndexIntoMirror(attempt = 0): Promise<IndexResponse> {
-  requireOnline();
   const lifecycle = lifecycleGeneration;
-  const responseGeneration = sseGeneration;
-  const response = await authenticated(() => journalApi.getIndex());
-  if (lifecycle !== lifecycleGeneration) return response;
-  if (pairingExpired) {
-    throw new ApiError(401, 'unauthenticated', 'Pairing expired. Reload Journal to reconnect.');
-  }
-  if (responseGeneration !== sseGeneration) {
-    if (attempt < 3) return loadIndexIntoMirror(attempt + 1);
-    throw new Error('Journal changed while the index was loading. Please retry.');
-  }
+  if (attempt === 0) useJournalStore.setState({ indexStatus: 'loading', indexError: null });
+  try {
+    requireOnline();
+    const responseGeneration = sseGeneration;
+    const response = await authenticated(() => journalApi.getIndex());
+    if (lifecycle !== lifecycleGeneration) return response;
+    if (pairingExpired) {
+      throw new ApiError(401, 'unauthenticated', 'Pairing expired. Reload Journal to reconnect.');
+    }
+    if (responseGeneration !== sseGeneration) {
+      if (attempt < 3) return loadIndexIntoMirror(attempt + 1);
+      throw new Error('Journal changed while the index was loading. Please retry.');
+    }
 
-  const state = useJournalStore.getState();
-  let mirror: MirrorData = {
-    ...mirrorFromState(state),
-    index: response,
-    collectionsById: {
-      ...state.collectionsById,
-      ...Object.fromEntries(
-        response.collections.map((collection) => [
-          collection.id,
-          {
-            id: collection.id,
-            name: collection.name,
-            note: collection.note,
-            createdAt: collection.createdAt,
-            archivedAt: collection.archivedAt,
-          },
-        ]),
-      ),
-    },
-  };
-  mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, state.outbox));
-  useJournalStore.setState(mirror);
-  await persistNow();
-  return response;
+    const state = useJournalStore.getState();
+    let mirror: MirrorData = {
+      ...mirrorFromState(state),
+      index: response,
+      collectionsById: {
+        ...state.collectionsById,
+        ...Object.fromEntries(
+          response.collections.map((collection) => [
+            collection.id,
+            {
+              id: collection.id,
+              name: collection.name,
+              note: collection.note,
+              createdAt: collection.createdAt,
+              archivedAt: collection.archivedAt,
+            },
+          ]),
+        ),
+      },
+    };
+    mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, state.outbox));
+    useJournalStore.setState({
+      ...mirror,
+      indexStatus: 'ready',
+      indexSource: 'journal',
+      indexError: null,
+    });
+    await persistNow();
+    return response;
+  } catch (error) {
+    if (attempt === 0 && lifecycle === lifecycleGeneration) {
+      useJournalStore.setState({
+        indexStatus: 'error',
+        indexError: error instanceof Error ? error.message : 'Journal index could not refresh.',
+      });
+    }
+    throw error;
+  }
 }
 
 async function loadEntryIntoMirror(id: string): Promise<Entry> {
@@ -2381,6 +2412,9 @@ async function initializeJournal(): Promise<void> {
       });
       useJournalStore.setState({
         ...mirror,
+        indexStatus: mirror.index === null ? 'idle' : 'ready',
+        indexSource: mirror.index === null ? 'none' : 'cached',
+        indexError: null,
         today: dateInTimezone(mirror.timezone),
         draft: saved.draft,
         defaultType: saved.defaultType,
@@ -2418,6 +2452,9 @@ async function initializeJournal(): Promise<void> {
     } else {
       useJournalStore.setState({
         ...initialMirror(),
+        indexStatus: 'idle',
+        indexSource: 'none',
+        indexError: null,
         draft: '',
         defaultType: 'task',
         outbox: [],
@@ -2738,6 +2775,9 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
   (set, get) => ({
     ...initialMirror(),
     index: null,
+    indexStatus: 'idle',
+    indexSource: 'none',
+    indexError: null,
     hydrated: false,
     loading: true,
     resourceStatus: 'loading',
@@ -2932,6 +2972,7 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
           );
           return {
             ...mirror,
+            indexSource: mirror.index === null ? 'none' : 'cached',
             timelineEntryIds: timelineIdsWithRestoredEntry(current, original),
             outbox,
             outboxCount: outbox.length,
@@ -2961,6 +3002,7 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
           const mirror = upsertServerEntry(mirrorFromState(get()), response.entry);
           set((current) => ({
             ...mirror,
+            indexSource: mirror.index === null ? 'none' : 'cached',
             timelineEntryIds: timelineIdsWithRestoredEntry(current, response.entry),
             recentlyDeleted: current.recentlyDeleted.filter((item) => item.entry.id !== id),
           }));
@@ -2991,6 +3033,7 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
       const mirror = upsertServerEntry(mirrorFromState(get()), response.entry);
       set((current) => ({
         ...mirror,
+        indexSource: mirror.index === null ? 'none' : 'cached',
         timelineEntryIds: timelineIdsWithRestoredEntry(current, response.entry),
         recentlyDeleted: current.recentlyDeleted.filter((item) => item.entry.id !== id),
       }));
@@ -3284,7 +3327,10 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
         };
       }
       mirror = upsertActivity(mirror, response.activity);
-      set(recomputeActivityRevertEligibility(mirror));
+      set({
+        ...recomputeActivityRevertEligibility(mirror),
+        indexSource: mirror.index === null ? 'none' : 'cached',
+      });
       await persistNow();
       if (removedLatestSummary) void refreshCanonicalLatestSummary();
       return response.activity;
@@ -3298,7 +3344,13 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
         return response.settings;
       }
       const mirror = upsertServerSettings(mirrorFromState(get()), response.settings);
-      set({ ...mirror, mcpStatus: response.assistant });
+      set({
+        ...mirror,
+        mcpStatus: response.assistant,
+        ...(patch.savedViews === undefined
+          ? {}
+          : { indexSource: mirror.index === null ? ('none' as const) : ('cached' as const) }),
+      });
       await persistNow();
       return response.settings;
     },

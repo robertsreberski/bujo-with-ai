@@ -38,7 +38,6 @@ describe('SearchDialog', () => {
     });
     render(
       <SearchDialog
-        entries={[]}
         preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
         initialQuery="missing"
         onSearch={onSearch}
@@ -78,7 +77,6 @@ describe('SearchDialog', () => {
       });
     render(
       <SearchDialog
-        entries={[]}
         preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
         initialQuery="cafe"
         onSearch={onSearch}
@@ -109,7 +107,6 @@ describe('SearchDialog', () => {
       });
     render(
       <SearchDialog
-        entries={[]}
         preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
         initialQuery="launch"
         onSearch={onSearch}
@@ -130,5 +127,79 @@ describe('SearchDialog', () => {
     expect(snippet.leadingEllipsis).toBe(true);
     expect(snippet.segments.find((segment) => segment.highlighted)?.text).toBe('CAFÉ');
     expect(snippet.segments.map((segment) => segment.text).join('')).not.toBe(entry.text);
+  });
+
+  it('loads and pages the canonical recent feed when the query is empty', async () => {
+    const user = userEvent.setup();
+    const older = { ...entry, id: '01J00000000000000000000002', text: 'Older canonical note' };
+    const onSearch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        items: [entry],
+        nextCursor: 'recent-page-two',
+        hasMore: true,
+        source: 'journal',
+        reason: null,
+      })
+      .mockResolvedValueOnce({
+        items: [older],
+        nextCursor: null,
+        hasMore: false,
+        source: 'journal',
+        reason: null,
+      });
+    render(
+      <SearchDialog
+        preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
+        onSearch={onSearch}
+        onClose={vi.fn()}
+        onOpenEntry={vi.fn()}
+        onToggleEntry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Loading recent entries from Journal…')).toBeInTheDocument();
+    expect(await screen.findByText('Showing recent entries from Journal')).toBeInTheDocument();
+    expect(onSearch).toHaveBeenNthCalledWith(1, '');
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(onSearch).toHaveBeenLastCalledWith('', 'recent-page-two');
+    expect(await screen.findByText('Older canonical note')).toBeInTheDocument();
+  });
+
+  it('labels and pages an empty-query downloaded fallback as partial', async () => {
+    const user = userEvent.setup();
+    const older = { ...entry, id: '01J00000000000000000000003', text: 'Older downloaded note' };
+    const onSearch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        items: [entry],
+        nextCursor: 'downloaded:50',
+        hasMore: true,
+        source: 'downloaded',
+        reason: 'offline',
+      })
+      .mockResolvedValueOnce({
+        items: [older],
+        nextCursor: null,
+        hasMore: false,
+        source: 'downloaded',
+        reason: 'offline',
+      });
+    render(
+      <SearchDialog
+        preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
+        onSearch={onSearch}
+        onClose={vi.fn()}
+        onOpenEntry={vi.fn()}
+        onToggleEntry={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByText('Showing downloaded recent entries — history may be incomplete.'),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+    expect(onSearch).toHaveBeenLastCalledWith('', 'downloaded:50');
+    expect(await screen.findByText('Older downloaded note')).toBeInTheDocument();
   });
 });

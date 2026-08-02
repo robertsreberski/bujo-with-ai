@@ -574,6 +574,85 @@ describe('journal store reconciliation', () => {
       id: 'archive',
       archivedAt: archived.archivedAt,
     });
+    expect(useJournalStore.getState()).toMatchObject({
+      indexStatus: 'ready',
+      indexSource: 'journal',
+      indexError: null,
+    });
+  });
+
+  it('preserves a cached Index and records a refresh failure until retry succeeds', async () => {
+    const cached = {
+      collections: [],
+      months: [{ month: '2026-06' as const, count: 7 }],
+      types: [],
+      savedViews: [],
+    };
+    const refreshed = {
+      collections: [],
+      months: [{ month: '2026-07' as const, count: 8 }],
+      types: [],
+      savedViews: [],
+    };
+    useJournalStore.setState({
+      index: cached,
+      indexStatus: 'ready',
+      indexSource: 'cached',
+      indexError: null,
+      online: true,
+      networkOnline: true,
+    });
+    const getIndex = vi
+      .spyOn(journalApi, 'getIndex')
+      .mockRejectedValueOnce(new ApiError(503, 'unavailable', 'Journal index is unavailable.'))
+      .mockResolvedValueOnce(refreshed);
+
+    await expect(journalActions.loadIndex()).rejects.toThrow('Journal index is unavailable.');
+    expect(useJournalStore.getState()).toMatchObject({
+      index: cached,
+      indexStatus: 'error',
+      indexSource: 'cached',
+      indexError: 'Journal index is unavailable.',
+    });
+
+    await expect(journalActions.loadIndex()).resolves.toEqual(refreshed);
+    expect(getIndex).toHaveBeenCalledTimes(2);
+    expect(useJournalStore.getState()).toMatchObject({
+      index: refreshed,
+      indexStatus: 'ready',
+      indexSource: 'journal',
+      indexError: null,
+    });
+  });
+
+  it('marks aggregate counts stale instead of guessing after a local entry change', async () => {
+    const row = entry(18);
+    useJournalStore.setState({
+      entriesById: { [row.id]: row },
+      entryIdsByDate: { [row.date]: [row.id] },
+      entryIdsByCollection: {},
+      index: {
+        collections: [],
+        months: [{ month: '2026-07', count: 1 }],
+        types: [{ type: 'task', count: 1 }],
+        savedViews: [],
+      },
+      indexStatus: 'ready',
+      indexSource: 'journal',
+      online: false,
+      networkOnline: false,
+      outbox: [],
+      outboxCount: 0,
+    });
+
+    await journalActions.updateEntry(row.id, { type: 'note' });
+
+    expect(useJournalStore.getState()).toMatchObject({
+      indexSource: 'cached',
+      index: {
+        types: [{ type: 'task', count: 1 }],
+      },
+    });
   });
 
   it('refreshes MCP connectivity together with token metadata', async () => {
@@ -1621,6 +1700,50 @@ describe('journal store reconciliation', () => {
 });
 
 describe('journal search paging', () => {
+  it('requests one canonical bounded recent page for an empty online search', async () => {
+    const recent = entry(1, { text: 'Canonical recent row' });
+    useJournalStore.setState({
+      entriesById: {},
+      online: true,
+      networkOnline: true,
+    });
+    const listEntries = vi.spyOn(journalApi, 'listEntries').mockResolvedValue({
+      items: [recent],
+      nextCursor: 'recent-page-two',
+      today: '2026-07-31',
+      timezone: 'Europe/Amsterdam',
+    });
+
+    const page = await journalActions.searchEntries('');
+
+    expect(listEntries).toHaveBeenCalledWith({ q: '', limit: 50 });
+    expect(page).toMatchObject({
+      items: [recent],
+      nextCursor: 'recent-page-two',
+      hasMore: true,
+      source: 'journal',
+      reason: null,
+    });
+  });
+
+  it('pages all downloaded recent rows for an empty offline search', async () => {
+    const entries = Object.fromEntries(
+      Array.from({ length: 75 }, (_, index) => {
+        const row = entry(index, { text: `Recent ${index}` });
+        return [row.id, row];
+      }),
+    );
+    useJournalStore.setState({ entriesById: entries, online: false, networkOnline: false });
+
+    const first = await journalActions.searchEntries('');
+    const second = await journalActions.searchEntries('', first.nextCursor ?? undefined);
+
+    expect(first).toMatchObject({ source: 'downloaded', reason: 'offline', hasMore: true });
+    expect(first.items).toHaveLength(50);
+    expect(second.items).toHaveLength(25);
+    expect(second.hasMore).toBe(false);
+  });
+
   it('pages every matching downloaded row in groups of 50 without a silent cap', async () => {
     const entries = Object.fromEntries(
       Array.from({ length: 120 }, (_, index) => {

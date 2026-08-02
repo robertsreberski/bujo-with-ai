@@ -128,6 +128,11 @@ describe('capture invites', () => {
           types: [],
           savedViews: [],
         }}
+        status="ready"
+        source="journal"
+        online
+        error={null}
+        onRetry={vi.fn()}
         onOpenCollection={vi.fn()}
         onOpenMonth={vi.fn()}
         onOpenSearch={vi.fn()}

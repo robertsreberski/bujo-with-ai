@@ -721,6 +721,31 @@ describe('HTTP and MCP domain adapters', () => {
     expect(reads.join('\n')).not.toMatch(/SELECT\s+e\.\*|\bLIMIT\b|\bOFFSET\b/iu);
   });
 
+  it('isolates a legacy saved view with invalid grammar from the Index response', async () => {
+    const { database, domain, owner, adapters } = fixture();
+    database.raw
+      .prepare(
+        `INSERT INTO settings(
+          id,density,show_type_badges,highlight_ai_entries,saved_views,updated_at
+        ) VALUES (1,'comfortable',1,1,?,'2026-07-31T09:00:00.000Z')`,
+      )
+      .run(
+        JSON.stringify([
+          { id: 'legacy-broken', name: 'Legacy broken', query: 'type:unknown' },
+          { id: 'legacy-valid', name: 'Legacy valid', query: 'type:note' },
+        ]),
+      );
+
+    const index = (await adapters.api.getIndex(owner)) as {
+      savedViews: Array<{ id: string; count: number; name: string; query: string }>;
+    };
+
+    expect(domain.getSettings().savedViews).toHaveLength(2);
+    expect(index.savedViews).toEqual([
+      { id: 'legacy-valid', name: 'Legacy valid', query: 'type:note', count: 0 },
+    ]);
+  });
+
   it('pages through more than 500 same-timestamp activity rows without skips', async () => {
     const statements: string[] = [];
     const { domain, owner, adapters } = fixture((sql) => statements.push(sql));

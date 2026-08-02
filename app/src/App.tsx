@@ -608,6 +608,11 @@ export default function App() {
         return (
           <IndexView
             index={store.index}
+            status={store.indexStatus}
+            source={store.indexSource}
+            online={store.online}
+            error={store.indexError}
+            onRetry={() => run(() => journalActions.loadIndex())}
             onOpenCollection={(collection) =>
               navigate({ name: 'collection', collectionId: collection.id })
             }
@@ -827,7 +832,6 @@ export default function App() {
       ) : null}
       {overlay === 'search' ? (
         <SearchDialog
-          entries={entries}
           preferences={preferences}
           initialQuery={searchQuery}
           onSearch={journalActions.searchEntries}

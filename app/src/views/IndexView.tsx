@@ -37,6 +37,11 @@ const INDEX_ROW_ACTION =
 
 interface IndexViewProps {
   index: IndexResponse | null;
+  status: 'idle' | 'loading' | 'ready' | 'error';
+  source: 'none' | 'cached' | 'journal';
+  online: boolean;
+  error: string | null;
+  onRetry: () => void;
   onOpenCollection: (collection: JournalCollection) => void;
   onOpenMonth: (month: string) => void;
   onOpenSearch: (query: string) => void;
@@ -131,6 +136,11 @@ function CollectionEditor({ collection, onSave, onClose, onArchive }: Collection
 
 export function IndexView({
   index,
+  status,
+  source,
+  online,
+  error,
+  onRetry,
   onOpenCollection,
   onOpenMonth,
   onOpenSearch,
@@ -153,11 +163,33 @@ export function IndexView({
   }, [index]);
 
   if (index === null) {
+    const waiting = status === 'loading' || (status === 'idle' && online);
     return (
-      <section className="min-h-full" aria-label="Journal index" aria-busy="true">
+      <section className="min-h-full" aria-label="Journal index" aria-busy={waiting}>
         <div className={cn(SECTION, 'index-group pt-4')}>
-          <div className="rounded-xl border border-border px-4 py-8 text-center text-sm text-fg-mute">
-            Loading journal index…
+          <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-xl border border-border px-4 py-8 text-center text-sm text-fg-mute">
+            {waiting ? (
+              <span>Loading journal index…</span>
+            ) : (
+              <>
+                <Icon name={online ? 'folder' : 'wifiOff'} size={18} />
+                <div>
+                  <p className="text-md text-fg-body">
+                    {online
+                      ? 'Journal index couldn’t load.'
+                      : 'Journal index isn’t on this device yet.'}
+                  </p>
+                  <p className="mt-1 text-xs">
+                    {online
+                      ? (error ?? 'Try the bounded index request again.')
+                      : 'Reconnect once to download its counts and destinations.'}
+                  </p>
+                </div>
+                <Button variant="secondary" size="sm" disabled={!online} onClick={onRetry}>
+                  Retry
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -166,6 +198,30 @@ export function IndexView({
 
   return (
     <section className="min-h-full" aria-label="Journal index">
+      {!online || source === 'cached' || status === 'error' || status === 'loading' ? (
+        <div
+          className={cn(
+            SECTION,
+            'mt-4 flex items-center justify-between gap-3 rounded-lg border border-border bg-bg-line px-3 py-2 text-xs text-fg-mute',
+          )}
+          role={status === 'error' ? 'alert' : 'status'}
+        >
+          <span>
+            {!online
+              ? 'Offline — counts are from the last sync and may be out of date.'
+              : status === 'error'
+                ? `Couldn’t refresh — showing saved counts that may be out of date.${error ? ` ${error}` : ''}`
+                : status === 'loading'
+                  ? 'Refreshing counts — showing the last saved snapshot for now.'
+                  : 'Showing saved counts until Journal refreshes them.'}
+          </span>
+          {online && status !== 'loading' ? (
+            <Button variant="ghost" size="sm" className="shrink-0" onClick={onRetry}>
+              Retry
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
       <section className={cn(SECTION, 'index-group pt-4')} aria-labelledby="collections-heading">
         <header className={SECTION_HEADING_ACTION}>
           <div>

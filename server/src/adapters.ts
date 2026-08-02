@@ -303,10 +303,19 @@ function savedViewSearch(query: string): SearchEntriesInput {
 }
 
 function countedSavedViews(domain: JournalDomain) {
-  return (domain.getSettings().savedViews ?? []).map((view) => ({
-    ...view,
-    count: domain.countEntries(savedViewSearch(view.query)),
-  }));
+  return (domain.getSettings().savedViews ?? []).flatMap((view) => {
+    let search: SearchEntriesInput;
+    try {
+      search = savedViewSearch(view.query);
+    } catch (error) {
+      // Settings written by current clients are rejected at their write
+      // boundary. A pre-validation row may still exist in an upgraded journal;
+      // isolate that row instead of making every Index destination unavailable.
+      if (error instanceof DomainError && error.code === 'VALIDATION_ERROR') return [];
+      throw error;
+    }
+    return [{ ...view, count: domain.countEntries(search) }];
+  });
 }
 
 function indexReadModel(domain: JournalDomain) {

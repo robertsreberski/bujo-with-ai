@@ -736,6 +736,35 @@ describe('JournalDomain index aggregates', () => {
     target.domain.importJournal(exported);
     expect(target.domain.getSettings().savedViews).toEqual(savedViews);
   });
+
+  it('rejects invalid saved-view grammar at settings and import write boundaries', () => {
+    const source = fixture();
+    expect(() =>
+      source.domain.setSettings(
+        {
+          savedViews: [{ id: 'broken', name: 'Broken', query: 'by:nobody' }],
+        },
+        source.owner,
+      ),
+    ).toThrowError(/Saved view broken has an invalid query.*by:me or by:assistant/i);
+    expect(source.domain.getSettings().savedViews).toEqual([]);
+
+    const exported = source.domain.exportJournal();
+    const target = fixture();
+    expect(() =>
+      target.domain.importJournal({
+        ...exported,
+        journal: {
+          ...exported.journal,
+          settings: {
+            ...exported.journal.settings,
+            savedViews: [{ id: 'broken-import', name: 'Broken import', query: 'is:done' }],
+          },
+        },
+      }),
+    ).toThrowError(/Saved view broken-import has an invalid query.*is:open/i);
+    expect(target.domain.searchEntries({ limit: 25 }).total).toBe(0);
+  });
 });
 
 describe('JournalDomain weekly Reflections', () => {
