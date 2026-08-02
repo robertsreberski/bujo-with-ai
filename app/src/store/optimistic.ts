@@ -3,11 +3,13 @@ import {
   ActivitySnapshotSchema,
   ActivityViewSchema,
   AgentTokenSchema,
+  CalendarDateSchema,
   CollectionSchema,
   EntrySchema,
   ReflectionSchema,
   SettingsSchema,
   SummarySchema,
+  UlidSchema,
 } from '@journal/server/contracts/app';
 
 import type {
@@ -358,6 +360,22 @@ function tombstoneId(payload: unknown, entity: 'collection' | 'summary'): string
   return parsed.success ? parsed.data.id : null;
 }
 
+function reflectionTombstone(payload: unknown): { id: string; weekStart: string } | null {
+  if (
+    typeof payload !== 'object' ||
+    payload === null ||
+    Array.isArray(payload) ||
+    Object.keys(payload).length !== 2 ||
+    !('id' in payload) ||
+    !('weekStart' in payload)
+  ) {
+    return null;
+  }
+  const id = UlidSchema.safeParse(payload.id);
+  const weekStart = CalendarDateSchema.safeParse(payload.weekStart);
+  return id.success && weekStart.success ? { id: id.data, weekStart: weekStart.data } : null;
+}
+
 /** Applies a validated SSE transaction atomically to the normalized server mirror. */
 export function applyServerChangeBatch(mirror: MirrorData, batch: ChangeBatch): MirrorData {
   let next = mirror;
@@ -407,6 +425,14 @@ export function applyServerChangeBatch(mirror: MirrorData, batch: ChangeBatch): 
             [parsed.data.weekStart]: parsed.data,
           },
         };
+      } else {
+        const tombstone = reflectionTombstone(change.payload);
+        const current = tombstone ? next.reflectionsByWeek?.[tombstone.weekStart] : undefined;
+        if (tombstone && current?.id === tombstone.id) {
+          const reflectionsByWeek = { ...(next.reflectionsByWeek ?? {}) };
+          delete reflectionsByWeek[tombstone.weekStart];
+          next = { ...next, reflectionsByWeek };
+        }
       }
       continue;
     }
