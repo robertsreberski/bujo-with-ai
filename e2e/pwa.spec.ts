@@ -220,9 +220,14 @@ test('the cached shell launches offline and an offline capture replays after rec
 
   await context.setOffline(true);
   await page.reload({ waitUntil: 'domcontentloaded' });
+  // Chromium's network emulation remains offline across a navigation but its
+  // replacement document reports `navigator.onLine === true` and receives no
+  // offline event. Deliver the browser signal a real device emits so this test
+  // cannot pass by misclassifying offline as a stopped Journal server.
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
   await expect(page.locator('#journal-content')).toBeVisible();
   await expect(page.locator('.status-strip')).toContainText(
-    /Offline ready — showing what is saved on this device|Offline — showing what is available on this device|Journal server unavailable/,
+    /Offline ready — showing what is saved on this device|Offline — showing what is available on this device/,
   );
 
   const text = uniqueText('Offline queued capture');
