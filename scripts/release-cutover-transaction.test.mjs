@@ -83,7 +83,11 @@ function writePrivate(path, body) {
   chmodSync(path, 0o600);
 }
 
-test('stable BSD lockf ownership serializes contenders and survives diagnostic rewrites', async () => {
+test('stable BSD lockf ownership serializes contenders and survives diagnostic rewrites', async (t) => {
+  if (process.platform !== 'darwin') {
+    t.skip('requires macOS BSD lockf');
+    return;
+  }
   const temporary = mkdtempSync(resolve(tmpdir(), 'journal-cutover-lockf-'));
   try {
     const lockPath = resolve(temporary, 'release-global.lock');

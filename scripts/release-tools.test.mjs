@@ -199,18 +199,21 @@ test('manifest and archive fingerprint exact dirty source, dist bytes, modes, an
     );
     chmodSync(resolve(fakeBin, 'node'), 0o755);
     chmodSync(resolve(fakeBin, 'npm'), 0o755);
-    const stagedWithWrongNode = spawnSync(
-      'zsh',
-      [resolve(root, 'scripts/release-stage.zsh'), stageContextPath],
-      {
-        cwd: root,
-        encoding: 'utf8',
-        env: { ...process.env, HOME: stageHome, PATH: `${fakeBin}:${process.env.PATH}` },
-      },
-    );
-    assert.notEqual(stagedWithWrongNode.status, 0);
-    assert.match(stagedWithWrongNode.stderr, /toolchain no longer matches/);
-    assert.equal(existsSync(resolve(stageHome, '.journal/releases')), false);
+    if (process.platform === 'darwin') {
+      const stagedWithWrongNode = spawnSync(
+        '/bin/zsh',
+        [resolve(root, 'scripts/release-stage.zsh'), stageContextPath],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          env: { ...process.env, HOME: stageHome, PATH: `${fakeBin}:${process.env.PATH}` },
+        },
+      );
+      assert.ifError(stagedWithWrongNode.error);
+      assert.notEqual(stagedWithWrongNode.status, 0);
+      assert.match(stagedWithWrongNode.stderr, /toolchain no longer matches/);
+      assert.equal(existsSync(resolve(stageHome, '.journal/releases')), false);
+    }
 
     const extracted = resolve(temporary, 'extracted');
     mkdirSync(extracted);
@@ -1356,10 +1359,18 @@ test('zsh helpers execute safe failure paths without special-parameter collision
       ['release-lifecycle.zsh'],
     ];
     for (const arguments_ of invocations) {
-      const result = spawnSync('zsh', [resolve(scripts, arguments_[0]), ...arguments_.slice(1)], {
-        cwd: temporary,
-        encoding: 'utf8',
-      });
+      if (process.platform !== 'darwin') {
+        break;
+      }
+      const result = spawnSync(
+        '/bin/zsh',
+        [resolve(scripts, arguments_[0]), ...arguments_.slice(1)],
+        {
+          cwd: temporary,
+          encoding: 'utf8',
+        },
+      );
+      assert.ifError(result.error);
       assert.notEqual(result.status, 0, `${arguments_[0]} unexpectedly succeeded`);
       assert.doesNotMatch(
         result.stderr,
