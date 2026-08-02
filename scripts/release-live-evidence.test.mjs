@@ -880,6 +880,23 @@ test('structured log allowlist accepts operational JSONL and rejects content or 
     lines: 2,
     operations: { server_started: 1, http_request: 1 },
   });
+  const oauthDiscoveryProbe = Buffer.from(
+    `${JSON.stringify({
+      level: 30,
+      time: 1_775_000_000_001,
+      pid: 4242,
+      hostname: 'mickey-home',
+      operation: 'http_request',
+      method: 'GET',
+      path: '/.well-known/oauth-authorization-server',
+      status: 404,
+      durationMs: 1,
+    })}\n`,
+  );
+  assert.deepEqual(inspectStructuredLogBuffer(oauthDiscoveryProbe), {
+    lines: 1,
+    operations: { http_request: 1 },
+  });
   assert.throws(
     () =>
       inspectStructuredLogBuffer(
