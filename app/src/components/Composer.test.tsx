@@ -167,7 +167,7 @@ describe('parseDraft', () => {
 });
 
 describe('Composer', () => {
-  it('keeps an untouched capture to one row and discloses context on focus', () => {
+  it('keeps an untouched capture to one row and discloses context on focus', async () => {
     const { container } = render(<Harness />);
     const shell = container.querySelector('.composer-shell');
 
@@ -180,9 +180,9 @@ describe('Composer', () => {
 
     fireEvent.focus(input());
     expect(shell).toHaveAttribute('data-expanded', 'true');
-    expect(screen.getByRole('button', { name: 'Destination: Today' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Destination: Today' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Entry type: Task' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Capture help' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Capture help' })).toBeInTheDocument();
   });
 
   it('previews inferred grammar from a restored draft before focus', () => {

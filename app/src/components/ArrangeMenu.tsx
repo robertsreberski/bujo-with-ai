@@ -5,7 +5,7 @@ import {
   isDefaultLogView,
   normalizeLogView,
   type LogViewConfig,
-} from '../views/log-arrangement';
+} from '../domain/log-arrangement';
 import { ComposerPopover } from './ComposerPopover';
 import { entryIcon } from './entry-icons';
 import { Icon } from './Icon';

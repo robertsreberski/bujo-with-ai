@@ -1,15 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CollectionView } from './views/CollectionView';
-import { IndexView } from './views/IndexView';
-import { MonthView } from './views/MonthView';
-import { ActivityView } from './views/ActivityView';
-import { TimelineView } from './views/TimelineView';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Composer } from './components/Composer';
-import { RecoveryDialog } from './components/DeadLetterDialog';
-import { EntryDetailHost } from './components/EntryDetailHost';
-import { MigrationDialog } from './components/MigrationDialog';
-import { SearchDialog } from './components/SearchDialog';
-import { SettingsDialog, type AgentTokenView } from './components/SettingsDialog';
+import type { AgentTokenView } from './components/SettingsDialog';
 import { Shell } from './components/Shell';
 import { Toast, type ToastAction } from './components/Toast';
 import { formatLongDate, formatMonth } from './components/dates';
@@ -31,7 +22,7 @@ import type {
 } from './components/types';
 import { isTextEntryTarget, useViewportLayout } from './hooks/use-viewport-layout';
 import { useJournalRoute } from './routes/useJournalRoute';
-import { DEFAULT_LOG_VIEW } from './views/log-arrangement';
+import { DEFAULT_LOG_VIEW } from './domain/log-arrangement';
 import { claimJournalInstallGuidance, observeJournalInstallGuidance } from './pwa/install';
 import { createUlid } from './store/ids';
 import {
@@ -45,6 +36,33 @@ import {
   useJournalStore,
 } from './store/journal-store';
 
+const CollectionView = lazy(async () => ({
+  default: (await import('./views/CollectionView')).CollectionView,
+}));
+const TimelineView = lazy(async () => ({
+  default: (await import('./views/TimelineView')).TimelineView,
+}));
+const IndexView = lazy(async () => ({ default: (await import('./views/IndexView')).IndexView }));
+const MonthView = lazy(async () => ({ default: (await import('./views/MonthView')).MonthView }));
+const ActivityView = lazy(async () => ({
+  default: (await import('./views/ActivityView')).ActivityView,
+}));
+const RecoveryDialog = lazy(async () => ({
+  default: (await import('./components/DeadLetterDialog')).RecoveryDialog,
+}));
+const EntryDetailHost = lazy(async () => ({
+  default: (await import('./components/EntryDetailHost')).EntryDetailHost,
+}));
+const MigrationDialog = lazy(async () => ({
+  default: (await import('./components/MigrationDialog')).MigrationDialog,
+}));
+const SearchDialog = lazy(async () => ({
+  default: (await import('./components/SearchDialog')).SearchDialog,
+}));
+const SettingsDialog = lazy(async () => ({
+  default: (await import('./components/SettingsDialog')).SettingsDialog,
+}));
+
 type Overlay = 'search' | 'settings' | 'recovery' | null;
 
 interface ToastState {
@@ -56,6 +74,38 @@ interface ToastState {
 
 /** A toast with something to do stays long enough to be acted on. */
 const TOAST_MS = { plain: 2_400, withAction: 4_000 };
+
+function RouteLoading({ title }: { title: string }) {
+  return (
+    <section className="grid min-h-[240px] place-items-center px-4" aria-busy="true">
+      <p className="text-sm text-fg-mute">Opening {title}…</p>
+    </section>
+  );
+}
+
+function DialogLoading({ title, onClose }: { title: string; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-overlay px-4" role="presentation">
+      <section
+        className="w-full max-w-lg rounded-xl border border-border bg-bg-page p-4 shadow-lg"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="lazy-dialog-title"
+        aria-busy="true"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold" id="lazy-dialog-title">
+            {title}
+          </h2>
+          <button className="text-sm text-fg-mute" type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <p className="pt-2 text-sm text-fg-mute">Opening…</p>
+      </section>
+    </div>
+  );
+}
 
 const messageFromError = (error: unknown): string => {
   if (error instanceof Error && error.message) return error.message;
@@ -602,6 +652,9 @@ export default function App() {
             onRewriteSummary={(summary) =>
               run(() => journalActions.rewriteSummary(summary.id), 'Rewrite requested')
             }
+            onAddToMonthlyLog={() =>
+              journalActions.focusComposer({ kind: 'collection', id: `month:${displayedMonth}` })
+            }
           />
         );
       case 'index':
@@ -618,6 +671,9 @@ export default function App() {
             }
             onOpenMonth={(month) => navigate({ name: 'month', month })}
             onOpenSearch={openSearch}
+            onAddToCollection={(collection) =>
+              journalActions.focusComposer({ kind: 'collection', id: collection.id })
+            }
             onCreateCollection={(input) =>
               run(() => journalActions.createCollection(input), 'Collection created')
             }
@@ -645,6 +701,9 @@ export default function App() {
             onBack={() => navigate({ name: 'index' })}
             onOpenEntry={(entry) => openEntry(entry.id)}
             onToggleEntry={toggleEntry}
+            onAddToCollection={() =>
+              journalActions.focusComposer({ kind: 'collection', id: route.collectionId })
+            }
           />
         );
       }
@@ -711,6 +770,20 @@ export default function App() {
     }
   })();
   const selectedTodayDate = route.name === 'today' ? route.date : null;
+  const deferredDialogTitle = detailEntry
+    ? 'Entry details'
+    : migrationEntries
+      ? 'Migration'
+      : overlay === 'settings'
+        ? 'Settings'
+        : overlay === 'recovery'
+          ? 'Recovery'
+          : 'Search journal';
+  const closeDeferredDialog = () => {
+    if (detailEntry) closeEntry();
+    else if (migrationEntries) setMigrationEntries(null);
+    else setOverlay(null);
+  };
 
   useEffect(() => {
     document.title = `${routeTitle} · Journal`;
@@ -792,97 +865,101 @@ export default function App() {
           />
         }
       >
-        {screen}
+        <Suspense fallback={<RouteLoading title={routeTitle} />}>{screen}</Suspense>
       </Shell>
 
-      {detailEntry ? (
-        <EntryDetailHost
-          entry={detailEntry}
-          collections={collections}
-          today={store.today}
-          contextMonth={contextMonth}
-          onClose={closeEntry}
-          onUpdate={updateEntry}
-          onDelete={(entry: JournalEntry) => {
-            void perform(() => journalActions.deleteEntry(entry.id))
-              .then(() =>
-                say('Entry deleted', 'success', {
-                  label: 'Undo',
-                  onAction: () => restoreEntry(entry.id),
-                }),
-              )
-              .catch(() => undefined);
-          }}
-          onMigrate={migrateEntry}
-          onSchedule={scheduleEntry}
-        />
-      ) : null}
-      {migrationEntries ? (
-        <MigrationDialog
-          entries={migrationEntries}
-          onClose={() => setMigrationEntries(null)}
-          onMigrate={acceptMigration}
-          onSchedule={acceptSchedule}
-          onUpdate={acceptMigrationState}
-          onComplete={() => {
-            setMigrationEntries(null);
-            say('All caught up');
-          }}
-        />
-      ) : null}
-      {overlay === 'search' ? (
-        <SearchDialog
-          preferences={preferences}
-          initialQuery={searchQuery}
-          onSearch={journalActions.searchEntries}
-          onClose={() => setOverlay(null)}
-          onOpenEntry={(entry) => openEntry(entry.id)}
-          onToggleEntry={toggleEntry}
-        />
-      ) : null}
-      {overlay === 'settings' ? (
-        <SettingsDialog
-          assistantStatus={store.mcpStatus?.status ?? (store.online ? 'ready' : 'offline')}
-          mcpEndpoint={store.mcpStatus?.endpoint ?? `${window.location.origin}/mcp`}
-          activeSessions={store.mcpStatus?.activeSessions ?? 0}
-          tokens={store.agentTokens}
-          tokensLoading={store.tokensLoading}
-          preferences={preferences}
-          updateReady={store.updateReady}
-          offlineReady={store.offlineReady}
-          recentlyDeletedCount={store.recentlyDeleted.length}
-          failedChangeCount={store.deadLetters.length}
-          onClose={() => setOverlay(null)}
-          onOpenRecovery={openRecovery}
-          onUpdatePreferences={(patch) =>
-            run(() => journalActions.updateSettings(patch), 'Preferences updated')
-          }
-          onRefreshTokens={refreshTokens}
-          onCreateToken={createToken}
-          onRevokeToken={(id) => run(() => journalActions.revokeToken(id), 'Token revoked')}
-          onActivateUpdate={journalActions.activateUpdate}
-        />
-      ) : null}
-      {overlay === 'recovery' ? (
-        <RecoveryDialog
-          deadLetters={store.deadLetters}
-          recentlyDeleted={store.recentlyDeleted}
-          entriesById={store.entriesById}
-          recoveryLoading={store.recoveryLoading}
-          online={store.online}
-          onClose={() => setOverlay(null)}
-          onRefresh={() => run(() => journalActions.loadRecovery())}
-          onRestore={restoreEntry}
-          onOpenEntry={(id) => {
-            setOverlay(null);
-            openEntry(id);
-          }}
-          onRetry={(id) => run(() => journalActions.retryDeadLetter(id), 'Retry queued')}
-          onDiscard={(id) =>
-            run(() => journalActions.discardDeadLetter(id), 'Failed change discarded')
-          }
-        />
-      ) : null}
+      <Suspense
+        fallback={<DialogLoading title={deferredDialogTitle} onClose={closeDeferredDialog} />}
+      >
+        {detailEntry ? (
+          <EntryDetailHost
+            entry={detailEntry}
+            collections={collections}
+            today={store.today}
+            contextMonth={contextMonth}
+            onClose={closeEntry}
+            onUpdate={updateEntry}
+            onDelete={(entry: JournalEntry) => {
+              void perform(() => journalActions.deleteEntry(entry.id))
+                .then(() =>
+                  say('Entry deleted', 'success', {
+                    label: 'Undo',
+                    onAction: () => restoreEntry(entry.id),
+                  }),
+                )
+                .catch(() => undefined);
+            }}
+            onMigrate={migrateEntry}
+            onSchedule={scheduleEntry}
+          />
+        ) : null}
+        {migrationEntries ? (
+          <MigrationDialog
+            entries={migrationEntries}
+            onClose={() => setMigrationEntries(null)}
+            onMigrate={acceptMigration}
+            onSchedule={acceptSchedule}
+            onUpdate={acceptMigrationState}
+            onComplete={() => {
+              setMigrationEntries(null);
+              say('All caught up');
+            }}
+          />
+        ) : null}
+        {overlay === 'search' ? (
+          <SearchDialog
+            preferences={preferences}
+            initialQuery={searchQuery}
+            onSearch={journalActions.searchEntries}
+            onClose={() => setOverlay(null)}
+            onOpenEntry={(entry) => openEntry(entry.id)}
+            onToggleEntry={toggleEntry}
+          />
+        ) : null}
+        {overlay === 'settings' ? (
+          <SettingsDialog
+            assistantStatus={store.mcpStatus?.status ?? (store.online ? 'ready' : 'offline')}
+            mcpEndpoint={store.mcpStatus?.endpoint ?? `${window.location.origin}/mcp`}
+            activeSessions={store.mcpStatus?.activeSessions ?? 0}
+            tokens={store.agentTokens}
+            tokensLoading={store.tokensLoading}
+            preferences={preferences}
+            updateReady={store.updateReady}
+            offlineReady={store.offlineReady}
+            recentlyDeletedCount={store.recentlyDeleted.length}
+            failedChangeCount={store.deadLetters.length}
+            onClose={() => setOverlay(null)}
+            onOpenRecovery={openRecovery}
+            onUpdatePreferences={(patch) =>
+              run(() => journalActions.updateSettings(patch), 'Preferences updated')
+            }
+            onRefreshTokens={refreshTokens}
+            onCreateToken={createToken}
+            onRevokeToken={(id) => run(() => journalActions.revokeToken(id), 'Token revoked')}
+            onActivateUpdate={journalActions.activateUpdate}
+          />
+        ) : null}
+        {overlay === 'recovery' ? (
+          <RecoveryDialog
+            deadLetters={store.deadLetters}
+            recentlyDeleted={store.recentlyDeleted}
+            entriesById={store.entriesById}
+            recoveryLoading={store.recoveryLoading}
+            online={store.online}
+            onClose={() => setOverlay(null)}
+            onRefresh={() => run(() => journalActions.loadRecovery())}
+            onRestore={restoreEntry}
+            onOpenEntry={(id) => {
+              setOverlay(null);
+              openEntry(id);
+            }}
+            onRetry={(id) => run(() => journalActions.retryDeadLetter(id), 'Retry queued')}
+            onDiscard={(id) =>
+              run(() => journalActions.discardDeadLetter(id), 'Failed change discarded')
+            }
+          />
+        ) : null}
+      </Suspense>
       {toast ? (
         <Toast message={toast.message} tone={toast.tone} action={toast.action} key={toast.id} />
       ) : null}

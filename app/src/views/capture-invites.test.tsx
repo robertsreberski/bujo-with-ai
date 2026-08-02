@@ -6,15 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CollectionView } from './CollectionView';
 import { IndexView } from './IndexView';
 import { MonthView } from './MonthView';
-import { DEFAULT_LOG_VIEW } from './log-arrangement';
-import { journalActions } from '../store/journal-store';
+import { DEFAULT_LOG_VIEW } from '../domain/log-arrangement';
 import type { DisplayPreferences, JournalCollection, JournalEntry } from '../components/types';
 
-/* The invites reach the composer through the store facade; the views only owe
-   the right destination, so the facade is where this asserts. */
-vi.mock('../store/journal-store', () => ({ journalActions: { focusComposer: vi.fn() } }));
-
-const focusComposer = vi.mocked(journalActions.focusComposer);
+const focusComposer = vi.fn();
 
 beforeEach(() => vi.clearAllMocks());
 afterEach(cleanup);
@@ -67,6 +62,7 @@ const renderMonth = (entries: JournalEntry[] = []) =>
       onToggleEntry={vi.fn()}
       onSaveSummary={vi.fn()}
       onRewriteSummary={vi.fn()}
+      onAddToMonthlyLog={() => focusComposer({ kind: 'collection', id: 'month:2026-08' })}
     />,
   );
 
@@ -83,6 +79,7 @@ describe('capture invites', () => {
         onBack={vi.fn()}
         onOpenEntry={vi.fn()}
         onToggleEntry={vi.fn()}
+        onAddToCollection={() => focusComposer({ kind: 'collection', id: 'project-atlas' })}
       />,
     );
     expect(screen.getByText('Nothing filed here yet.')).toBeInTheDocument();
@@ -138,6 +135,7 @@ describe('capture invites', () => {
         onOpenSearch={vi.fn()}
         onCreateCollection={vi.fn()}
         onUpdateCollection={vi.fn()}
+        onAddToCollection={(collection) => focusComposer({ kind: 'collection', id: collection.id })}
       />,
     );
     const row = container.querySelector('.index-row');

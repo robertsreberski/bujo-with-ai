@@ -3,7 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JournalCollection, JournalEntry } from '../components/types';
-import { DEFAULT_LOG_VIEW, type LogViewConfig } from './log-arrangement';
+import { DEFAULT_LOG_VIEW, type LogViewConfig } from '../domain/log-arrangement';
 import { MonthView } from './MonthView';
 
 afterEach(cleanup);
@@ -16,6 +16,7 @@ const callbacks = {
   onSaveSummary: vi.fn(),
   onRewriteSummary: vi.fn(),
   onLogViewChange: vi.fn(),
+  onAddToMonthlyLog: vi.fn(),
 };
 
 const renderMonth = (
