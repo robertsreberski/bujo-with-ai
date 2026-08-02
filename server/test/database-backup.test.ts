@@ -87,7 +87,7 @@ describe('JournalDatabase and backups', () => {
     }
   });
 
-  it('repairs legacy Reflection claims, saved-summary links, and orphan Activity in migration 006', () => {
+  it('repairs legacy Reflection claims, saved-summary links, and orphan Activity after migrations are recorded', () => {
     const root = mkdtempSync(join(tmpdir(), 'journal-reflection-binding-migration-test-'));
     roots.push(root);
     const path = join(root, 'journal.db');
@@ -221,6 +221,17 @@ describe('JournalDatabase and backups', () => {
         '2026-08-03T08:15:00.000Z',
         '2026-08-03T08:20:00.000Z',
       );
+    const bindingMigration = migrations.find(({ version }) => version === 6);
+    if (bindingMigration === undefined) throw new Error('Expected migration 006');
+    legacy.exec(bindingMigration.sql);
+    recordMigration.run(
+      bindingMigration.version,
+      bindingMigration.name,
+      createHash('sha256')
+        .update(`${bindingMigration.version}\0${bindingMigration.name}\0${bindingMigration.sql}`)
+        .digest('hex'),
+      '2026-08-03T08:30:00.000Z',
+    );
     legacy.close();
     chmodSync(path, 0o600);
 
@@ -269,6 +280,121 @@ describe('JournalDatabase and backups', () => {
       6,
     );
     migrated.close();
+  });
+
+  it('keeps migrations 004-006 additive-only and moves data healing to writable startup', () => {
+    for (const migration of migrations.filter(({ version }) => version >= 4)) {
+      expect(migration.sql).toMatch(/^\s*--\s*journal:migration-mode\s+additive(?:\r?\n|$)/i);
+      const statements = migration.sql
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/--[^\r\n]*/g, ' ')
+        .split(';')
+        .map((statement) => statement.replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      expect(statements.length).toBeGreaterThan(0);
+      for (const statement of statements) {
+        expect(statement).toMatch(
+          /^(?:CREATE (?:UNIQUE )?(?:TABLE|INDEX) (?:IF NOT EXISTS )?|ALTER TABLE [^ ]+ ADD COLUMN )/i,
+        );
+        expect(statement).not.toMatch(
+          /\b(?:DROP|DELETE|UPDATE|INSERT|REPLACE|RENAME|PRAGMA|VACUUM|ATTACH|DETACH)\b/i,
+        );
+      }
+    }
+
+    const root = mkdtempSync(join(tmpdir(), 'journal-startup-reconciliation-test-'));
+    roots.push(root);
+    const path = join(root, 'journal.db');
+    const initial = new JournalDatabase({ path });
+    initial.close();
+
+    const raw = new Database(path);
+    raw.exec(`
+      INSERT INTO summaries(
+        id, week_start, text, status, source, token_id, created_at, updated_at,
+        saved_entry_id, revision
+      ) VALUES (
+        '01K1A2B3C4D5E6F7G8H9J0K1N1', '2026-07-13', 'Backfill me', 'current',
+        'Legacy startup fixture.', '01K1A2B3C4D5E6F7G8H9J0K1N2',
+        '2026-07-20T08:00:00.000Z', '2026-07-20T08:00:00.000Z', NULL, 4
+      );
+      INSERT INTO reflection_slots(
+        id, week_start, week_end, status, request_id, requested_at, claimed_at,
+        claimed_token_id, claimed_label, claimed_tool, claimed_source_entries,
+        failure, current_version_id, created_at, updated_at, revision
+      ) VALUES (
+        '01K1A2B3C4D5E6F7G8H9J0K1N3', '2026-07-20', '2026-07-26', 'running',
+        '01K1A2B3C4D5E6F7G8H9J0K1N4', '2026-07-27T08:00:00.000Z',
+        '2026-07-27T08:01:00.000Z', '01K1A2B3C4D5E6F7G8H9J0K1N5', 'Legacy worker',
+        NULL, NULL, NULL, NULL, '2026-07-27T08:00:00.000Z',
+        '2026-07-27T08:01:00.000Z', 2
+      );
+      CREATE TRIGGER fail_legacy_claim_repair
+      BEFORE UPDATE OF status ON reflection_slots
+      WHEN OLD.status = 'running'
+      BEGIN
+        SELECT RAISE(ABORT, 'fixture repair failed');
+      END;
+    `);
+    raw.close();
+
+    const readonly = new JournalDatabase({ path, applyMigrations: false, readonly: true });
+    expect(
+      readonly.raw
+        .prepare('SELECT status FROM reflection_slots WHERE week_start = ?')
+        .pluck()
+        .get('2026-07-20'),
+    ).toBe('running');
+    readonly.close();
+
+    expect(
+      () => new JournalDatabase({ path, now: () => new Date('2026-07-28T09:00:00.000Z') }),
+    ).toThrow(/fixture repair failed/i);
+    const afterFailure = new Database(path, { readonly: true });
+    expect(
+      afterFailure
+        .prepare('SELECT count(*) FROM reflection_slots WHERE week_start = ?')
+        .pluck()
+        .get('2026-07-13'),
+    ).toBe(0);
+    afterFailure.close();
+
+    const removeFailure = new Database(path);
+    removeFailure.exec('DROP TRIGGER fail_legacy_claim_repair');
+    removeFailure.close();
+    const repaired = new JournalDatabase({
+      path,
+      now: () => new Date('2026-07-28T09:00:00.000Z'),
+    });
+    expect(
+      repaired.raw
+        .prepare(
+          'SELECT status, current_version_id, revision FROM reflection_slots WHERE week_start = ?',
+        )
+        .get('2026-07-13'),
+    ).toEqual({
+      status: 'current',
+      current_version_id: '01K1A2B3C4D5E6F7G8H9J0K1N1',
+      revision: 4,
+    });
+    expect(
+      repaired.raw
+        .prepare('SELECT status, claimed_at, revision FROM reflection_slots WHERE week_start = ?')
+        .get('2026-07-20'),
+    ).toEqual({ status: 'queued', claimed_at: null, revision: 3 });
+    repaired.close();
+
+    const idempotent = new JournalDatabase({
+      path,
+      now: () => new Date('2026-07-29T09:00:00.000Z'),
+    });
+    expect(
+      idempotent.raw
+        .prepare('SELECT revision FROM reflection_slots WHERE week_start = ?')
+        .pluck()
+        .get('2026-07-20'),
+    ).toBe(3);
+    idempotent.close();
   });
 
   it('verifies an existing named snapshot before reusing it', async () => {

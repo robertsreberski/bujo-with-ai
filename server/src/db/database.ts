@@ -103,6 +103,7 @@ export class JournalDatabase {
       this.raw.pragma('trusted_schema = OFF');
       if (options.applyMigrations !== false) this.migrate();
       else this.validateMigrationHistory(this.readonlyMode);
+      if (!this.readonlyMode) this.reconcileLegacyData();
       this.quickCheck();
       if (!this.readonlyMode) this.hardenDatabaseFiles();
     } catch (error) {
@@ -242,6 +243,160 @@ export class JournalDatabase {
         );
       }
     }
+  }
+
+  /**
+   * Data healing is deliberately separate from append-only schema migrations.
+   * It runs on every writable open so a failed attempt is retried even after
+   * the migration rows were committed, and one transaction keeps every repair
+   * rollback-compatible and all-or-nothing.
+   */
+  private reconcileLegacyData(): void {
+    const migrationTable = this.raw
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'")
+      .get();
+    if (migrationTable === undefined) return;
+    const appliedVersion = this.raw
+      .prepare('SELECT max(version) FROM schema_migrations')
+      .pluck()
+      .get() as number | null;
+    if ((appliedVersion ?? 0) < 6) return;
+    const now = this.now().toISOString();
+    const reconcile = this.raw.transaction(() => {
+      this.raw.exec(`
+        INSERT INTO reflection_slots(
+          id, week_start, week_end, status, request_id, requested_at, claimed_at,
+          claimed_token_id, claimed_label, claimed_tool, claimed_source_entries,
+          failure, current_version_id, created_at, updated_at, revision
+        )
+        SELECT
+          summary.id,
+          summary.week_start,
+          date(summary.week_start, '+6 days'),
+          CASE summary.status WHEN 'stale' THEN 'stale' ELSE 'current' END,
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, summary.id,
+          summary.created_at, summary.updated_at, summary.revision
+        FROM summaries AS summary
+        WHERE NOT EXISTS (
+          SELECT 1 FROM reflection_slots AS reflection
+          WHERE reflection.week_start = summary.week_start
+        );
+
+        INSERT INTO reflection_versions(
+          id, reflection_id, version_number, text, source_from, source_to,
+          generator_token_id, generator_label, generator_tool, source, generated_at,
+          source_entries
+        )
+        SELECT
+          summary.id, summary.id, 1, summary.text, summary.week_start,
+          date(summary.week_start, '+6 days'), summary.token_id, 'Legacy assistant',
+          NULL, summary.source, summary.updated_at, '[]'
+        FROM summaries AS summary
+        JOIN reflection_slots AS reflection ON reflection.id = summary.id
+        WHERE reflection.current_version_id = summary.id
+          AND NOT EXISTS (
+            SELECT 1 FROM reflection_versions AS version WHERE version.id = summary.id
+          );
+      `);
+
+      this.raw
+        .prepare(
+          `UPDATE reflection_slots SET
+             status='queued', claimed_at=NULL, claimed_token_id=NULL, claimed_label=NULL,
+             claimed_tool=NULL, claimed_source_entries=NULL,
+             updated_at=CASE WHEN updated_at > ? THEN updated_at ELSE ? END,
+             revision=revision+1
+           WHERE status='running' AND claimed_source_entries IS NULL`,
+        )
+        .run(now, now);
+
+      this.raw
+        .prepare(
+          `UPDATE summaries SET
+             status=CASE
+               WHEN EXISTS (
+                 SELECT 1 FROM reflection_slots AS reflection
+                 WHERE reflection.week_start=summaries.week_start
+                   AND reflection.status='current'
+               ) THEN 'current'
+               ELSE 'stale'
+             END,
+             saved_entry_id=NULL,
+             updated_at=CASE WHEN updated_at > ? THEN updated_at ELSE ? END,
+             revision=revision+1
+           WHERE status='saved'
+             AND NOT EXISTS (
+               SELECT 1 FROM entries
+               WHERE entries.id=summaries.saved_entry_id
+                 AND entries.deleted_at IS NULL
+                 AND entries.author='ai'
+                 AND entries.type='note'
+                 AND EXISTS (SELECT 1 FROM json_each(entries.tags) WHERE value='summary')
+             )`,
+        )
+        .run(now, now);
+
+      this.raw.exec(`
+        UPDATE activity
+        SET
+          text = CASE kind
+            WHEN 'agent-add' THEN 'Added an entry (content expired)'
+            WHEN 'agent-update' THEN 'Updated an entry (content expired)'
+            WHEN 'agent-delete' THEN 'Deleted an entry (content expired)'
+            WHEN 'agent-migration' THEN 'Migrated entries (content expired)'
+            WHEN 'summary-filed' THEN 'Filed a reflection (content expired)'
+            WHEN 'summary-saved' THEN 'Saved a reflection (content expired)'
+            WHEN 'revert' THEN 'Reverted a change (content expired)'
+          END,
+          pre_images = (
+            SELECT coalesce(json_group_array(json(
+              CASE
+                WHEN json_extract(snapshot.value, '$.entity') = 'entry'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM entries
+                    WHERE entries.id = json_extract(snapshot.value, '$.id')
+                  )
+                THEN json_set(snapshot.value, '$.row', NULL)
+                ELSE snapshot.value
+              END
+            )), '[]')
+            FROM json_each(activity.pre_images) AS snapshot
+          ),
+          post_images = (
+            SELECT coalesce(json_group_array(json(
+              CASE
+                WHEN json_extract(snapshot.value, '$.entity') = 'entry'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM entries
+                    WHERE entries.id = json_extract(snapshot.value, '$.id')
+                  )
+                THEN json_set(snapshot.value, '$.row', NULL)
+                ELSE snapshot.value
+              END
+            )), '[]')
+            FROM json_each(activity.post_images) AS snapshot
+          )
+        WHERE EXISTS (
+            SELECT 1 FROM json_each(activity.refs, '$.entryIds') AS ref
+            WHERE NOT EXISTS (SELECT 1 FROM entries WHERE entries.id = ref.value)
+          )
+          OR EXISTS (
+            SELECT 1 FROM json_each(activity.pre_images) AS snapshot
+            WHERE json_extract(snapshot.value, '$.entity') = 'entry'
+              AND NOT EXISTS (
+                SELECT 1 FROM entries WHERE entries.id = json_extract(snapshot.value, '$.id')
+              )
+          )
+          OR EXISTS (
+            SELECT 1 FROM json_each(activity.post_images) AS snapshot
+            WHERE json_extract(snapshot.value, '$.entity') = 'entry'
+              AND NOT EXISTS (
+                SELECT 1 FROM entries WHERE entries.id = json_extract(snapshot.value, '$.id')
+              )
+          );
+      `);
+    });
+    reconcile();
   }
 
   public quickCheck(): void {
