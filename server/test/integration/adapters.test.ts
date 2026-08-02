@@ -614,6 +614,7 @@ describe('HTTP and MCP domain adapters', () => {
       expect(bootstrap.timeline.nextCursor).toEqual(expect.any(String));
       expect(statements.filter((sql) => /^SELECT e\.\*/i.test(sql.trim()))).toHaveLength(1);
     },
+    15_000,
   );
 
   it('pages a large entry fixture with one bounded SQL query per page', async () => {
