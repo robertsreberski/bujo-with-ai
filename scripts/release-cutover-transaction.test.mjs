@@ -20,6 +20,7 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 
 import {
+  assertAppendOnlyMigrationUpgrade,
   assertMigrationDefinitionFilesEqual,
   assertMigrationTreesEqual,
   atomicWritePrivateFile,
@@ -31,6 +32,42 @@ import {
   validateCutoverTransaction,
   writeTerminalState,
 } from './release-cutover-transaction.mjs';
+
+function writeMigrationRelease(root, name, migrations, { protocol } = {}) {
+  const release = resolve(root, name);
+  const dist = resolve(release, 'dist');
+  const source = resolve(release, 'source');
+  mkdirSync(dist, { recursive: true });
+  mkdirSync(source, { recursive: true });
+  for (const migration of migrations) {
+    for (const directory of [dist, source]) {
+      writeFileSync(resolve(directory, migration.filename), migration.sql);
+    }
+  }
+  const definition = resolve(release, 'migrations.mjs');
+  const runtimeMigrations = migrations.map(({ version, name: migrationName, filename, sql }) => ({
+    version,
+    name: migrationName,
+    ...(protocol === undefined ? {} : { filename }),
+    sql,
+  }));
+  writeFileSync(
+    definition,
+    `${protocol === undefined ? '' : `export const MIGRATION_COMPATIBILITY_PROTOCOL = ${protocol};\n`}export const migrations = ${JSON.stringify(runtimeMigrations)};\n`,
+  );
+  for (const file of [
+    definition,
+    ...migrations.flatMap((migration) => [
+      resolve(dist, migration.filename),
+      resolve(source, migration.filename),
+    ]),
+  ]) {
+    chmodSync(file, 0o400);
+  }
+  chmodSync(dist, 0o500);
+  chmodSync(source, 0o500);
+  return { definition, dist, source };
+}
 
 function withTemporaryDirectory(prefix, operation) {
   const temporary = mkdtempSync(resolve(tmpdir(), prefix));
@@ -359,6 +396,132 @@ test('upgrade migration guard compares complete inventories and file bytes', () 
       chmodSync(directory, 0o700);
     }
   }));
+
+test('append-only migration upgrades require a compatibility predecessor and preserve history', async (testContext) => {
+  const temporary = mkdtempSync(resolve(tmpdir(), 'journal-cutover-additive-migrations-'));
+  testContext.after(() => {
+    for (const release of [
+      'legacy',
+      'compatibility',
+      'additive',
+      'changed-history',
+      'destructive',
+    ]) {
+      for (const tree of ['dist', 'source']) {
+        const path = resolve(temporary, release, tree);
+        if (existsSync(path)) chmodSync(path, 0o700);
+      }
+    }
+    rmSync(temporary, { recursive: true, force: true });
+  });
+  const core = {
+    version: 1,
+    name: 'core',
+    filename: '001_core.sql',
+    sql: 'CREATE TABLE journal(id INTEGER PRIMARY KEY);\n',
+  };
+  const additive = {
+    version: 2,
+    name: 'entry-title',
+    filename: '002_entry_title.sql',
+    sql: '-- journal:migration-mode additive\nCREATE TABLE IF NOT EXISTS entry_title(entry_id INTEGER PRIMARY KEY);\n',
+  };
+  const legacy = writeMigrationRelease(temporary, 'legacy', [core]);
+  const compatibility = writeMigrationRelease(temporary, 'compatibility', [core], {
+    protocol: 1,
+  });
+
+  assert.deepEqual(
+    await assertAppendOnlyMigrationUpgrade({
+      candidateDefinition: compatibility.definition,
+      previousDefinition: legacy.definition,
+      candidateDistRoot: compatibility.dist,
+      previousDistRoot: legacy.dist,
+      candidateSourceRoot: compatibility.source,
+      previousSourceRoot: legacy.source,
+    }),
+    { previousCount: 1, candidateCount: 1, added: [] },
+  );
+  await assert.rejects(
+    assertAppendOnlyMigrationUpgrade({
+      candidateDefinition: legacy.definition,
+      previousDefinition: compatibility.definition,
+      candidateDistRoot: legacy.dist,
+      previousDistRoot: compatibility.dist,
+      candidateSourceRoot: legacy.source,
+      previousSourceRoot: compatibility.source,
+    }),
+    /protocol regressed/i,
+  );
+
+  const additiveRelease = writeMigrationRelease(temporary, 'additive', [core, additive], {
+    protocol: 1,
+  });
+  const accepted = await assertAppendOnlyMigrationUpgrade({
+    candidateDefinition: additiveRelease.definition,
+    previousDefinition: compatibility.definition,
+    candidateDistRoot: additiveRelease.dist,
+    previousDistRoot: compatibility.dist,
+    candidateSourceRoot: additiveRelease.source,
+    previousSourceRoot: compatibility.source,
+  });
+  assert.equal(accepted.previousCount, 1);
+  assert.equal(accepted.candidateCount, 2);
+  assert.deepEqual(
+    accepted.added.map(({ version, name, filename }) => ({ version, name, filename })),
+    [{ version: 2, name: 'entry-title', filename: '002_entry_title.sql' }],
+  );
+
+  await assert.rejects(
+    assertAppendOnlyMigrationUpgrade({
+      candidateDefinition: additiveRelease.definition,
+      previousDefinition: legacy.definition,
+      candidateDistRoot: additiveRelease.dist,
+      previousDistRoot: legacy.dist,
+      candidateSourceRoot: additiveRelease.source,
+      previousSourceRoot: legacy.source,
+    }),
+    /deploy a compatibility release/i,
+  );
+
+  const changedCore = { ...core, sql: 'CREATE TABLE journal(id TEXT PRIMARY KEY);\n' };
+  const changedHistory = writeMigrationRelease(
+    temporary,
+    'changed-history',
+    [changedCore, additive],
+    { protocol: 1 },
+  );
+  await assert.rejects(
+    assertAppendOnlyMigrationUpgrade({
+      candidateDefinition: changedHistory.definition,
+      previousDefinition: compatibility.definition,
+      candidateDistRoot: changedHistory.dist,
+      previousDistRoot: compatibility.dist,
+      candidateSourceRoot: changedHistory.source,
+      previousSourceRoot: compatibility.source,
+    }),
+    /changed historical migration bytes/i,
+  );
+
+  const destructive = {
+    ...additive,
+    sql: '-- journal:migration-mode additive\nDROP TABLE journal;\n',
+  };
+  const destructiveRelease = writeMigrationRelease(temporary, 'destructive', [core, destructive], {
+    protocol: 1,
+  });
+  await assert.rejects(
+    assertAppendOnlyMigrationUpgrade({
+      candidateDefinition: destructiveRelease.definition,
+      previousDefinition: compatibility.definition,
+      candidateDistRoot: destructiveRelease.dist,
+      previousDistRoot: compatibility.dist,
+      candidateSourceRoot: destructiveRelease.source,
+      previousSourceRoot: compatibility.source,
+    }),
+    /not additive-only/i,
+  );
+});
 
 test('modeled crash boundaries always select a retry-safe recovery action', () => {
   const phases = [

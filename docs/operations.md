@@ -83,11 +83,15 @@ npm run release:cutover -- apply "$CONTEXT"
 
 Before mutation, the helper records the entire Tailscale Serve JSON and, for an upgrade,
 owner-preserving copies of the existing config and plist. It verifies the exact `:443` HTTPS proxy
-and all ownership preconditions. Because rollback never rewinds the database schema, an upgrade
-also rejects any byte change to `server/dist/db/migrations.js` or any added, removed, or changed
-entry in either the `server/dist/db/migrations` or `server/src/db/migrations` tree before config,
-plist, service, or database mutation. It then installs the production config, invokes the staged
-Node runtime and staged `server/dist/cli.js install-service`, and verifies all of the following:
+and all ownership preconditions. Because rollback never rewinds the database schema, the migration
+guard compares the runtime definitions plus both source and compiled SQL inventories before any
+config, plist, service, or database mutation. Historical versions, names, filenames, and SQL bytes
+must be identical. A candidate may append a contiguous suffix only when the previous release
+declares migration-compatibility protocol 1 and each new SQL file declares
+`journal:migration-mode additive`; the bounded grammar permits only new tables/indexes and added
+columns. This enforces the release order **compatibility runtime → additive schema release → later
+optional contraction**. It then installs the production config, invokes the staged Node runtime and
+staged `server/dist/cli.js install-service`, and verifies all of the following:
 
 Because macOS completes `bootout` asynchronously, both replacement and rollback wait up to five
 seconds for two consecutive absent `launchctl print` results before bootstrapping the same label.
@@ -151,6 +155,12 @@ reuses a daily filename. The helper runs `quick_check`, restores into a temporar
 compares schema version and per-table counts, invokes the staged CLI's `check` and `export`
 commands against the restored copy, validates the export with the staged contract schema, reruns
 `quick_check`, and removes the temporary restore. The retained backup is hashed and mode `0600`.
+
+`journald export` now writes envelope version 2: canonical entries, collections, activity,
+summaries, and settings live under `journal`, while optional future projections live under
+`derived`. `journald import` continues to accept the flat version-1 document and the version-2
+envelope. A compatibility runtime validates and imports canonical data while intentionally ignoring
+unknown keys inside `derived`; derived data can never replace or alter canonical journal content.
 
 ## 5. Prove graceful shutdown and crash recovery
 

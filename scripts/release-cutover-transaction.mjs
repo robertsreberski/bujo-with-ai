@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* global Buffer, process */
+/* global Buffer, process, URL */
 import { createHash } from 'node:crypto';
 import {
   closeSync,
@@ -360,6 +360,189 @@ export function assertMigrationDefinitionFilesEqual(candidatePath, previousPath)
     'Candidate and previous runtime migration definitions are not identical; schema-changing upgrades are unsupported.',
   );
   return candidate;
+}
+
+function assertExactMigrationInventories(left, right, description) {
+  assert(JSON.stringify(left) === JSON.stringify(right), `${description} are not identical.`);
+}
+
+function flatSqlMigrationInventory(root) {
+  const inventory = migrationTreeInventory(root);
+  assert(
+    inventory.every(
+      (record) =>
+        record.kind === 'file' && /^\d{3}_[a-z0-9]+(?:_[a-z0-9]+)*\.sql$/.test(record.path),
+    ),
+    `Migration tree contains unsupported paths: ${resolve(root)}`,
+  );
+  inventory.forEach((record, index) => {
+    const version = Number(record.path.slice(0, 3));
+    assert(version === index + 1, `Migration tree is not a contiguous numbered prefix.`);
+  });
+  return inventory;
+}
+
+function assertInventoryPrefix(candidate, previous) {
+  assert(
+    candidate.length >= previous.length,
+    'Candidate removed historical migrations; only an append-only suffix is supported.',
+  );
+  previous.forEach((record, index) => {
+    assert(
+      JSON.stringify(candidate[index]) === JSON.stringify(record),
+      `Candidate changed historical migration bytes: ${record.path}`,
+    );
+  });
+}
+
+function expectedMigrationFilename(version, name) {
+  return `${String(version).padStart(3, '0')}_${name.replaceAll('-', '_')}.sql`;
+}
+
+function assertAdditiveMigrationSql(sql, filename) {
+  assert(
+    /^\s*--\s*journal:migration-mode\s+additive\s*(?:\r?\n|$)/i.test(sql),
+    `Added migration must declare journal:migration-mode additive: ${filename}`,
+  );
+  const withoutComments = sql
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/--[^\r\n]*/g, ' ')
+    .trim();
+  const statements = withoutComments
+    .split(';')
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+  assert(statements.length > 0, `Added migration is empty: ${filename}`);
+  for (const statement of statements) {
+    const normalized = statement.replace(/\s+/g, ' ').trim();
+    const supported =
+      /^CREATE (?:UNIQUE )?(?:TABLE|INDEX) (?:IF NOT EXISTS )?/i.test(normalized) ||
+      /^ALTER TABLE [^ ]+ ADD COLUMN /i.test(normalized);
+    assert(supported, `Added migration is not additive-only: ${filename}`);
+    assert(
+      !/\b(?:DROP|DELETE|UPDATE|INSERT|REPLACE|RENAME|PRAGMA|VACUUM|ATTACH|DETACH)\b/i.test(
+        normalized,
+      ),
+      `Added migration contains a destructive or data-changing statement: ${filename}`,
+    );
+  }
+}
+
+async function runtimeMigrationInventory(definitionPath, tree, description) {
+  const definition = immutableMigrationFile(definitionPath);
+  const moduleUrl = new URL(pathToFileURL(resolve(definitionPath)).href);
+  moduleUrl.searchParams.set('integrity', definition.sha256);
+  const runtime = await import(moduleUrl.href);
+  assert(Array.isArray(runtime.migrations), `${description} does not export migrations.`);
+  const protocol = runtime.MIGRATION_COMPATIBILITY_PROTOCOL ?? 0;
+  assert(
+    Number.isSafeInteger(protocol) && protocol >= 0,
+    `${description} migration compatibility protocol is invalid.`,
+  );
+  const inventoryByPath = new Map(tree.map((record) => [record.path, record]));
+  const migrations = runtime.migrations.map((migration, index) => {
+    assert(
+      migration !== null && typeof migration === 'object' && !Array.isArray(migration),
+      `${description} migration ${index + 1} is invalid.`,
+    );
+    const version = migration.version;
+    const name = migration.name;
+    const sql = migration.sql;
+    assert(
+      version === index + 1 &&
+        typeof name === 'string' &&
+        /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name) &&
+        typeof sql === 'string' &&
+        sql.trim().length > 0,
+      `${description} migration ${index + 1} is not a contiguous canonical definition.`,
+    );
+    const filename = expectedMigrationFilename(version, name);
+    if (protocol >= 1) {
+      assert(
+        migration.filename === filename,
+        `${description} migration ${version} filename is invalid.`,
+      );
+    }
+    const record = inventoryByPath.get(filename);
+    assert(record?.kind === 'file', `${description} migration asset is missing: ${filename}`);
+    assert(
+      record.sha256 === sha256(Buffer.from(sql)),
+      `${description} runtime SQL differs from its migration asset: ${filename}`,
+    );
+    return { version, name, filename, sqlSha256: record.sha256, sql };
+  });
+  assert(
+    migrations.length === tree.length,
+    `${description} runtime and migration tree contain different inventories.`,
+  );
+  return { protocol, migrations };
+}
+
+/**
+ * Allows a schema-changing upgrade only when every historical definition and
+ * byte is unchanged, new migrations form one additive suffix, and the previous
+ * runtime explicitly supports rolling back across that suffix.
+ */
+export async function assertAppendOnlyMigrationUpgrade({
+  candidateDefinition,
+  previousDefinition,
+  candidateDistRoot,
+  previousDistRoot,
+  candidateSourceRoot,
+  previousSourceRoot,
+}) {
+  const candidateDist = flatSqlMigrationInventory(candidateDistRoot);
+  const previousDist = flatSqlMigrationInventory(previousDistRoot);
+  const candidateSource = flatSqlMigrationInventory(candidateSourceRoot);
+  const previousSource = flatSqlMigrationInventory(previousSourceRoot);
+  assertExactMigrationInventories(candidateDist, candidateSource, 'Candidate migration trees');
+  assertExactMigrationInventories(previousDist, previousSource, 'Previous migration trees');
+  assertInventoryPrefix(candidateDist, previousDist);
+
+  const candidate = await runtimeMigrationInventory(
+    candidateDefinition,
+    candidateDist,
+    'Candidate runtime',
+  );
+  const previous = await runtimeMigrationInventory(
+    previousDefinition,
+    previousDist,
+    'Previous runtime',
+  );
+  assert(
+    candidate.protocol >= previous.protocol,
+    'Candidate migration compatibility protocol regressed.',
+  );
+  previous.migrations.forEach((migration, index) => {
+    const next = candidate.migrations[index];
+    assert(
+      next !== undefined &&
+        next.version === migration.version &&
+        next.name === migration.name &&
+        next.filename === migration.filename &&
+        next.sqlSha256 === migration.sqlSha256,
+      `Candidate changed historical runtime migration ${migration.version}.`,
+    );
+  });
+  const added = candidate.migrations.slice(previous.migrations.length);
+  if (added.length > 0) {
+    assert(
+      previous.protocol >= 1,
+      'Previous release is not migration-compatible; deploy a compatibility release before adding migrations.',
+    );
+    assert(candidate.protocol >= 1, 'Candidate release does not declare migration compatibility.');
+    for (const migration of added) assertAdditiveMigrationSql(migration.sql, migration.filename);
+  }
+  return {
+    previousCount: previous.migrations.length,
+    candidateCount: candidate.migrations.length,
+    added: added.map(({ version, name, filename, sqlSha256 }) => ({
+      version,
+      name,
+      filename,
+      sqlSha256,
+    })),
+  };
 }
 
 function terminalStateRecord(path, releaseStamp) {
@@ -761,7 +944,7 @@ function transactionOptions(args) {
   };
 }
 
-function runCli() {
+async function runCli() {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'global-lock-record') {
     recordStableGlobalLock({
@@ -837,6 +1020,18 @@ function runCli() {
     );
     return;
   }
+  if (command === 'compare-migration-upgrade') {
+    const result = await assertAppendOnlyMigrationUpgrade({
+      candidateDefinition: requiredOption(args, '--candidate-definition'),
+      previousDefinition: requiredOption(args, '--previous-definition'),
+      candidateDistRoot: requiredOption(args, '--candidate-dist'),
+      previousDistRoot: requiredOption(args, '--previous-dist'),
+      candidateSourceRoot: requiredOption(args, '--candidate-source'),
+      previousSourceRoot: requiredOption(args, '--previous-source'),
+    });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
   if (command === 'transaction-create') {
     createCutoverTransaction(transactionOptions(args));
     return;
@@ -852,16 +1047,14 @@ function runCli() {
     return;
   }
   throw new Error(
-    'Usage: release-cutover-transaction.mjs <global-lock-record|global-lock-verify|terminal-read|terminal-write|terminal-remove|write-json|copy-private|restore-private|compare-private|compare-migrations|compare-migration-definitions|transaction-create|transaction-validate|remove-files> ...',
+    'Usage: release-cutover-transaction.mjs <global-lock-record|global-lock-verify|terminal-read|terminal-write|terminal-remove|write-json|copy-private|restore-private|compare-private|compare-migrations|compare-migration-definitions|compare-migration-upgrade|transaction-create|transaction-validate|remove-files> ...',
   );
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
 if (import.meta.url === invokedPath) {
-  try {
-    runCli();
-  } catch (error) {
+  runCli().catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
-  }
+  });
 }
