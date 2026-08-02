@@ -42,8 +42,8 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
-      - name: Install pinned Playwright Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install pinned Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
       - name: Typecheck the browser harness
         run: npm exec tsc -- --project e2e/tsconfig.json
       - name: Run production-bundle browser tests
