@@ -1,18 +1,10 @@
-import {
-  ActivitySnapshotSchema,
-  entryMatchesJournalSearch,
-  initialEntryState,
-  parseJournalSearch as parseSharedJournalSearch,
-  type JournalSearchFilters as SharedJournalSearchFilters,
-} from '@journal/server/contracts/app';
+import { initialEntryState } from '@journal/server/contracts/app';
 import { create } from 'zustand';
 import type { StoreApi, UseBoundStore } from 'zustand';
 
 import { ApiError, journalApi } from '../api/client';
-import { activityPresentation } from '../activity/presentation';
 import type {
   ActivityView,
-  AgentTouch,
   AgentToken,
   ChangeBatch,
   Collection,
@@ -23,8 +15,6 @@ import type {
   DateIntent,
   Settings,
   Summary,
-  TagUsage,
-  RecentlyDeletedEntry,
   Reflection,
 } from '../api/types';
 import {
@@ -40,18 +30,34 @@ import {
 } from '../pwa/registration';
 import type { Destination } from '../components/destination';
 import { hydrateLogView, type LogViewConfig } from '../views/log-arrangement';
+import {
+  createActivityEnrichmentActions,
+  deriveTagUsage,
+  mergeTagUsage,
+  selectActivity,
+  selectHasUnseenActivity,
+  selectLatestAgentTouches,
+  selectUnseenActivityCount,
+  selectUnseenActivityIds,
+  selectUnseenReviewCount,
+} from './activity-enrichment';
+import {
+  affectedCollectionIds,
+  affectedEntryIds,
+  applyServerRows,
+  descriptorForCommand,
+  rebaseCommand,
+  selectJournalStatus,
+  sendOutboxItem,
+  type ServerRows,
+} from './connection-outbox';
 import { createUlid } from './ids';
 import type {
-  ActivitySeenCursor,
-  ConnectionStatus,
   CreateEntryInput,
   DeadLetter,
   JournalClientRecord,
   JournalNotice,
-  JournalPersistenceState,
-  JournalResourceStatus,
   JournalSearchPage,
-  JournalStatus,
   MirrorData,
   OutboxItem,
   QueueableCommand,
@@ -63,10 +69,7 @@ import {
   applyServerChangeBatch,
   buildEntryIndexes,
   countNotifiableChanges,
-  mergeAgentToken,
   recomputeActivityRevertEligibility,
-  removeServerCollection,
-  removeServerEntry,
   removeServerSummary,
   upsertActivity,
   upsertServerCollection,
@@ -75,7 +78,35 @@ import {
   upsertServerSummary,
 } from './optimistic';
 import { SingleRecordPersistence } from './persistence';
+import {
+  clearRecoveryMutationIds,
+  createRecoveryActions,
+  localRecoveryRecords,
+  recoveryRecord,
+} from './recovery';
+import { mirrorFromState } from './runtime';
+import {
+  bootstrapSnapshot,
+  createSettingsPairingActions,
+  DEFAULT_SETTINGS,
+  PAIRING_EXPIRED_MESSAGE,
+} from './settings-pairing';
 import { JournalSseClient, SseReplayResetError } from './sse-client';
+import type { JournalState, LoadEntriesQuery, RestoreResult } from './state';
+import {
+  createTimelineRetrievalActions,
+  eligibleTimelineIds,
+  mergeIds,
+  parseJournalSearch,
+  pendingTimelineIds,
+  reconcileTimelineMembership,
+  selectActiveCollections,
+  selectCollections,
+  selectEntries,
+  selectOpenTodayCount,
+  selectTimelineEntries,
+  timelineIdsWithRestoredEntry,
+} from './timeline-retrieval';
 
 export type {
   ConnectionStatus,
@@ -103,22 +134,7 @@ export type {
   RecentlyDeletedEntry,
   Reflection,
 } from '../api/types';
-
-export interface RestoreResult {
-  entry: Entry;
-  outcome: 'original' | 'daily_fallback' | 'cancelled_offline_delete';
-  originalCollectionId: string | null;
-}
-
-const EPOCH = '1970-01-01T00:00:00.000Z';
-const PAIRING_EXPIRED_MESSAGE = 'Pairing expired. Reload Journal to reconnect.';
-const DEFAULT_SETTINGS: Settings = {
-  density: 'comfortable',
-  showTypeBadges: true,
-  highlightAiEntries: true,
-  savedViews: [],
-  updatedAt: EPOCH,
-};
+export type { JournalSearchFilters, JournalState, LoadEntriesQuery, RestoreResult } from './state';
 
 function dateInTimezone(timezone: string, date = new Date()): string {
   try {
@@ -169,128 +185,6 @@ function initialMirror(): MirrorData & { reflectionsByWeek: Record<string, Refle
   };
 }
 
-export interface JournalState extends MirrorData {
-  index: IndexResponse | null;
-  /** Request lifecycle is separate from the last bounded aggregate snapshot. */
-  indexStatus: 'idle' | 'loading' | 'ready' | 'error';
-  /** Cached snapshots stay renderable, but are never presented as freshly counted. */
-  indexSource: 'none' | 'cached' | 'journal';
-  indexError: string | null;
-  reflectionsByWeek: Record<string, Reflection>;
-  hydrated: boolean;
-  loading: boolean;
-  /** Canonical rows are kept separate from service availability. */
-  resourceStatus: JournalResourceStatus;
-  /** Journal endpoint reachability, used by the UI's offline affordance. */
-  online: boolean;
-  /** Browser network signal, used only to decide whether retries can run. */
-  networkOnline: boolean;
-  connectionStatus: ConnectionStatus;
-  /** Sticky until reload after a 401; never inferred from generic reachability errors. */
-  authenticationRequired: boolean;
-  /** Latest IndexedDB write result; unavailable means state is only in this open tab. */
-  persistenceStatus: JournalPersistenceState;
-  syncing: boolean;
-  draft: string;
-  defaultType: EntryType;
-  outbox: OutboxItem[];
-  outboxCount: number;
-  deadLetters: DeadLetter[];
-  recentlyDeleted: RecentlyDeletedEntry[];
-  recoveryLoading: boolean;
-  notices: JournalNotice[];
-  updateReady: boolean;
-  offlineReady: boolean;
-  agentTokens: AgentToken[];
-  tokensLoading: boolean;
-  activityLoading: boolean;
-  activityHasMore: boolean;
-  activityNextCursor: string | null;
-  /** IDs mounted by the bounded Timeline projection, never the entire mirror. */
-  timelineEntryIds: string[];
-  timelineNextCursor: string | null;
-  timelineAnchorDate: string | null;
-  timelineLoaded: boolean;
-  timelineLoading: boolean;
-  timelineLoadingEarlier: boolean;
-  /** Reserved extension slots populated by later Activity/Reflection work. */
-  timelineLatestAgentTouch: ActivityView | null;
-  timelineWeeklyReflection: Summary | null;
-  /** Capture tag vocabulary; in-memory only, never part of the persisted record. */
-  tagSuggestions: TagUsage[];
-  tagsFetchedAt: string | null;
-  /** Legacy Activity timestamp retained only to hydrate pre-cursor records. */
-  lastReviewSeenAt: string | null;
-  /** Exact all-seen watermark; unlike the legacy timestamp it cannot hide a same-time event. */
-  activitySeenThrough: ActivitySeenCursor | null;
-  /** Events acknowledged by actually becoming visible, independent of the all-seen watermark. */
-  seenActivityIds: string[];
-  markActivityVisible(ids: readonly string[]): void;
-  markAllActivitySeen(): void;
-  /** @deprecated Compatibility alias for markAllActivitySeen. */
-  markReviewSeen(): void;
-  /** Per-device monthly-log arrangement; null means the default view. */
-  monthLogView: LogViewConfig | null;
-  setMonthLogView(config: LogViewConfig | null): void;
-  /** One shared per-device arrangement for every collection screen. */
-  collectionLogView: LogViewConfig | null;
-  setCollectionLogView(config: LogViewConfig | null): void;
-  initialize(): Promise<void>;
-  shutdown(): void;
-  setDraft(draft: string): void;
-  setDefaultType(type: EntryType): void;
-  createEntry(input: CreateEntryInput): Promise<Entry>;
-  updateEntry(id: string, patch: EntryPatch): Promise<Entry>;
-  deleteEntry(id: string): Promise<void>;
-  restoreEntry(id: string): Promise<RestoreResult>;
-  loadRecovery(): Promise<void>;
-  toggleEntry(id: string): Promise<Entry>;
-  migrateEntry(id: string, target?: string): Promise<Entry>;
-  scheduleEntry(id: string, month?: string): Promise<Entry>;
-  createCollection(input: { id: string; name: string; note?: string | null }): Promise<Collection>;
-  updateCollection(
-    id: string,
-    patch: { name?: string; note?: string | null; archived?: boolean },
-  ): Promise<Collection>;
-  saveSummary(id?: string): Promise<Summary>;
-  rewriteSummary(id?: string): Promise<Summary>;
-  loadReflections(): Promise<Reflection[]>;
-  requestReflection(id: string): Promise<Reflection>;
-  retryReflection(id: string): Promise<Reflection>;
-  restoreReflectionVersion(id: string, versionId: string): Promise<Reflection>;
-  revertActivity(id: string): Promise<ActivityView>;
-  updateSettings(
-    patch: Partial<
-      Pick<Settings, 'density' | 'showTypeBadges' | 'highlightAiEntries' | 'savedViews'>
-    >,
-  ): Promise<Settings>;
-  searchEntries(query: string, cursor?: string): Promise<JournalSearchPage>;
-  loadEntry(id: string): Promise<Entry>;
-  loadEntries(query: LoadEntriesQuery): Promise<Entry[]>;
-  loadTimeline(anchorDate?: string | null): Promise<Entry[]>;
-  loadEarlierTimeline(): Promise<Entry[]>;
-  loadIndex(): Promise<IndexResponse>;
-  loadDate(date: string): Promise<Entry[]>;
-  loadMonth(month: string): Promise<Entry[]>;
-  loadCollection(id: string): Promise<Entry[]>;
-  loadMoreActivity(): Promise<void>;
-  loadTagSuggestions(): Promise<void>;
-  retryDeadLetter(id: string): Promise<void>;
-  discardDeadLetter(id: string): Promise<void>;
-  dismissNotice(id: string): void;
-  refreshTokens(): Promise<void>;
-  createToken(label: string): Promise<{ token: AgentToken; secret: string }>;
-  revokeToken(id: string): Promise<void>;
-  activateUpdate(): Promise<void>;
-  /**
-   * A standing request from a view to take over the composer. `nonce` rises on
-   * every call so repeating the same destination still pulls focus, and a null
-   * `destination` means "just focus" — the screen's own default already applies.
-   */
-  composerPreset: { destination: Destination | null; nonce: number } | null;
-  focusComposer(destination?: Destination): void;
-}
-
 const persistence = new SingleRecordPersistence<JournalClientRecord>();
 let persistenceTimer: number | undefined;
 let initialization: Promise<void> | null = null;
@@ -324,35 +218,12 @@ let sseReplayReady = true;
 let activeResetSequence: number | null = null;
 let resetSequence = 0;
 let timelineRequestSequence = 0;
-const restoreMutationIds = new Map<string, string>();
 let canonicalHistoryRollback: {
   generation: number;
   mirror: MirrorData;
   activityHasMore: boolean;
   activityNextCursor: string | null;
 } | null = null;
-
-function mirrorFromState(state: JournalState): MirrorData {
-  return {
-    entriesById: state.entriesById,
-    entryIdsByDate: state.entryIdsByDate,
-    entryIdsByCollection: state.entryIdsByCollection,
-    collectionsById: state.collectionsById,
-    activityById: state.activityById,
-    activityOrder: state.activityOrder,
-    summariesByMonth: state.summariesByMonth,
-    latestSummary: state.latestSummary,
-    reflectionsByWeek: state.reflectionsByWeek,
-    settings: state.settings,
-    index: state.index,
-    mcpStatus: state.mcpStatus,
-    today: state.today,
-    serverToday: state.serverToday,
-    timezone: state.timezone,
-    cursor: state.cursor,
-    deviceId: state.deviceId,
-  };
-}
 
 function recordFromState(
   state: JournalState,
@@ -603,23 +474,6 @@ function liveReplayIsReady(
   );
 }
 
-function applyServerRows(
-  mirror: MirrorData,
-  rows: {
-    entries?: Entry[];
-    collections?: Collection[];
-    summary?: Summary;
-    activity?: ActivityView;
-  },
-): MirrorData {
-  let next = mirror;
-  for (const entry of rows.entries ?? []) next = upsertServerEntry(next, entry);
-  for (const collection of rows.collections ?? []) next = upsertServerCollection(next, collection);
-  if (rows.summary) next = upsertServerSummary(next, rows.summary);
-  if (rows.activity) next = upsertActivity(next, rows.activity);
-  return next;
-}
-
 export async function applyChangeBatch(
   batch: ChangeBatch,
   cursor: string,
@@ -721,24 +575,6 @@ function retainedCachedEntries(
   );
 }
 
-async function bootstrapSnapshot(
-  allowPair: boolean,
-  expectedGeneration: number,
-): Promise<Awaited<ReturnType<typeof journalApi.bootstrap>> | null> {
-  try {
-    return await journalApi.bootstrap();
-  } catch (error) {
-    if (!(error instanceof ApiError) || error.status !== 401 || !allowPair) throw error;
-    if (expectedGeneration !== lifecycleGeneration || pairingExpired) return null;
-    const paired = await journalApi.pair();
-    const state = useJournalStore.getState();
-    useJournalStore.setState({ ...mirrorFromState(state), deviceId: paired.deviceId });
-    await persistNow();
-    if (expectedGeneration !== lifecycleGeneration || pairingExpired) return null;
-    return journalApi.bootstrap();
-  }
-}
-
 interface ReconcileOptions {
   allowPair?: boolean;
   authoritative?: boolean;
@@ -773,7 +609,17 @@ async function prepareBootstrapReconciliation(
   const responseGeneration = ++sseGeneration;
   let response: Awaited<ReturnType<typeof journalApi.bootstrap>> | null;
   try {
-    response = await bootstrapSnapshot(options.allowPair ?? false, generation);
+    response = await bootstrapSnapshot(options.allowPair ?? false, generation, {
+      get: useJournalStore.getState,
+      set: useJournalStore.setState,
+      lifecycleGeneration: () => lifecycleGeneration,
+      sseGeneration: () => sseGeneration,
+      pairingExpired: () => pairingExpired,
+      authenticated,
+      requireOnline,
+      persistNow,
+      persistSoon,
+    });
   } catch (error) {
     if (generation === lifecycleGeneration && error instanceof ApiError && error.status === 401) {
       pauseForExpiredPairing();
@@ -1469,125 +1315,6 @@ function scheduleReconnectRetry(full: boolean, authoritative = false): void {
   reconnectRetryDelay = Math.min(reconnectRetryDelay * 2, 60_000);
 }
 
-function descriptorForCommand(command: QueueableCommand, mutationId = createUlid()): OutboxItem {
-  switch (command.kind) {
-    case 'entry.create':
-      return {
-        mutationId,
-        method: 'POST',
-        path: '/api/entries',
-        body: command.input,
-        enqueuedAt: command.at,
-        command,
-      };
-    case 'entry.update':
-      return {
-        mutationId,
-        method: 'PATCH',
-        path: `/api/entries/${command.id}`,
-        body: {
-          patch: command.patch,
-          ...(command.expectedRevision === undefined
-            ? {}
-            : { expectedRevision: command.expectedRevision }),
-        },
-        enqueuedAt: command.at,
-        command,
-      };
-    case 'entry.delete':
-      return {
-        mutationId,
-        method: 'DELETE',
-        path: `/api/entries/${command.id}`,
-        enqueuedAt: command.at,
-        command,
-      };
-    case 'entry.migrate':
-      return {
-        mutationId,
-        method: 'POST',
-        path: `/api/entries/${command.id}/migrate`,
-        body: {
-          newEntryId: command.copy.id,
-          target: command.target,
-          ...(command.expectedRevision === undefined
-            ? {}
-            : { expectedRevision: command.expectedRevision }),
-        },
-        enqueuedAt: command.at,
-        command,
-      };
-    case 'entry.schedule':
-      return {
-        mutationId,
-        method: 'POST',
-        path: `/api/entries/${command.id}/schedule`,
-        body: {
-          copyId: command.copy.id,
-          month: command.month,
-          ...(command.expectedRevision === undefined
-            ? {}
-            : { expectedRevision: command.expectedRevision }),
-        },
-        enqueuedAt: command.at,
-        command,
-      };
-    case 'collection.create':
-      return {
-        mutationId,
-        method: 'POST',
-        path: '/api/collections',
-        body: {
-          id: command.collection.id,
-          name: command.collection.name,
-          note: command.collection.note,
-        },
-        enqueuedAt: command.at,
-        command,
-      };
-    case 'collection.update':
-      return {
-        mutationId,
-        method: 'PATCH',
-        path: `/api/collections/${command.id}`,
-        body: command.patch,
-        enqueuedAt: command.at,
-        command,
-      };
-  }
-}
-
-function affectedEntryIds(command: QueueableCommand): ReadonlySet<string> {
-  switch (command.kind) {
-    case 'entry.create':
-      return new Set([command.entry.id]);
-    case 'entry.update':
-    case 'entry.delete':
-      return new Set([command.id]);
-    case 'entry.migrate':
-    case 'entry.schedule':
-      return new Set([command.id, command.copy.id]);
-    case 'collection.create':
-    case 'collection.update':
-      return new Set();
-  }
-}
-
-function affectedCollectionIds(command: QueueableCommand): ReadonlySet<string> {
-  switch (command.kind) {
-    case 'collection.create':
-      return new Set([command.collection.id]);
-    case 'collection.update':
-      return new Set([command.id]);
-    case 'entry.create':
-    case 'entry.update':
-    case 'entry.delete':
-    case 'entry.migrate':
-    case 'entry.schedule':
-      return new Set();
-  }
-}
-
 async function enqueueCommand(command: QueueableCommand): Promise<void> {
   const lifecycle = lifecycleGeneration;
   const item = descriptorForCommand(command);
@@ -1617,88 +1344,6 @@ async function enqueueCommand(command: QueueableCommand): Promise<void> {
       scheduleOutboxRetry();
     }
     void flushOutbox();
-  }
-}
-
-interface ServerRows {
-  entries?: Entry[];
-  collections?: Collection[];
-}
-
-async function sendOutboxItem(item: OutboxItem): Promise<ServerRows> {
-  const command = item.command;
-  switch (command.kind) {
-    case 'entry.create': {
-      const response = await journalApi.createEntry(command.input, item.mutationId);
-      return { entries: [response.entry] };
-    }
-    case 'entry.update': {
-      const response = await journalApi.updateEntry(
-        command.id,
-        command.patch,
-        item.mutationId,
-        command.expectedRevision,
-      );
-      return { entries: [response.entry] };
-    }
-    case 'entry.delete': {
-      const response = await journalApi.deleteEntry(
-        command.id,
-        item.mutationId,
-        command.expectedRevision,
-      );
-      return { entries: [response.entry] };
-    }
-    case 'entry.migrate': {
-      const response = await journalApi.migrateEntry(
-        command.id,
-        {
-          newEntryId: command.copy.id,
-          target: command.target,
-          ...(command.expectedRevision === undefined
-            ? {}
-            : { expectedRevision: command.expectedRevision }),
-        },
-        item.mutationId,
-      );
-      return { entries: [response.original, response.copy] };
-    }
-    case 'entry.schedule': {
-      const response = await journalApi.scheduleEntry(
-        command.id,
-        {
-          copyId: command.copy.id,
-          month: command.month,
-          ...(command.expectedRevision === undefined
-            ? {}
-            : { expectedRevision: command.expectedRevision }),
-        },
-        item.mutationId,
-      );
-      return {
-        entries: [response.original, response.copy],
-        ...(response.collection ? { collections: [response.collection] } : {}),
-      };
-    }
-    case 'collection.create': {
-      const response = await journalApi.createCollection(
-        {
-          id: command.collection.id,
-          name: command.collection.name,
-          note: command.collection.note,
-        },
-        item.mutationId,
-      );
-      return { collections: [response.collection] };
-    }
-    case 'collection.update': {
-      const response = await journalApi.updateCollection(
-        command.id,
-        command.patch,
-        item.mutationId,
-      );
-      return { collections: [response.collection] };
-    }
   }
 }
 
@@ -1982,384 +1627,6 @@ function normalizePatch(entry: Entry, patch: EntryPatch): EntryPatch {
   return { ...patch, state: actionable ? 'open' : 'logged' };
 }
 
-export type JournalSearchFilters = SharedJournalSearchFilters;
-
-export interface LoadEntriesQuery extends JournalSearchFilters {
-  collection?: string;
-}
-
-/** The browser and API intentionally consume the same query grammar. */
-export const parseJournalSearch = parseSharedJournalSearch;
-
-const SEARCH_PAGE_SIZE = 50;
-const DOWNLOADED_CURSOR_PREFIX = 'downloaded:';
-
-function downloadedCursor(offset: number): string {
-  return `${DOWNLOADED_CURSOR_PREFIX}${offset}`;
-}
-
-function downloadedOffset(cursor: string | undefined): number {
-  if (cursor === undefined) return 0;
-  if (!cursor.startsWith(DOWNLOADED_CURSOR_PREFIX)) return 0;
-  const offset = Number(cursor.slice(DOWNLOADED_CURSOR_PREFIX.length));
-  if (!Number.isSafeInteger(offset) || offset < 0) {
-    throw new Error('Invalid downloaded search cursor.');
-  }
-  return offset;
-}
-
-function downloadedSearchPage(
-  entriesById: Record<string, Entry>,
-  query: string,
-  cursor: string | undefined,
-  reason: JournalSearchPage['reason'],
-): JournalSearchPage {
-  const filters = parseJournalSearch(query);
-  const offset = downloadedOffset(cursor);
-  const matching = Object.values(entriesById)
-    .filter((entry) => entryMatchesJournalSearch(entry, filters))
-    .sort(
-      (left, right) =>
-        right.date.localeCompare(left.date) ||
-        right.createdAt.localeCompare(left.createdAt) ||
-        right.id.localeCompare(left.id),
-    );
-  const items = matching.slice(offset, offset + SEARCH_PAGE_SIZE);
-  const nextOffset = offset + items.length;
-  const hasMore = nextOffset < matching.length;
-  return {
-    items,
-    nextCursor: hasMore ? downloadedCursor(nextOffset) : null,
-    hasMore,
-    source: 'downloaded',
-    reason,
-  };
-}
-
-async function loadEntriesIntoMirror(
-  query: LoadEntriesQuery,
-  options: { persist?: boolean; retryOnChange?: boolean; requireConnection?: boolean } = {},
-  attempt = 0,
-): Promise<Entry[]> {
-  if (options.requireConnection !== false) requireOnline();
-  const lifecycle = lifecycleGeneration;
-  const responseGeneration = sseGeneration;
-  const loaded: Entry[] = [];
-  const seenCursors = new Set<string>();
-  let cursor: string | undefined;
-  do {
-    const response = await authenticated(() =>
-      journalApi.listEntries({
-        ...query,
-        limit: 100,
-        ...(cursor === undefined ? {} : { cursor }),
-      }),
-    );
-    if (lifecycle !== lifecycleGeneration) return loaded;
-    if (pairingExpired) {
-      throw new ApiError(401, 'unauthenticated', 'Pairing expired. Reload Journal to reconnect.');
-    }
-    if (responseGeneration !== sseGeneration) {
-      if (options.retryOnChange !== false && attempt < 3) {
-        return loadEntriesIntoMirror(query, options, attempt + 1);
-      }
-      throw new Error('Journal changed while entries were loading. Please retry.');
-    }
-    loaded.push(...response.items);
-    const nextCursor = response.nextCursor ?? undefined;
-    cursor = nextCursor === undefined || seenCursors.has(nextCursor) ? undefined : nextCursor;
-    if (cursor !== undefined) seenCursors.add(cursor);
-    let mirror = mirrorFromState(useJournalStore.getState());
-    for (const entry of response.items) mirror = upsertServerEntry(mirror, entry);
-    mirror = recomputeActivityRevertEligibility(
-      applyPendingCommands(mirror, useJournalStore.getState().outbox),
-    );
-    useJournalStore.setState({
-      ...mirror,
-      today: response.today,
-      serverToday: response.today,
-      timezone: response.timezone,
-      online:
-        sseReplayReady &&
-        canonicalHistoryHydrationGeneration === null &&
-        useJournalStore.getState().connectionStatus === 'connected',
-    });
-  } while (cursor !== undefined);
-  if (lifecycle !== lifecycleGeneration) return loaded;
-  if (options.persist !== false) await persistNow();
-  return loaded;
-}
-
-const TIMELINE_PAGE_SIZE = 100;
-
-function mergeIds(...groups: readonly (readonly string[])[]): string[] {
-  return [...new Set(groups.flatMap((group) => [...group]))];
-}
-
-/**
- * The single client-side membership rule for the bounded Timeline projection.
- * Monthly planning destinations remain available through Month, but never leak
- * into Timeline through optimistic work, live replay, recovery, or stale pages.
- */
-function isTimelineEligible(entry: Entry, anchorDate: string | null): boolean {
-  return (
-    entry.deletedAt === null &&
-    !entry.collection?.startsWith('month:') &&
-    (anchorDate === null || entry.date <= anchorDate)
-  );
-}
-
-function eligibleTimelineIds(
-  mirror: Pick<MirrorData, 'entriesById'>,
-  candidates: readonly string[],
-  anchorDate: string | null,
-): string[] {
-  return mergeIds(candidates).filter((id) => {
-    const entry = mirror.entriesById[id];
-    return entry !== undefined && isTimelineEligible(entry, anchorDate);
-  });
-}
-
-function reconcileTimelineMembership(
-  currentIds: readonly string[],
-  mirror: Pick<MirrorData, 'entriesById'>,
-  affectedIds: Iterable<string>,
-  anchorDate: string | null,
-): string[] {
-  const ids = new Set(currentIds);
-  for (const id of affectedIds) {
-    const entry = mirror.entriesById[id];
-    if (entry !== undefined && isTimelineEligible(entry, anchorDate)) ids.add(id);
-    else ids.delete(id);
-  }
-  return eligibleTimelineIds(mirror, [...ids], anchorDate);
-}
-
-function timelineIdsWithRestoredEntry(
-  state: Pick<JournalState, 'timelineEntryIds' | 'timelineAnchorDate'>,
-  entry: Entry,
-): string[] {
-  return isTimelineEligible(entry, state.timelineAnchorDate)
-    ? mergeIds(state.timelineEntryIds, [entry.id])
-    : state.timelineEntryIds.filter((id) => id !== entry.id);
-}
-
-function commandCreatedEntries(command: QueueableCommand): Entry[] {
-  switch (command.kind) {
-    case 'entry.create':
-      return [command.entry];
-    case 'entry.migrate':
-    case 'entry.schedule':
-      return [command.copy];
-    case 'entry.update':
-    case 'entry.delete':
-    case 'collection.create':
-    case 'collection.update':
-      return [];
-  }
-}
-
-function pendingTimelineIds(outbox: readonly OutboxItem[], anchorDate: string | null): string[] {
-  return outbox.flatMap((item) =>
-    commandCreatedEntries(item.command)
-      .filter((entry) => isTimelineEligible(entry, anchorDate))
-      .map((entry) => entry.id),
-  );
-}
-
-async function loadTimelinePage(anchorDate: string | null): Promise<Entry[]> {
-  requireOnline();
-  const request = ++timelineRequestSequence;
-  const lifecycle = lifecycleGeneration;
-  const startingState = useJournalStore.getState();
-  const startingIds = new Set(startingState.timelineEntryIds);
-  const startingEntries = startingState.entriesById;
-  useJournalStore.setState({ timelineLoading: true, timelineLoadingEarlier: false });
-  try {
-    const response = await authenticated(() =>
-      journalApi.timeline({
-        ...(anchorDate === null ? {} : { to: anchorDate }),
-        limit: TIMELINE_PAGE_SIZE,
-      }),
-    );
-    if (request !== timelineRequestSequence || lifecycle !== lifecycleGeneration) {
-      return response.items;
-    }
-    const current = useJournalStore.getState();
-    let mirror = mirrorFromState(current);
-    for (const entry of response.items) {
-      // An SSE/optimistic change that landed during the request is newer than
-      // the page snapshot, even when both happen to carry the same revision.
-      if (current.entriesById[entry.id] !== startingEntries[entry.id]) continue;
-      mirror = upsertServerEntry(mirror, entry);
-    }
-    for (const collection of response.collections) {
-      mirror = upsertServerCollection(mirror, collection);
-    }
-    mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, current.outbox));
-    const arrivedDuringRequest = current.timelineEntryIds.filter((id) => {
-      const entry = current.entriesById[id];
-      return !startingIds.has(id) && entry !== undefined && isTimelineEligible(entry, anchorDate);
-    });
-    const timelineEntryIds = eligibleTimelineIds(
-      mirror,
-      mergeIds(
-        response.items.map((entry) => entry.id),
-        arrivedDuringRequest,
-        pendingTimelineIds(current.outbox, anchorDate),
-      ),
-      anchorDate,
-    );
-    useJournalStore.setState({
-      ...mirror,
-      timelineEntryIds,
-      timelineNextCursor: response.nextCursor,
-      timelineAnchorDate: anchorDate,
-      timelineLoaded: true,
-      timelineLoading: false,
-      timelineLoadingEarlier: false,
-      timelineLatestAgentTouch: response.latestAgentTouch ?? null,
-      timelineWeeklyReflection: response.weeklyReflection ?? null,
-      today: response.today,
-      serverToday: response.today,
-      timezone: response.timezone,
-    });
-    await persistNow();
-    return response.items;
-  } finally {
-    if (request === timelineRequestSequence && lifecycle === lifecycleGeneration) {
-      useJournalStore.setState({ timelineLoading: false });
-    }
-  }
-}
-
-async function loadEarlierTimelinePage(): Promise<Entry[]> {
-  requireOnline();
-  const state = useJournalStore.getState();
-  const cursor = state.timelineNextCursor;
-  if (!state.timelineLoaded || cursor === null || state.timelineLoadingEarlier) return [];
-  const request = ++timelineRequestSequence;
-  const lifecycle = lifecycleGeneration;
-  const startingEntries = state.entriesById;
-  useJournalStore.setState({ timelineLoadingEarlier: true });
-  try {
-    const response = await authenticated(() =>
-      journalApi.timeline({
-        ...(state.timelineAnchorDate === null ? {} : { to: state.timelineAnchorDate }),
-        limit: TIMELINE_PAGE_SIZE,
-        cursor,
-      }),
-    );
-    if (request !== timelineRequestSequence || lifecycle !== lifecycleGeneration) {
-      return response.items;
-    }
-    const current = useJournalStore.getState();
-    let mirror = mirrorFromState(current);
-    for (const entry of response.items) {
-      if (current.entriesById[entry.id] !== startingEntries[entry.id]) continue;
-      mirror = upsertServerEntry(mirror, entry);
-    }
-    for (const collection of response.collections) {
-      mirror = upsertServerCollection(mirror, collection);
-    }
-    mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, current.outbox));
-    useJournalStore.setState({
-      ...mirror,
-      timelineEntryIds: eligibleTimelineIds(
-        mirror,
-        mergeIds(
-          current.timelineEntryIds,
-          response.items.map((entry) => entry.id),
-          pendingTimelineIds(current.outbox, state.timelineAnchorDate),
-        ),
-        state.timelineAnchorDate,
-      ),
-      // A repeated cursor is a malformed page, not permission to loop forever.
-      timelineNextCursor: response.nextCursor === cursor ? null : response.nextCursor,
-      timelineLoadingEarlier: false,
-      today: response.today,
-      serverToday: response.today,
-      timezone: response.timezone,
-    });
-    await persistNow();
-    return response.items;
-  } finally {
-    if (request === timelineRequestSequence && lifecycle === lifecycleGeneration) {
-      useJournalStore.setState({ timelineLoadingEarlier: false });
-    }
-  }
-}
-
-async function loadIndexIntoMirror(attempt = 0): Promise<IndexResponse> {
-  const lifecycle = lifecycleGeneration;
-  if (attempt === 0) useJournalStore.setState({ indexStatus: 'loading', indexError: null });
-  try {
-    requireOnline();
-    const responseGeneration = sseGeneration;
-    const response = await authenticated(() => journalApi.getIndex());
-    if (lifecycle !== lifecycleGeneration) return response;
-    if (pairingExpired) {
-      throw new ApiError(401, 'unauthenticated', 'Pairing expired. Reload Journal to reconnect.');
-    }
-    if (responseGeneration !== sseGeneration) {
-      if (attempt < 3) return loadIndexIntoMirror(attempt + 1);
-      throw new Error('Journal changed while the index was loading. Please retry.');
-    }
-
-    const state = useJournalStore.getState();
-    let mirror: MirrorData = {
-      ...mirrorFromState(state),
-      index: response,
-      collectionsById: {
-        ...state.collectionsById,
-        ...Object.fromEntries(
-          response.collections.map((collection) => [
-            collection.id,
-            {
-              id: collection.id,
-              name: collection.name,
-              note: collection.note,
-              createdAt: collection.createdAt,
-              archivedAt: collection.archivedAt,
-            },
-          ]),
-        ),
-      },
-    };
-    mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, state.outbox));
-    useJournalStore.setState({
-      ...mirror,
-      indexStatus: 'ready',
-      indexSource: 'journal',
-      indexError: null,
-    });
-    await persistNow();
-    return response;
-  } catch (error) {
-    if (attempt === 0 && lifecycle === lifecycleGeneration) {
-      useJournalStore.setState({
-        indexStatus: 'error',
-        indexError: error instanceof Error ? error.message : 'Journal index could not refresh.',
-      });
-    }
-    throw error;
-  }
-}
-
-async function loadEntryIntoMirror(id: string): Promise<Entry> {
-  requireOnline();
-  const lifecycle = lifecycleGeneration;
-  const response = await authenticated(() => journalApi.getEntry(id));
-  if (lifecycle !== lifecycleGeneration || pairingExpired) return response.entry;
-  let mirror = upsertServerEntry(mirrorFromState(useJournalStore.getState()), response.entry);
-  mirror = recomputeActivityRevertEligibility(
-    applyPendingCommands(mirror, useJournalStore.getState().outbox),
-  );
-  useJournalStore.setState({ ...mirror });
-  await persistNow();
-  return useJournalStore.getState().entriesById[id] ?? response.entry;
-}
-
 function requireEntry(id: string): Entry {
   const entry = useJournalStore.getState().entriesById[id];
   if (!entry || entry.deletedAt !== null) throw new Error('Entry no longer exists.');
@@ -2370,11 +1637,6 @@ function requireOnline(): void {
   if (!useJournalStore.getState().online || pairingExpired) {
     throw new ApiError(0, 'offline', 'This action requires a connection.');
   }
-}
-
-function summaryForAction(state: JournalState, id?: string): Summary | null {
-  if (id === undefined || state.latestSummary?.id === id) return state.latestSummary;
-  return Object.values(state.summariesByMonth).find((summary) => summary?.id === id) ?? null;
 }
 
 async function refreshCanonicalLatestSummary(): Promise<Summary | null> {
@@ -2416,24 +1678,6 @@ async function loadCanonicalMonthSummary(
       : recomputeActivityRevertEligibility(clearSummaryMonth(current, month)),
   );
   await persistNow();
-}
-
-function rebaseCommand(command: QueueableCommand): QueueableCommand {
-  const state = useJournalStore.getState();
-  const at = new Date().toISOString();
-  if (
-    command.kind === 'entry.update' ||
-    command.kind === 'entry.delete' ||
-    command.kind === 'entry.migrate' ||
-    command.kind === 'entry.schedule'
-  ) {
-    const current = state.entriesById[command.id];
-    if (current) return { ...command, at, expectedRevision: current.revision };
-    const rebased = { ...command, at };
-    delete rebased.expectedRevision;
-    return rebased;
-  }
-  return { ...command, at };
 }
 
 async function initializeJournal(): Promise<void> {
@@ -2714,7 +1958,7 @@ function shutdownJournal(): void {
   pendingReconnect = null;
   flushing = null;
   activeOutboxMutationId = null;
-  restoreMutationIds.clear();
+  clearRecoveryMutationIds();
   authenticationProbe = null;
   useJournalStore.setState({
     syncing: false,
@@ -2725,138 +1969,6 @@ function shutdownJournal(): void {
     timelineLoading: false,
     timelineLoadingEarlier: false,
   });
-}
-
-/** Tag suggestions refresh at most this often; the mirror covers the gap. */
-const TAG_SUGGESTION_TTL_MS = 5 * 60 * 1000;
-
-const sortTagUsage = (usage: TagUsage[]): TagUsage[] =>
-  usage.sort((left, right) => right.uses - left.uses || left.tag.localeCompare(right.tag));
-
-const RECOVERY_WINDOW_MS = 30 * 86_400_000;
-
-async function restoreEntryCanonically(
-  id: string,
-  expectedRevision: number,
-): Promise<Awaited<ReturnType<typeof journalApi.restoreEntry>>> {
-  const attempt = `${id}:${expectedRevision}`;
-  const mutationId = restoreMutationIds.get(attempt) ?? createUlid();
-  restoreMutationIds.set(attempt, mutationId);
-  try {
-    const response = await authenticated(() =>
-      journalApi.restoreEntry(id, mutationId, expectedRevision),
-    );
-    restoreMutationIds.delete(attempt);
-    return response;
-  } catch (error) {
-    // Keep the key when the outcome is indeterminate so the next owner retry
-    // asks the domain to replay the original result instead of restoring twice.
-    if (error instanceof ApiError && error.status > 0 && error.status !== 401 && !error.retryable) {
-      restoreMutationIds.delete(attempt);
-    }
-    throw error;
-  }
-}
-
-function recoveryRecord(
-  entry: Entry,
-  collectionsById: Record<string, Collection>,
-): RecentlyDeletedEntry {
-  if (entry.deletedAt === null) throw new Error('Only deleted entries belong in Recovery.');
-  const collection = entry.collection === null ? undefined : collectionsById[entry.collection];
-  return {
-    entry,
-    expiresAt: new Date(Date.parse(entry.deletedAt) + RECOVERY_WINDOW_MS).toISOString(),
-    destination:
-      entry.collection === null
-        ? { collectionId: null, collectionName: null, status: 'daily' }
-        : collection === undefined
-          ? { collectionId: entry.collection, collectionName: null, status: 'missing' }
-          : {
-              collectionId: entry.collection,
-              collectionName: collection.name,
-              status: collection.archivedAt === null ? 'active' : 'archived',
-            },
-  };
-}
-
-function localRecoveryRecords(
-  entriesById: Record<string, Entry>,
-  collectionsById: Record<string, Collection>,
-): RecentlyDeletedEntry[] {
-  return Object.values(entriesById)
-    .filter(
-      (entry): entry is Entry & { deletedAt: string } =>
-        entry.deletedAt !== null && Date.parse(entry.deletedAt) + RECOVERY_WINDOW_MS > Date.now(),
-    )
-    .map((entry) => recoveryRecord(entry, collectionsById))
-    .sort(
-      (left, right) =>
-        (right.entry.deletedAt ?? '').localeCompare(left.entry.deletedAt ?? '') ||
-        right.entry.id.localeCompare(left.entry.id),
-    );
-}
-
-function upsertReflection(mirror: MirrorData, reflection: Reflection): MirrorData {
-  const current = mirror.reflectionsByWeek?.[reflection.weekStart];
-  if (current && current.revision > reflection.revision) return mirror;
-  return {
-    ...mirror,
-    reflectionsByWeek: {
-      ...(mirror.reflectionsByWeek ?? {}),
-      [reflection.weekStart]: reflection,
-    },
-  };
-}
-
-/**
- * Counts the tag vocabulary already in the mirror. `lastUsedAt` approximates the
- * server's MAX(created_at) with the newest touching entry's updatedAt, which is
- * close enough to rank suggestions while offline.
- */
-export function deriveTagUsage(entriesById: Record<string, Entry>): TagUsage[] {
-  const counts = new Map<string, { uses: number; lastUsedAt: string }>();
-  for (const entry of Object.values(entriesById)) {
-    if (entry.deletedAt !== null) continue;
-    for (const tag of new Set(entry.tags)) {
-      const current = counts.get(tag);
-      if (current === undefined) {
-        counts.set(tag, { uses: 1, lastUsedAt: entry.updatedAt });
-        continue;
-      }
-      current.uses += 1;
-      if (entry.updatedAt > current.lastUsedAt) current.lastUsedAt = entry.updatedAt;
-    }
-  }
-  return sortTagUsage(
-    [...counts].map(([tag, usage]) => ({ tag, uses: usage.uses, lastUsedAt: usage.lastUsedAt })),
-  );
-}
-
-/**
- * Unions both vocabularies by tag. The server owns `uses` for tags it knows —
- * the mirror only holds downloaded slices — while tags it has never seen (an
- * optimistic capture still in the outbox) keep their local counts.
- */
-export function mergeTagUsage(
-  mirrorUsage: readonly TagUsage[],
-  serverUsage: readonly TagUsage[],
-): TagUsage[] {
-  const merged = new Map<string, TagUsage>(mirrorUsage.map((usage) => [usage.tag, usage]));
-  for (const row of serverUsage) {
-    const local = merged.get(row.tag);
-    merged.set(
-      row.tag,
-      local === undefined
-        ? row
-        : {
-            tag: row.tag,
-            uses: row.uses,
-            lastUsedAt: local.lastUsedAt > row.lastUsedAt ? local.lastUsedAt : row.lastUsedAt,
-          },
-    );
-  }
-  return sortTagUsage([...merged.values()]);
 }
 
 export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<JournalState>()(
@@ -2908,40 +2020,21 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
     collectionLogView: null,
     initialize: initializeJournal,
     shutdown: shutdownJournal,
-    markActivityVisible: (ids) => {
-      if (ids.length === 0) return;
-      const { activityById, seenActivityIds } = get();
-      const seen = new Set(seenActivityIds);
-      let changed = false;
-      for (const id of ids) {
-        const activity = activityById[id];
-        if (!activity || activity.kind === 'revert' || seen.has(id)) continue;
-        seen.add(id);
-        changed = true;
-      }
-      if (!changed) return;
-      // Sparse visibility marks remain exact. "Mark all seen" is the explicit
-      // compaction mechanism; silently dropping old ids would make them unread again.
-      set({ seenActivityIds: [...seen] });
-      persistSoon();
-    },
-    markAllActivitySeen: () => {
-      const { activityOrder, activityById } = get();
-      const newest = activityOrder
-        .map((id) => activityById[id])
-        .filter((activity): activity is ActivityView => activity !== undefined)
-        .sort(
-          (left, right) => right.at.localeCompare(left.at) || right.id.localeCompare(left.id),
-        )[0];
-      if (newest === undefined) return;
-      set({
-        activitySeenThrough: { at: newest.at, id: newest.id },
-        lastReviewSeenAt: newest.at,
-        seenActivityIds: [],
-      });
-      persistSoon();
-    },
-    markReviewSeen: () => get().markAllActivitySeen(),
+    ...createActivityEnrichmentActions({
+      runtime: {
+        get,
+        set,
+        lifecycleGeneration: () => lifecycleGeneration,
+        sseGeneration: () => sseGeneration,
+        pairingExpired: () => pairingExpired,
+        authenticated,
+        requireOnline,
+        persistNow,
+        persistSoon,
+      },
+      reconcileTimelineMembership,
+      refreshCanonicalLatestSummary,
+    }),
     setMonthLogView: (config) => {
       set({ monthLogView: config });
       persistSoon();
@@ -3010,158 +2103,23 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
       await enqueueCommand(command);
       return useJournalStore.getState().entriesById[id] ?? entry;
     },
-    deleteEntry: async (id) => {
-      const entry = requireEntry(id);
-      await enqueueCommand({
-        kind: 'entry.delete',
-        id,
-        expectedRevision: entry.revision,
-        original: entry,
-        at: new Date().toISOString(),
-      });
-      const deleted = useJournalStore.getState().entriesById[id];
-      if (deleted?.deletedAt) {
-        set((state) => ({
-          recentlyDeleted: [
-            recoveryRecord(deleted, state.collectionsById),
-            ...state.recentlyDeleted.filter((item) => item.entry.id !== id),
-          ],
-        }));
-      }
-    },
-    restoreEntry: async (id) => {
-      const state = get();
-      const pending = state.outbox.find(
-        (item) => item.command.kind === 'entry.delete' && item.command.id === id,
-      );
-      if (pending?.command.kind === 'entry.delete') {
-        const pendingDelete = pending.command;
-        const inFlight = activeOutboxMutationId === pending.mutationId ? flushing : null;
-        const deleted =
-          state.entriesById[id] ??
-          state.recentlyDeleted.find((item) => item.entry.id === id)?.entry;
-        const original =
-          pendingDelete.original ??
-          (deleted
-            ? {
-                ...deleted,
-                deletedAt: null,
-                revision: pendingDelete.expectedRevision ?? Math.max(1, deleted.revision - 1),
-              }
-            : undefined);
-        if (!original) throw new Error('Deleted entry is no longer available locally.');
-        set((current) => {
-          const outbox = current.outbox.filter((item) => item.mutationId !== pending.mutationId);
-          const mirror = recomputeActivityRevertEligibility(
-            applyPendingCommands(
-              upsertServerEntry(removeServerEntry(mirrorFromState(current), id), original),
-              outbox,
-            ),
-          );
-          return {
-            ...mirror,
-            indexSource: mirror.index === null ? 'none' : 'cached',
-            timelineEntryIds: timelineIdsWithRestoredEntry(current, original),
-            outbox,
-            outboxCount: outbox.length,
-            recentlyDeleted: current.recentlyDeleted.filter((item) => item.entry.id !== id),
-          };
-        });
-        await persistNow();
-        if (!inFlight) {
-          return {
-            entry: original,
-            outcome: 'cancelled_offline_delete',
-            originalCollectionId: original.collection,
-          };
-        }
-        await inFlight;
-        if (!get().networkOnline || pairingExpired) {
-          throw new ApiError(
-            0,
-            'network_error',
-            'The delete may have reached the server. Reconnect and restore it from Recovery.',
-          );
-        }
-        try {
-          const response = await restoreEntryCanonically(
-            id,
-            (pendingDelete.expectedRevision ?? original.revision) + 1,
-          );
-          const mirror = upsertServerEntry(mirrorFromState(get()), response.entry);
-          set((current) => ({
-            ...mirror,
-            indexSource: mirror.index === null ? 'none' : 'cached',
-            timelineEntryIds: timelineIdsWithRestoredEntry(current, response.entry),
-            recentlyDeleted: current.recentlyDeleted.filter((item) => item.entry.id !== id),
-          }));
-          await persistNow();
-          return {
-            entry: response.entry,
-            outcome: response.destination.outcome,
-            originalCollectionId: response.destination.originalCollectionId,
-          };
-        } catch (error) {
-          // If the cancelled item had not yet reached the server, there is no tombstone to restore.
-          if (error instanceof ApiError && error.status === 404) {
-            return {
-              entry: original,
-              outcome: 'cancelled_offline_delete',
-              originalCollectionId: original.collection,
-            };
-          }
-          throw error;
-        }
-      }
-
-      requireOnline();
-      const deleted =
-        state.recentlyDeleted.find((item) => item.entry.id === id)?.entry ?? state.entriesById[id];
-      if (!deleted?.deletedAt) throw new Error('Deleted entry is no longer recoverable.');
-      const response = await restoreEntryCanonically(id, deleted.revision);
-      const mirror = upsertServerEntry(mirrorFromState(get()), response.entry);
-      set((current) => ({
-        ...mirror,
-        indexSource: mirror.index === null ? 'none' : 'cached',
-        timelineEntryIds: timelineIdsWithRestoredEntry(current, response.entry),
-        recentlyDeleted: current.recentlyDeleted.filter((item) => item.entry.id !== id),
-      }));
-      await persistNow();
-      return {
-        entry: response.entry,
-        outcome: response.destination.outcome,
-        originalCollectionId: response.destination.originalCollectionId,
-      };
-    },
-    loadRecovery: async () => {
-      const state = get();
-      const local = localRecoveryRecords(state.entriesById, state.collectionsById);
-      set({ recentlyDeleted: local });
-      if (!state.online) return;
-      const lifecycle = lifecycleGeneration;
-      set({ recoveryLoading: true });
-      try {
-        const response = await authenticated(() => journalApi.listRecentlyDeleted());
-        if (lifecycle !== lifecycleGeneration) return;
-        set((current) => {
-          // Build from state at commit time, not the pre-request snapshot: a
-          // queued delete or SSE tombstone may have landed while HTTP was open.
-          // Conversely, an intervening restore must suppress a stale response.
-          const items = new Map<string, RecentlyDeletedEntry>();
-          for (const item of response.items) {
-            const currentEntry = current.entriesById[item.entry.id];
-            if (currentEntry?.deletedAt === null) continue;
-            items.set(item.entry.id, item);
-          }
-          for (const item of localRecoveryRecords(current.entriesById, current.collectionsById)) {
-            items.set(item.entry.id, item);
-          }
-          return { recentlyDeleted: [...items.values()] };
-        });
-      } finally {
-        if (lifecycle === lifecycleGeneration) set({ recoveryLoading: false });
-      }
-    },
+    ...createRecoveryActions({
+      runtime: {
+        get,
+        set,
+        lifecycleGeneration: () => lifecycleGeneration,
+        sseGeneration: () => sseGeneration,
+        pairingExpired: () => pairingExpired,
+        authenticated,
+        requireOnline,
+        persistNow,
+        persistSoon,
+      },
+      enqueueCommand,
+      activeOutboxMutationId: () => activeOutboxMutationId,
+      flushing: () => flushing,
+      timelineIdsWithRestoredEntry,
+    }),
     toggleEntry: async (id) => {
       const entry = requireEntry(id);
       if (entry.type !== 'task' && entry.type !== 'habit')
@@ -3261,327 +2219,40 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
       });
       return useJournalStore.getState().collectionsById[id] ?? current;
     },
-    saveSummary: async (id) => {
-      requireOnline();
-      const lifecycle = lifecycleGeneration;
-      const target = summaryForAction(get(), id);
-      if (id !== undefined && target === null) throw new Error('Summary no longer exists.');
-      const generation = sseGeneration;
-      const response = await authenticated(() =>
-        journalApi.saveLatestSummary({
-          ...(id === undefined ? {} : { summaryId: id }),
-          ...(target === null ? {} : { expectedRevision: target.revision }),
-        }),
-      );
-      if (lifecycle === lifecycleGeneration && generation === sseGeneration) {
-        const current = get();
-        let mirror = mirrorFromState(current);
-        mirror = upsertServerEntry(mirror, response.entry);
-        mirror = upsertServerSummary(mirror, response.summary);
-        set({
-          ...recomputeActivityRevertEligibility(mirror),
-          timelineEntryIds: reconcileTimelineMembership(
-            current.timelineEntryIds,
-            mirror,
-            [response.entry.id],
-            current.timelineAnchorDate,
-          ),
-        });
-        await persistNow();
-      }
-      return response.summary;
-    },
-    rewriteSummary: async (id) => {
-      requireOnline();
-      const lifecycle = lifecycleGeneration;
-      const target = summaryForAction(get(), id);
-      if (id !== undefined && target === null) throw new Error('Summary no longer exists.');
-      const generation = sseGeneration;
-      const response = await authenticated(() =>
-        journalApi.rewriteLatestSummary({
-          ...(id === undefined ? {} : { summaryId: id }),
-          ...(target === null ? {} : { expectedRevision: target.revision }),
-        }),
-      );
-      if (lifecycle === lifecycleGeneration && generation === sseGeneration) {
-        set(upsertServerSummary(mirrorFromState(get()), response.summary));
-        await persistNow();
-      }
-      return response.summary;
-    },
-    loadReflections: async () => {
-      const state = get();
-      const cached = Object.values(state.reflectionsByWeek).sort((left, right) =>
-        right.weekStart.localeCompare(left.weekStart),
-      );
-      if (!state.online) return cached;
-      const liveDates = state.timelineEntryIds
-        .flatMap((id) => {
-          const entry = state.entriesById[id];
-          return entry && entry.deletedAt === null ? [entry.date] : [];
-        })
-        .sort();
-      const from = liveDates[0];
-      if (!from) return cached;
-      const newest = liveDates.at(-1)!;
-      const to = newest < state.today ? newest : addCalendarDays(state.today, -1);
-      if (from > to) return cached;
-      const lifecycle = lifecycleGeneration;
-      const generation = sseGeneration;
-      const response = await authenticated(() => journalApi.listReflections(from, to));
-      if (lifecycle === lifecycleGeneration && generation === sseGeneration) {
-        let mirror = mirrorFromState(get());
-        for (const reflection of response.items) mirror = upsertReflection(mirror, reflection);
-        set(mirror);
-        await persistNow();
-      }
-      return response.items;
-    },
-    requestReflection: async (id) => {
-      requireOnline();
-      const target = Object.values(get().reflectionsByWeek).find((item) => item.id === id);
-      if (!target) throw new Error('Reflection no longer exists.');
-      const lifecycle = lifecycleGeneration;
-      const generation = sseGeneration;
-      const response = await authenticated(() => journalApi.requestReflection(id, target.revision));
-      if (lifecycle === lifecycleGeneration && generation === sseGeneration) {
-        set(upsertReflection(mirrorFromState(get()), response.reflection));
-        await persistNow();
-      }
-      return response.reflection;
-    },
-    retryReflection: async (id) => {
-      requireOnline();
-      const target = Object.values(get().reflectionsByWeek).find((item) => item.id === id);
-      if (!target) throw new Error('Reflection no longer exists.');
-      const lifecycle = lifecycleGeneration;
-      const generation = sseGeneration;
-      const response = await authenticated(() => journalApi.retryReflection(id, target.revision));
-      if (lifecycle === lifecycleGeneration && generation === sseGeneration) {
-        set(upsertReflection(mirrorFromState(get()), response.reflection));
-        await persistNow();
-      }
-      return response.reflection;
-    },
-    restoreReflectionVersion: async (id, versionId) => {
-      requireOnline();
-      const target = Object.values(get().reflectionsByWeek).find((item) => item.id === id);
-      if (!target) throw new Error('Reflection no longer exists.');
-      const lifecycle = lifecycleGeneration;
-      const generation = sseGeneration;
-      const response = await authenticated(() =>
-        journalApi.restoreReflectionVersion(id, versionId, target.revision),
-      );
-      if (lifecycle === lifecycleGeneration && generation === sseGeneration) {
-        set(upsertReflection(mirrorFromState(get()), response.reflection));
-        await persistNow();
-      }
-      return response.reflection;
-    },
-    revertActivity: async (id) => {
-      requireOnline();
-      const lifecycle = lifecycleGeneration;
-      const generation = sseGeneration;
-      const response = await authenticated(() => journalApi.revertActivity(id));
-      if (lifecycle !== lifecycleGeneration || generation !== sseGeneration) {
-        return response.activity;
-      }
-      let mirror = mirrorFromState(get());
-      let removedLatestSummary = false;
-      for (const rawSnapshot of response.rows) {
-        const parsed = ActivitySnapshotSchema.safeParse(rawSnapshot);
-        if (!parsed.success) continue;
-        const snapshot = parsed.data;
-        if (snapshot.entity === 'entry') {
-          if (snapshot.row) {
-            mirror = upsertServerEntry(mirror, snapshot.row);
-          } else {
-            mirror = removeServerEntry(mirror, snapshot.id);
-          }
-        } else if (snapshot.entity === 'collection') {
-          if (snapshot.row) {
-            mirror = upsertServerCollection(mirror, snapshot.row);
-          } else {
-            mirror = removeServerCollection(mirror, snapshot.id);
-          }
-        } else if (snapshot.row) {
-          mirror = upsertServerSummary(mirror, snapshot.row);
-        } else {
-          removedLatestSummary ||= mirror.latestSummary?.id === snapshot.id;
-          mirror = removeServerSummary(mirror, snapshot.id);
-        }
-      }
-      const original = mirror.activityById[id];
-      if (original) {
-        mirror = {
-          ...mirror,
-          activityById: {
-            ...mirror.activityById,
-            [id]: { ...original, revert: { eligible: false, reason: 'already_reverted' } },
-          },
-        };
-      }
-      mirror = upsertActivity(mirror, response.activity);
-      set({
-        ...recomputeActivityRevertEligibility(mirror),
-        indexSource: mirror.index === null ? 'none' : 'cached',
-      });
-      await persistNow();
-      if (removedLatestSummary) void refreshCanonicalLatestSummary();
-      return response.activity;
-    },
-    updateSettings: async (patch) => {
-      requireOnline();
-      const lifecycle = lifecycleGeneration;
-      const generation = sseGeneration;
-      const response = await authenticated(() => journalApi.updateSettings(patch));
-      if (lifecycle !== lifecycleGeneration || generation !== sseGeneration || pairingExpired) {
-        return response.settings;
-      }
-      const mirror = upsertServerSettings(mirrorFromState(get()), response.settings);
-      set({
-        ...mirror,
-        mcpStatus: response.assistant,
-        ...(patch.savedViews === undefined
-          ? {}
-          : { indexSource: mirror.index === null ? ('none' as const) : ('cached' as const) }),
-      });
-      await persistNow();
-      return response.settings;
-    },
-    searchEntries: async (query, cursor) => {
-      // Parse before choosing a source so malformed input behaves identically offline.
-      parseJournalSearch(query);
-      const localReason = (): JournalSearchPage['reason'] =>
-        get().networkOnline ? 'unavailable' : 'offline';
-      if (cursor?.startsWith(DOWNLOADED_CURSOR_PREFIX) || !get().online) {
-        return downloadedSearchPage(get().entriesById, query, cursor, localReason());
-      }
-
-      const lifecycle = lifecycleGeneration;
-      let response: Awaited<ReturnType<typeof journalApi.listEntries>>;
-      try {
-        response = await authenticated(() =>
-          journalApi.listEntries({
-            q: query.trim(),
-            limit: SEARCH_PAGE_SIZE,
-            ...(cursor === undefined ? {} : { cursor }),
-          }),
-        );
-      } catch (error) {
-        if (error instanceof ApiError && (error.status === 0 || error.retryable)) {
-          return downloadedSearchPage(get().entriesById, query, cursor, localReason());
-        }
-        throw error;
-      }
-
-      if (lifecycle === lifecycleGeneration && !pairingExpired) {
-        let mirror = mirrorFromState(get());
-        for (const entry of response.items) mirror = upsertServerEntry(mirror, entry);
-        mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, get().outbox));
-        set({
-          ...mirror,
-          today: response.today,
-          serverToday: response.today,
-          timezone: response.timezone,
-        });
-        persistSoon();
-      }
-      return {
-        items: response.items,
-        nextCursor: response.nextCursor,
-        hasMore: response.nextCursor !== null,
-        source: 'journal',
-        reason: null,
-      };
-    },
-    loadEntries: loadEntriesIntoMirror,
-    loadTimeline: (anchorDate = null) => loadTimelinePage(anchorDate),
-    loadEarlierTimeline: loadEarlierTimelinePage,
-    loadIndex: loadIndexIntoMirror,
-    loadEntry: loadEntryIntoMirror,
-    loadDate: (date) => loadEntriesIntoMirror({ from: date, to: date }),
-    loadMonth: async (month) => {
-      const lifecycle = lifecycleGeneration;
-      const [year, monthNumber] = month.split('-').map(Number);
-      if (!year || !monthNumber || monthNumber < 1 || monthNumber > 12) {
-        throw new Error('Invalid calendar month.');
-      }
-      const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
-      const [daily, monthlyLog] = await Promise.all([
-        loadEntriesIntoMirror({
-          from: `${month}-01`,
-          to: `${month}-${String(lastDay).padStart(2, '0')}`,
-        }),
-        loadEntriesIntoMirror({ collection: `month:${month}` }),
-      ]);
-      const loaded = [
-        ...new Map([...daily, ...monthlyLog].map((entry) => [entry.id, entry])).values(),
-      ];
-      if (lifecycle !== lifecycleGeneration) return loaded;
-      if (pairingExpired) {
-        throw new ApiError(401, 'unauthenticated', 'Pairing expired. Reload Journal to reconnect.');
-      }
-      await loadCanonicalMonthSummary(month, lifecycle);
-      return loaded;
-    },
-    loadCollection: (id) => loadEntriesIntoMirror({ collection: id }),
-    loadMoreActivity: async () => {
-      const lifecycle = lifecycleGeneration;
-      const state = get();
-      if (!state.online || state.activityLoading || !state.activityHasMore) return;
-      const before =
-        state.activityNextCursor ?? state.activityById[state.activityOrder.at(-1) ?? '']?.at;
-      if (!before) {
-        set({ activityHasMore: false });
-        return;
-      }
-      set({ activityLoading: true });
-      try {
-        const generation = sseGeneration;
-        const response = await authenticated(() => journalApi.listActivity(before, 50));
-        if (lifecycle !== lifecycleGeneration || generation !== sseGeneration) return;
-        let mirror = mirrorFromState(get());
-        for (const activity of response.items) mirror = upsertActivity(mirror, activity);
-        mirror = recomputeActivityRevertEligibility(mirror);
-        set({
-          ...mirror,
-          activityHasMore: response.nextCursor !== null,
-          activityNextCursor: response.nextCursor,
-        });
-        await persistNow();
-      } finally {
-        if (lifecycle === lifecycleGeneration) set({ activityLoading: false });
-      }
-    },
-    loadTagSuggestions: async () => {
-      const state = get();
-      // The mirror answers instantly and offline; the server refresh is a bonus.
-      set({ tagSuggestions: deriveTagUsage(state.entriesById) });
-      const online = typeof navigator === 'undefined' || navigator.onLine !== false;
-      const fresh =
-        state.tagsFetchedAt !== null &&
-        Date.parse(new Date().toISOString()) - Date.parse(state.tagsFetchedAt) <
-          TAG_SUGGESTION_TTL_MS;
-      if (!online || fresh) return;
-      const lifecycle = lifecycleGeneration;
-      try {
-        const response = await journalApi.listTags();
-        if (lifecycle !== lifecycleGeneration) return;
-        set((current) => ({
-          // Re-derive: captures may have landed while the request was in flight.
-          tagSuggestions: mergeTagUsage(deriveTagUsage(current.entriesById), response.items),
-          tagsFetchedAt: new Date().toISOString(),
-        }));
-      } catch {
-        // Suggestions are best-effort; the mirror-derived list already shipped.
-      }
-    },
+    ...createSettingsPairingActions({
+      get,
+      set,
+      lifecycleGeneration: () => lifecycleGeneration,
+      sseGeneration: () => sseGeneration,
+      pairingExpired: () => pairingExpired,
+      authenticated,
+      requireOnline,
+      persistNow,
+      persistSoon,
+    }),
+    ...createTimelineRetrievalActions({
+      runtime: {
+        get,
+        set,
+        lifecycleGeneration: () => lifecycleGeneration,
+        sseGeneration: () => sseGeneration,
+        pairingExpired: () => pairingExpired,
+        authenticated,
+        requireOnline,
+        persistNow,
+        persistSoon,
+      },
+      sseReplayReady: () => sseReplayReady,
+      canonicalHistoryHydrating: () => canonicalHistoryHydrationGeneration !== null,
+      nextTimelineRequest: () => ++timelineRequestSequence,
+      timelineRequestIsCurrent: (request) => request === timelineRequestSequence,
+      loadCanonicalMonthSummary,
+    }),
     retryDeadLetter: async (id) => {
       const lifecycle = lifecycleGeneration;
       const deadLetter = get().deadLetters.find((item) => item.id === id);
       if (!deadLetter) return;
-      const command = rebaseCommand(deadLetter.item.command);
+      const command = rebaseCommand(deadLetter.item.command, get());
       const item = descriptorForCommand(command);
       set((state) => {
         const outbox = [...state.outbox, item];
@@ -3604,66 +2275,6 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
     },
     dismissNotice: (id) =>
       set((state) => ({ notices: state.notices.filter((notice) => notice.id !== id) })),
-    refreshTokens: async () => {
-      requireOnline();
-      const lifecycle = lifecycleGeneration;
-      const generation = sseGeneration;
-      set({ tokensLoading: true });
-      try {
-        const [tokenResponse, settingsResponse] = await authenticated(() =>
-          Promise.all([journalApi.listTokens(), journalApi.getSettings()]),
-        );
-        if (lifecycle !== lifecycleGeneration || pairingExpired) return;
-        const tokensById = new Map(get().agentTokens.map((token) => [token.id, token]));
-        for (const token of tokenResponse.tokens) {
-          const current = tokensById.get(token.id);
-          tokensById.set(token.id, current ? mergeAgentToken(current, token) : token);
-        }
-        const settingsAreCurrent = generation === sseGeneration;
-        const mirror = settingsAreCurrent
-          ? upsertServerSettings(mirrorFromState(get()), settingsResponse.settings)
-          : null;
-        set({
-          ...(mirror ?? {}),
-          agentTokens: [...tokensById.values()],
-          ...(settingsAreCurrent ? { mcpStatus: settingsResponse.assistant } : {}),
-        });
-        await persistNow();
-      } finally {
-        if (lifecycle === lifecycleGeneration) set({ tokensLoading: false });
-      }
-    },
-    createToken: async (label) => {
-      requireOnline();
-      const lifecycle = lifecycleGeneration;
-      const response = await authenticated(() => journalApi.createToken(label));
-      if (lifecycle !== lifecycleGeneration || pairingExpired) return response;
-      set((state) => {
-        const current = state.agentTokens.find((token) => token.id === response.token.id);
-        return {
-          agentTokens: [
-            ...state.agentTokens.filter((token) => token.id !== response.token.id),
-            current ? mergeAgentToken(current, response.token) : response.token,
-          ],
-        };
-      });
-      await persistNow();
-      return response;
-    },
-    revokeToken: async (id) => {
-      requireOnline();
-      const lifecycle = lifecycleGeneration;
-      const generation = sseGeneration;
-      await authenticated(() => journalApi.revokeToken(id));
-      if (lifecycle !== lifecycleGeneration || generation !== sseGeneration) return;
-      const revokedAt = new Date().toISOString();
-      set((state) => ({
-        agentTokens: state.agentTokens.map((token) =>
-          token.id === id ? { ...token, revokedAt } : token,
-        ),
-      }));
-      await persistNow();
-    },
     activateUpdate: async () => {
       const lifecycle = lifecycleGeneration;
       await flushJournalPersistence();
@@ -3765,145 +2376,26 @@ export const journalActions = {
   },
 };
 
-/**
- * Projects the independent resource, transport, and outbox facts into the
- * owner-facing vocabulary used by the shell. Keeping this derivation pure
- * prevents a transport callback from accidentally erasing an outstanding
- * synchronization warning (or vice versa).
- */
-export const selectJournalStatus = (state: JournalState): JournalStatus => {
-  const connection: JournalStatus['connection'] =
-    !state.hydrated || state.resourceStatus === 'loading'
-      ? 'initializing'
-      : state.authenticationRequired
-        ? 'authenticationRequired'
-        : !state.networkOnline || state.connectionStatus === 'offline'
-          ? 'offline'
-          : state.connectionStatus === 'error'
-            ? 'serverUnavailable'
-            : state.connectionStatus === 'connecting' || !state.online
-              ? 'reconnecting'
-              : 'online';
-  const synchronization: JournalStatus['synchronization'] =
-    state.deadLetters.length > 0 || state.persistenceStatus === 'unavailable'
-      ? 'attention'
-      : state.syncing
-        ? 'syncing'
-        : state.outboxCount > 0
-          ? 'pending'
-          : 'idle';
+export { selectJournalStatus };
 
-  return {
-    resource: state.resourceStatus,
-    connection,
-    synchronization,
-    persistence: state.persistenceStatus,
-    pendingChanges: state.outboxCount,
-    failedChanges: state.deadLetters.length,
-  };
+export {
+  parseJournalSearch,
+  selectActiveCollections,
+  selectCollections,
+  selectEntries,
+  selectOpenTodayCount,
+  selectTimelineEntries,
 };
-
-export const selectEntries = (state: JournalState): Entry[] =>
-  Object.values(state.entriesById).filter((entry) => entry.deletedAt === null);
-export const selectTimelineEntries = (state: JournalState): Entry[] =>
-  state.timelineEntryIds.flatMap((id) => {
-    const entry = state.entriesById[id];
-    return entry && isTimelineEligible(entry, state.timelineAnchorDate) ? [entry] : [];
-  });
-export const selectCollections = (state: JournalState): Collection[] =>
-  Object.values(state.collectionsById);
-/** Collections a capture can file into: no archives, no server-owned monthly logs. */
-export const selectActiveCollections = (state: JournalState): Collection[] =>
-  Object.values(state.collectionsById)
-    .filter((collection) => !collection.archivedAt && !collection.id.startsWith('month:'))
-    .sort((left, right) => left.name.localeCompare(right.name));
-/**
- * What the Timeline badge counts: work still waiting in the daily log. Only tasks
- * and habits can be open, collections have their own screens, and anything
- * dated ahead of today is not yet due — so the count is exactly the set the
- * Timeline shows as actionable.
- */
-export const selectOpenTodayCount = (state: JournalState): number =>
-  Object.values(state.entriesById).filter(
-    (entry) =>
-      entry.deletedAt === null &&
-      entry.state === 'open' &&
-      (entry.type === 'task' || entry.type === 'habit') &&
-      entry.collection === null &&
-      entry.date <= state.today,
-  ).length;
-const activityAtOrBefore = (activity: ActivityView, cursor: ActivitySeenCursor): boolean =>
-  activity.at < cursor.at || (activity.at === cursor.at && activity.id <= cursor.id);
-
-/** Reverts are owner actions on Activity, so they never create an unread badge. */
-export const selectUnseenActivityIds = (state: JournalState): string[] => {
-  const individuallySeen = new Set(state.seenActivityIds);
-  return state.activityOrder.filter((id) => {
-    const activity = state.activityById[id];
-    if (!activity || activity.kind === 'revert' || individuallySeen.has(id)) return false;
-    if (
-      state.activitySeenThrough !== null &&
-      activityAtOrBefore(activity, state.activitySeenThrough)
-    ) {
-      return false;
-    }
-    // Records saved by the previous app only carry a timestamp. Retain that
-    // reading state until the owner uses the exact Activity cursor.
-    if (state.activitySeenThrough === null && state.lastReviewSeenAt !== null) {
-      return activity.at > state.lastReviewSeenAt;
-    }
-    return true;
-  });
+export {
+  deriveTagUsage,
+  mergeTagUsage,
+  selectActivity,
+  selectHasUnseenActivity,
+  selectLatestAgentTouches,
+  selectUnseenActivityCount,
+  selectUnseenActivityIds,
+  selectUnseenReviewCount,
 };
-
-export const selectUnseenActivityCount = (state: JournalState): number =>
-  selectUnseenActivityIds(state).length;
-
-/**
- * Nonnumeric shell signal. If pagination has not yet reached the all-seen
- * cursor, older events remain conservatively unseen instead of disappearing
- * behind the bounded local mirror.
- */
-export const selectHasUnseenActivity = (state: JournalState): boolean => {
-  if (selectUnseenActivityIds(state).length > 0) return true;
-  if (!state.activityHasMore) return false;
-  const oldest = [...state.activityOrder]
-    .reverse()
-    .map((id) => state.activityById[id])
-    .find((activity): activity is ActivityView => activity !== undefined);
-  if (oldest === undefined) return true;
-  if (state.activitySeenThrough !== null) {
-    return !activityAtOrBefore(oldest, state.activitySeenThrough);
-  }
-  if (state.lastReviewSeenAt !== null) return oldest.at > state.lastReviewSeenAt;
-  return true;
-};
-
-/** @deprecated Use selectUnseenActivityCount. */
-export const selectUnseenReviewCount = selectUnseenActivityCount;
-
-/**
- * Timeline's intentionally small co-authorship contract: at most one latest
- * meaningful agent touch per entry, with no raw snapshots or revert surface.
- */
-export const selectLatestAgentTouches = (state: JournalState): Record<string, AgentTouch> => {
-  const touches: Record<string, AgentTouch> = {};
-  const tokenLabels = Object.fromEntries(state.agentTokens.map((token) => [token.id, token.label]));
-  for (const id of state.activityOrder) {
-    const activity = state.activityById[id];
-    const touch =
-      activity === undefined ? null : activityPresentation(activity, tokenLabels).latestAgentTouch;
-    if (touch !== null && touch !== undefined && touches[touch.entryId] === undefined) {
-      touches[touch.entryId] = touch;
-    }
-  }
-  return touches;
-};
-export const selectActivity = (state: JournalState): ActivityView[] =>
-  state.activityOrder.flatMap((id) => {
-    const activity = state.activityById[id];
-    return activity ? [activity] : [];
-  });
 export const selectEntriesForDate =
   (date: string) =>
   (state: JournalState): Entry[] =>
