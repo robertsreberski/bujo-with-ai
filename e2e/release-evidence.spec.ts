@@ -444,7 +444,7 @@ test('the migration ritual completes move, done, monthly, and drop outcomes in o
   await expect(dialog).toContainText('1 of 4');
   await expect(dialog.getByRole('heading', { name: labels.move, exact: true })).toBeVisible();
   await waitForFiniteAnimations(dialog);
-  await expectTouchTargets(page, 'Migration ritual');
+  await expectTouchTargets(dialog, 'Migration ritual');
   await captureEvidenceScreenshot(page, testInfo, 'migration-ritual-375.png');
 
   await dialog.getByRole('button', { name: 'Move to today' }).click();
