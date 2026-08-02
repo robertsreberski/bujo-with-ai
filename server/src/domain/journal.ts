@@ -17,6 +17,8 @@ import {
   JournalExportSchema,
   JournalExportV2Schema,
   MigrationOperationSchema,
+  ReflectionSchema,
+  ReflectionVersionSchema,
   SearchInputSchema,
   SettingsSchema,
   SummarySchema,
@@ -54,6 +56,8 @@ import type {
   MutationContext,
   PairedDevice,
   RateLimitResult,
+  Reflection,
+  ReflectionVersion,
   RecentlyDeletedEntry,
   SearchEntriesInput,
   SearchEntriesResult,
@@ -125,6 +129,59 @@ function mapSummary(row: SummaryRow): Summary {
     updatedAt: row.updated_at,
     savedEntryId: row.saved_entry_id,
     revision: row.revision,
+  });
+}
+
+function mapReflectionVersion(row: ReflectionVersionRow): ReflectionVersion {
+  return ReflectionVersionSchema.parse({
+    id: row.id,
+    number: row.version_number,
+    text: row.text,
+    sourceFrom: row.source_from,
+    sourceTo: row.source_to,
+    generator: {
+      tokenId: row.generator_token_id,
+      label: row.generator_label,
+      ...(row.generator_tool === null ? {} : { tool: row.generator_tool }),
+      source: row.source,
+    },
+    generatedAt: row.generated_at,
+    sourceEntries: JSON.parse(row.source_entries) as unknown,
+  });
+}
+
+function mapReflection(
+  row: ReflectionSlotRow,
+  versionRows: readonly ReflectionVersionRow[],
+): Reflection {
+  const versions = versionRows.map(mapReflectionVersion);
+  const currentVersion =
+    row.current_version_id === null
+      ? null
+      : (versions.find((version) => version.id === row.current_version_id) ?? null);
+  return ReflectionSchema.parse({
+    id: row.id,
+    weekStart: row.week_start,
+    weekEnd: row.week_end,
+    status: row.status,
+    revision: row.revision,
+    requestId: row.request_id,
+    requestedAt: row.requested_at,
+    claimedAt: row.claimed_at,
+    claimedBy:
+      row.claimed_at === null || row.claimed_token_id === null || row.claimed_label === null
+        ? null
+        : {
+            tokenId: row.claimed_token_id,
+            label: row.claimed_label,
+            ...(row.claimed_tool === null ? {} : { tool: row.claimed_tool }),
+          },
+    failure: row.failure,
+    currentVersionId: row.current_version_id,
+    currentVersion,
+    versions,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   });
 }
 
@@ -536,6 +593,10 @@ function summaryChange(summary: Summary | null, id?: string): EntityChange {
   return { kind: 'summary.changed', payload: { id } };
 }
 
+function reflectionChange(reflection: Reflection): EntityChange {
+  return { kind: 'reflection.changed', payload: reflection };
+}
+
 function activityChange(activity: ActivityItem): EntityChange {
   return { kind: 'activity.appended', payload: activity };
 }
@@ -635,6 +696,12 @@ function mondayOf(dateString: string): string {
   return date.toISOString().slice(0, 10);
 }
 
+function addCalendarDays(dateString: string, days: number): string {
+  const date = new Date(`${validateDate(dateString)}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function isMonday(dateString: string): boolean {
   return new Date(`${validateDate(dateString)}T00:00:00Z`).getUTCDay() === 1;
 }
@@ -710,6 +777,39 @@ interface SummaryRow {
   readonly updated_at: string;
   readonly saved_entry_id: string | null;
   readonly revision: number;
+}
+
+interface ReflectionSlotRow {
+  readonly id: string;
+  readonly week_start: string;
+  readonly week_end: string;
+  readonly status: Reflection['status'];
+  readonly request_id: string | null;
+  readonly requested_at: string | null;
+  readonly claimed_at: string | null;
+  readonly claimed_token_id: string | null;
+  readonly claimed_label: string | null;
+  readonly claimed_tool: string | null;
+  readonly failure: string | null;
+  readonly current_version_id: string | null;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly revision: number;
+}
+
+interface ReflectionVersionRow {
+  readonly id: string;
+  readonly reflection_id: string;
+  readonly version_number: number;
+  readonly text: string;
+  readonly source_from: string;
+  readonly source_to: string;
+  readonly generator_token_id: string;
+  readonly generator_label: string;
+  readonly generator_tool: string | null;
+  readonly source: string;
+  readonly generated_at: string;
+  readonly source_entries: string;
 }
 
 interface ActivityRow {
@@ -1251,12 +1351,325 @@ export class JournalDomain {
     return row === undefined ? null : mapSummary(row);
   }
 
+  public listReflections(from: string, to: string): readonly Reflection[] {
+    validateDate(from);
+    validateDate(to);
+    if (from > to) invalid('Reflection range end cannot precede its start');
+    this.materializeReflectionSlots(from, to);
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM reflection_slots
+         WHERE week_start <= ? AND week_end >= ? AND week_end < ?
+         ORDER BY week_start DESC`,
+      )
+      .all(to, from, this.today()) as ReflectionSlotRow[];
+    return rows.map((row) => this.mapReflectionRow(row));
+  }
+
+  public getReflection(id: string): Reflection | null {
+    validateId(id);
+    const row = this.db.prepare('SELECT * FROM reflection_slots WHERE id = ?').get(id) as
+      | ReflectionSlotRow
+      | undefined;
+    return row === undefined ? null : this.mapReflectionRow(row);
+  }
+
+  public listPendingReflections(): readonly Reflection[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM reflection_slots
+         WHERE status IN ('queued', 'running')
+         ORDER BY requested_at ASC, week_start ASC`,
+      )
+      .all() as ReflectionSlotRow[];
+    return rows.map((row) => this.mapReflectionRow(row));
+  }
+
+  public requestReflection(
+    id: string,
+    actor: ActorContext,
+    options: { readonly expectedRevision: number },
+  ): { readonly reflection: Reflection; readonly activityId: string } {
+    return this.queueReflection('request-reflection', id, actor, options, [
+      'notRequested',
+      'current',
+      'stale',
+    ]);
+  }
+
+  public retryReflection(
+    id: string,
+    actor: ActorContext,
+    options: { readonly expectedRevision: number },
+  ): { readonly reflection: Reflection; readonly activityId: string } {
+    return this.queueReflection('retry-reflection', id, actor, options, ['failed']);
+  }
+
+  public claimReflection(
+    weekStart: string,
+    requestId: string,
+    actor: ActorContext,
+    mutation?: MutationContext,
+  ): { readonly kind: 'reflection'; readonly reflection: Reflection; readonly activityId: string } {
+    if (actor.kind !== 'agent') invalid('Only an authenticated assistant can claim a Reflection');
+    validateDate(weekStart);
+    validateId(requestId);
+    return this.write('claim-reflection', { weekStart, requestId }, actor, mutation, (context) => {
+      const before = this.requireReflectionForWeek(weekStart);
+      if (before.status !== 'queued' || before.requestId !== requestId) {
+        throw new DomainError('CONFLICT', 'Reflection request is no longer queued');
+      }
+      this.db
+        .prepare(
+          `UPDATE reflection_slots SET
+              status='running', claimed_at=?, claimed_token_id=?, claimed_label=?, claimed_tool=?,
+              failure=NULL, updated_at=?, revision=revision+1
+             WHERE id=?`,
+        )
+        .run(
+          context.now,
+          actor.tokenId,
+          actor.tokenLabel,
+          actor.tool ?? null,
+          context.now,
+          before.id,
+        );
+      const reflection = this.requireReflection(before.id);
+      context.changes.push(reflectionChange(reflection));
+      const activity = this.insertActivity(
+        {
+          kind: 'summary-filed',
+          text: `Claimed weekly Reflection for ${weekStart}`,
+          refs: { ...actorRefs(actor, []), summaryId: reflection.id },
+          preImages: [],
+          postImages: [],
+        },
+        actor,
+        context,
+      );
+      return { kind: 'reflection', reflection, activityId: activity.id };
+    });
+  }
+
+  public completeReflection(
+    input: {
+      readonly weekStart: string;
+      readonly requestId: string;
+      readonly text: string;
+      readonly source: string;
+    },
+    actor: ActorContext,
+    mutation?: MutationContext,
+  ): { readonly kind: 'reflection'; readonly reflection: Reflection; readonly activityId: string } {
+    if (actor.kind !== 'agent')
+      invalid('Only an authenticated assistant can complete a Reflection');
+    validateDate(input.weekStart);
+    validateId(input.requestId);
+    const text = normalizeText(input.text, 500, 'reflection text');
+    const source = normalizeSource(input.source);
+    return this.write('complete-reflection', input, actor, mutation, (context) => {
+      const before = this.requireReflectionForWeek(input.weekStart);
+      if (
+        before.status !== 'running' ||
+        before.requestId !== input.requestId ||
+        before.claimedBy?.tokenId !== actor.tokenId
+      ) {
+        throw new DomainError('CONFLICT', 'Reflection request is not claimed by this assistant');
+      }
+      const sourceEntries = this.reflectionSourceEntries(before.weekStart, before.weekEnd);
+      const versionId = this.idFactory();
+      const versionNumber = (before.versions[0]?.number ?? 0) + 1;
+      this.db
+        .prepare(
+          `INSERT INTO reflection_versions(
+            id,reflection_id,version_number,text,source_from,source_to,generator_token_id,
+            generator_label,generator_tool,source,generated_at,source_entries
+           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          versionId,
+          before.id,
+          versionNumber,
+          text,
+          before.weekStart,
+          before.weekEnd,
+          actor.tokenId,
+          actor.tokenLabel,
+          actor.tool ?? null,
+          source,
+          context.now,
+          JSON.stringify(sourceEntries),
+        );
+      this.db
+        .prepare(
+          `UPDATE reflection_slots SET
+            status='current', request_id=NULL, requested_at=NULL, claimed_at=NULL,
+            claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
+            current_version_id=?, updated_at=?, revision=revision+1
+           WHERE id=?`,
+        )
+        .run(versionId, context.now, before.id);
+      const reflection = this.requireReflection(before.id);
+      context.changes.push(reflectionChange(reflection));
+      const activity = this.insertActivity(
+        {
+          kind: 'summary-filed',
+          text: `Completed weekly Reflection for ${before.weekStart}`,
+          refs: {
+            ...actorRefs(
+              actor,
+              sourceEntries.map((entry) => entry.id),
+            ),
+            summaryId: before.id,
+          },
+          preImages: [],
+          postImages: [],
+        },
+        actor,
+        context,
+      );
+      return { kind: 'reflection', reflection, activityId: activity.id };
+    });
+  }
+
+  public failReflection(
+    input: { readonly weekStart: string; readonly requestId: string; readonly reason: string },
+    actor: ActorContext,
+    mutation?: MutationContext,
+  ): { readonly kind: 'reflection'; readonly reflection: Reflection; readonly activityId: string } {
+    if (actor.kind !== 'agent') invalid('Only an authenticated assistant can fail a Reflection');
+    validateDate(input.weekStart);
+    validateId(input.requestId);
+    const reason = normalizeText(input.reason, 500, 'reflection failure');
+    return this.write('fail-reflection', input, actor, mutation, (context) => {
+      const before = this.requireReflectionForWeek(input.weekStart);
+      if (
+        before.status !== 'running' ||
+        before.requestId !== input.requestId ||
+        before.claimedBy?.tokenId !== actor.tokenId
+      ) {
+        throw new DomainError('CONFLICT', 'Reflection request is not claimed by this assistant');
+      }
+      this.db
+        .prepare(
+          `UPDATE reflection_slots SET
+            status='failed', claimed_at=NULL, claimed_token_id=NULL, claimed_label=NULL,
+            claimed_tool=NULL, failure=?, updated_at=?, revision=revision+1
+           WHERE id=?`,
+        )
+        .run(reason, context.now, before.id);
+      const reflection = this.requireReflection(before.id);
+      context.changes.push(reflectionChange(reflection));
+      const activity = this.insertActivity(
+        {
+          kind: 'summary-filed',
+          text: `Weekly Reflection failed for ${before.weekStart}: ${truncateForActivity(reason)}`,
+          refs: { ...actorRefs(actor, []), summaryId: before.id },
+          preImages: [],
+          postImages: [],
+        },
+        actor,
+        context,
+      );
+      return { kind: 'reflection', reflection, activityId: activity.id };
+    });
+  }
+
+  public restoreReflectionVersion(
+    id: string,
+    versionId: string,
+    actor: ActorContext,
+    options: { readonly expectedRevision: number },
+  ): { readonly reflection: Reflection; readonly activityId: string } {
+    validateId(id);
+    validateId(versionId);
+    return this.write(
+      'restore-reflection-version',
+      { id, versionId, expectedRevision: options.expectedRevision },
+      actor,
+      undefined,
+      (context) => {
+        const before = this.requireReflection(id);
+        this.assertExpectedReflectionRevision(before, options.expectedRevision);
+        const version = before.versions.find((candidate) => candidate.id === versionId);
+        if (!version) throw new DomainError('NOT_FOUND', 'Reflection version was not found');
+        const current = this.reflectionVersionIsCurrent(version);
+        this.db
+          .prepare(
+            `UPDATE reflection_slots SET
+              status=?, request_id=NULL, requested_at=NULL, claimed_at=NULL,
+              claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
+              current_version_id=?, updated_at=?, revision=revision+1
+             WHERE id=?`,
+          )
+          .run(current ? 'current' : 'stale', version.id, context.now, before.id);
+        const reflection = this.requireReflection(id);
+        context.changes.push(reflectionChange(reflection));
+        const activity = this.insertActivity(
+          {
+            kind: 'summary-filed',
+            text: `Restored Reflection version ${version.number} for ${before.weekStart}`,
+            refs: {
+              ...actorRefs(
+                actor,
+                version.sourceEntries.map((entry) => entry.id),
+              ),
+              summaryId: before.id,
+            },
+            preImages: [],
+            postImages: [],
+          },
+          actor,
+          context,
+        );
+        return { reflection, activityId: activity.id };
+      },
+    );
+  }
+
   public createEntry(
     input: CreateEntryInput,
     actor: ActorContext,
     mutation?: MutationContext,
   ): EntryWriteResult {
     const normalized = normalizeCreateEntry(input, actor, this.today(), this.idFactory);
+    if (
+      actor.kind === 'agent' &&
+      input.reflectionAction !== undefined &&
+      input.reflectionRequestId !== undefined &&
+      input.summaryWeekStart !== undefined
+    ) {
+      switch (input.reflectionAction) {
+        case 'claim':
+          return this.claimReflection(
+            input.summaryWeekStart,
+            input.reflectionRequestId,
+            actor,
+            mutation,
+          );
+        case 'complete':
+          return this.completeReflection(
+            {
+              weekStart: input.summaryWeekStart,
+              requestId: input.reflectionRequestId,
+              text: normalized.text,
+              source: normalized.source ?? '',
+            },
+            actor,
+            mutation,
+          );
+        case 'fail':
+          return this.failReflection(
+            {
+              weekStart: input.summaryWeekStart,
+              requestId: input.reflectionRequestId,
+              reason: normalized.text,
+            },
+            actor,
+            mutation,
+          );
+      }
+    }
     if (
       actor.kind === 'agent' &&
       normalized.type === 'note' &&
@@ -1735,7 +2148,8 @@ export class JournalDomain {
               };
         if (before === null) this.insertSummary(summary);
         else this.updateSummaryRow(summary);
-        context.changes.push(upsertChange('summary', summary));
+        const reflection = this.upsertLegacyReflection(summary, actor, context);
+        context.changes.push(upsertChange('summary', summary), reflectionChange(reflection));
         const activity = this.insertActivity(
           {
             kind: 'summary-filed',
@@ -1843,6 +2257,21 @@ export class JournalDomain {
       };
       this.updateSummaryRow(summary);
       context.changes.push(upsertChange('summary', summary));
+      const reflectionRow = this.db
+        .prepare('SELECT * FROM reflection_slots WHERE week_start = ?')
+        .get(summary.weekStart) as ReflectionSlotRow | undefined;
+      if (reflectionRow !== undefined) {
+        this.db
+          .prepare(
+            `UPDATE reflection_slots SET
+              status='queued', request_id=?, requested_at=?, claimed_at=NULL,
+              claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
+              updated_at=?, revision=revision+1
+             WHERE id=?`,
+          )
+          .run(this.idFactory(), context.now, context.now, reflectionRow.id);
+        context.changes.push(reflectionChange(this.requireReflection(reflectionRow.id)));
+      }
       const activity = this.insertActivity(
         {
           kind: 'summary-filed',
@@ -2646,6 +3075,7 @@ export class JournalDomain {
         implicitSnapshots: [],
       };
       const result = command(context);
+      this.markReflectionsStaleForEntryChanges(context);
       if (mutation !== undefined) {
         this.db
           .prepare(
@@ -2794,6 +3224,242 @@ export class JournalDomain {
       )
       .run(collection.name, collection.note, now, collection.archivedAt, collection.id);
     return collection;
+  }
+
+  private materializeReflectionSlots(from: string, to: string): void {
+    const today = this.today();
+    const now = this.now().toISOString();
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO reflection_slots(
+        id,week_start,week_end,status,request_id,requested_at,claimed_at,claimed_token_id,
+        claimed_label,claimed_tool,failure,current_version_id,created_at,updated_at,revision
+       ) VALUES (?, ?, ?, 'notRequested', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 1)`,
+    );
+    const hasSourceEntries = this.db.prepare(
+      `SELECT 1 FROM entries
+       WHERE date >= ? AND date <= ? AND deleted_at IS NULL
+       LIMIT 1`,
+    );
+    const transaction = this.db.transaction(() => {
+      let weekStart = mondayOf(from);
+      while (weekStart <= to) {
+        const weekEnd = addCalendarDays(weekStart, 6);
+        if (
+          weekEnd <= to &&
+          weekEnd < today &&
+          hasSourceEntries.get(weekStart, weekEnd) !== undefined
+        ) {
+          insert.run(this.idFactory(), weekStart, weekEnd, now, now);
+        }
+        weekStart = addCalendarDays(weekStart, 7);
+      }
+    });
+    transaction();
+  }
+
+  private markReflectionsStaleForEntryChanges(context: WriteContext): void {
+    const dates = new Set(
+      context.changes.flatMap((change) => {
+        if (!change.kind.startsWith('entry.')) return [];
+        const parsed = EntrySchema.safeParse(change.payload);
+        return parsed.success ? [parsed.data.date] : [];
+      }),
+    );
+    if (dates.size === 0) return;
+    const rows = this.db
+      .prepare("SELECT * FROM reflection_slots WHERE status = 'current'")
+      .all() as ReflectionSlotRow[];
+    for (const row of rows) {
+      if (![...dates].some((date) => date >= row.week_start && date <= row.week_end)) continue;
+      this.db
+        .prepare(
+          `UPDATE reflection_slots
+           SET status='stale', updated_at=?, revision=revision+1
+           WHERE id=?`,
+        )
+        .run(context.now, row.id);
+      const reflection = this.requireReflection(row.id);
+      context.changes.push(reflectionChange(reflection));
+      const summary = this.getSummaryForWeek(row.week_start);
+      if (summary?.status === 'current') {
+        const stale: Summary = {
+          ...summary,
+          status: 'stale',
+          updatedAt: context.now,
+          revision: summary.revision + 1,
+        };
+        this.updateSummaryRow(stale);
+        context.changes.push(upsertChange('summary', stale));
+      }
+    }
+  }
+
+  private mapReflectionRow(row: ReflectionSlotRow): Reflection {
+    const versions = this.db
+      .prepare(
+        'SELECT * FROM reflection_versions WHERE reflection_id = ? ORDER BY version_number DESC',
+      )
+      .all(row.id) as ReflectionVersionRow[];
+    return mapReflection(row, versions);
+  }
+
+  private requireReflection(id: string): Reflection {
+    const reflection = this.getReflection(id);
+    if (reflection === null) throw new DomainError('NOT_FOUND', `Reflection ${id} was not found`);
+    return reflection;
+  }
+
+  private requireReflectionForWeek(weekStart: string): Reflection {
+    if (!isMonday(weekStart)) invalid('Reflection weekStart must be a Monday');
+    const row = this.db
+      .prepare('SELECT * FROM reflection_slots WHERE week_start = ?')
+      .get(weekStart) as ReflectionSlotRow | undefined;
+    if (!row) throw new DomainError('NOT_FOUND', `Reflection week ${weekStart} was not found`);
+    return this.mapReflectionRow(row);
+  }
+
+  private assertExpectedReflectionRevision(reflection: Reflection, expectedRevision: number): void {
+    if (reflection.revision !== expectedRevision) {
+      throw new DomainError('CONFLICT', `Reflection changed since revision ${expectedRevision}`, {
+        details: { expectedRevision, actualRevision: reflection.revision },
+      });
+    }
+  }
+
+  private queueReflection(
+    operation: string,
+    id: string,
+    actor: ActorContext,
+    options: { readonly expectedRevision: number },
+    allowedStatuses: readonly Reflection['status'][],
+  ): { readonly reflection: Reflection; readonly activityId: string } {
+    if (actor.kind !== 'owner') invalid('Only the owner can request a weekly Reflection');
+    validateId(id);
+    return this.write(
+      operation,
+      { id, expectedRevision: options.expectedRevision },
+      actor,
+      undefined,
+      (context) => {
+        const before = this.requireReflection(id);
+        this.assertExpectedReflectionRevision(before, options.expectedRevision);
+        if (!allowedStatuses.includes(before.status)) {
+          throw new DomainError('CONFLICT', `Reflection is already ${before.status}`);
+        }
+        const requestId = this.idFactory();
+        this.db
+          .prepare(
+            `UPDATE reflection_slots SET
+              status='queued', request_id=?, requested_at=?, claimed_at=NULL,
+              claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
+              updated_at=?, revision=revision+1
+             WHERE id=?`,
+          )
+          .run(requestId, context.now, context.now, before.id);
+        const reflection = this.requireReflection(before.id);
+        context.changes.push(reflectionChange(reflection));
+        const activity = this.insertActivity(
+          {
+            kind: 'summary-filed',
+            text: `${operation === 'retry-reflection' ? 'Retried' : 'Requested'} weekly Reflection for ${before.weekStart}`,
+            refs: { ...actorRefs(actor, []), summaryId: before.id },
+            preImages: [],
+            postImages: [],
+          },
+          actor,
+          context,
+        );
+        return { reflection, activityId: activity.id };
+      },
+    );
+  }
+
+  private reflectionSourceEntries(
+    sourceFrom: string,
+    sourceTo: string,
+  ): ReflectionVersion['sourceEntries'] {
+    return this.db
+      .prepare(
+        `SELECT id, revision FROM entries
+         WHERE date >= ? AND date <= ? AND deleted_at IS NULL
+         ORDER BY id`,
+      )
+      .all(sourceFrom, sourceTo) as ReflectionVersion['sourceEntries'];
+  }
+
+  private reflectionVersionIsCurrent(version: ReflectionVersion): boolean {
+    return (
+      stableJson(version.sourceEntries) ===
+      stableJson(this.reflectionSourceEntries(version.sourceFrom, version.sourceTo))
+    );
+  }
+
+  private getSummaryForWeek(weekStart: string): Summary | null {
+    const row = this.db.prepare('SELECT * FROM summaries WHERE week_start = ?').get(weekStart) as
+      | SummaryRow
+      | undefined;
+    return row === undefined ? null : mapSummary(row);
+  }
+
+  private upsertLegacyReflection(
+    summary: Summary,
+    actor: Extract<ActorContext, { readonly kind: 'agent' }>,
+    context: WriteContext,
+  ): Reflection {
+    const existingRow = this.db
+      .prepare('SELECT * FROM reflection_slots WHERE week_start = ?')
+      .get(summary.weekStart) as ReflectionSlotRow | undefined;
+    const weekEnd = addCalendarDays(summary.weekStart, 6);
+    const reflectionId = existingRow?.id ?? summary.id;
+    if (existingRow === undefined) {
+      this.db
+        .prepare(
+          `INSERT INTO reflection_slots(
+            id,week_start,week_end,status,request_id,requested_at,claimed_at,claimed_token_id,
+            claimed_label,claimed_tool,failure,current_version_id,created_at,updated_at,revision
+           ) VALUES (?, ?, ?, 'notRequested', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 1)`,
+        )
+        .run(reflectionId, summary.weekStart, weekEnd, context.now, context.now);
+    }
+    const versionNumber =
+      (this.db
+        .prepare(
+          'SELECT coalesce(max(version_number), 0) FROM reflection_versions WHERE reflection_id = ?',
+        )
+        .pluck()
+        .get(reflectionId) as number) + 1;
+    const versionId = this.idFactory();
+    this.db
+      .prepare(
+        `INSERT INTO reflection_versions(
+          id,reflection_id,version_number,text,source_from,source_to,generator_token_id,
+          generator_label,generator_tool,source,generated_at,source_entries
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        versionId,
+        reflectionId,
+        versionNumber,
+        summary.text,
+        summary.weekStart,
+        weekEnd,
+        actor.tokenId,
+        actor.tokenLabel,
+        actor.tool ?? null,
+        summary.source,
+        context.now,
+        JSON.stringify(this.reflectionSourceEntries(summary.weekStart, weekEnd)),
+      );
+    this.db
+      .prepare(
+        `UPDATE reflection_slots SET
+          status='current', request_id=NULL, requested_at=NULL, claimed_at=NULL,
+          claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
+          current_version_id=?, updated_at=?, revision=revision+1
+         WHERE id=?`,
+      )
+      .run(versionId, context.now, reflectionId);
+    return this.requireReflection(reflectionId);
   }
 
   private insertSummary(summaryInput: Summary): void {

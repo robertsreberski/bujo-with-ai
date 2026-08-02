@@ -636,6 +636,208 @@ describe('JournalDomain index aggregates', () => {
   });
 });
 
+describe('JournalDomain weekly Reflections', () => {
+  it('persists an explicit request lifecycle, version provenance, staleness, failure, and restore', () => {
+    const { domain, owner, agent } = fixture();
+    const firstSource = domain.createEntry(
+      { id: ulid(), date: '2026-07-20', type: 'note', text: 'Started the week deliberately' },
+      owner,
+    );
+    const secondSource = domain.createEntry(
+      { id: ulid(), date: '2026-07-24', type: 'note', text: 'Closed the week calmly' },
+      owner,
+    );
+    if (firstSource.kind !== 'entry' || secondSource.kind !== 'entry') {
+      throw new Error('Expected owner entries');
+    }
+
+    const [slot] = domain.listReflections('2026-07-20', '2026-07-26');
+    expect(slot).toMatchObject({
+      weekStart: '2026-07-20',
+      weekEnd: '2026-07-26',
+      status: 'notRequested',
+      revision: 1,
+      versions: [],
+    });
+    if (!slot) throw new Error('Expected completed-week Reflection slot');
+
+    const queued = domain.requestReflection(slot.id, owner, {
+      expectedRevision: slot.revision,
+    }).reflection;
+    expect(queued).toMatchObject({ status: 'queued', revision: 2 });
+    expect(queued.requestId).toEqual(expect.any(String));
+    // With no assistant claim, a durable request remains honestly queued.
+    expect(domain.getReflection(slot.id)?.status).toBe('queued');
+    if (!queued.requestId) throw new Error('Expected durable request id');
+
+    const claimed = domain.createEntry(
+      {
+        text: 'Claim Reflection request',
+        type: 'note',
+        tags: ['summary'],
+        source: 'Weekly Reflection worker.',
+        summaryWeekStart: slot.weekStart,
+        reflectionAction: 'claim',
+        reflectionRequestId: queued.requestId,
+      },
+      agent,
+      { id: 'reflection-claim-1' },
+    );
+    expect(claimed.kind).toBe('reflection');
+    if (claimed.kind !== 'reflection') throw new Error('Expected Reflection claim');
+    expect(claimed.reflection).toMatchObject({
+      status: 'running',
+      claimedBy: { tokenId: agent.tokenId, label: 'test-agent', tool: 'add_entry' },
+    });
+
+    const completed = domain.createEntry(
+      {
+        text: 'A deliberate start made the calm close possible.',
+        type: 'note',
+        tags: ['summary'],
+        source: 'Synthesized only from the requested weekly range.',
+        summaryWeekStart: slot.weekStart,
+        reflectionAction: 'complete',
+        reflectionRequestId: queued.requestId,
+      },
+      agent,
+      { id: 'reflection-complete-1' },
+    );
+    expect(completed.kind).toBe('reflection');
+    if (completed.kind !== 'reflection') throw new Error('Expected completed Reflection');
+    expect(completed.reflection).toMatchObject({ status: 'current', revision: 4 });
+    expect(completed.reflection.currentVersion).toMatchObject({
+      number: 1,
+      sourceFrom: '2026-07-20',
+      sourceTo: '2026-07-26',
+      generator: {
+        tokenId: agent.tokenId,
+        label: 'test-agent',
+        tool: 'add_entry',
+        source: 'Synthesized only from the requested weekly range.',
+      },
+      sourceEntries: expect.arrayContaining([
+        { id: firstSource.entry.id, revision: 1 },
+        { id: secondSource.entry.id, revision: 1 },
+      ]),
+    });
+    expect(
+      domain.searchEntries({ query: 'deliberate start made the calm close', limit: 25 }).total,
+    ).toBe(0);
+
+    domain.updateEntry(
+      firstSource.entry.id,
+      { text: 'Started the week with a revised plan' },
+      owner,
+    );
+    const stale = domain.getReflection(slot.id);
+    expect(stale?.status).toBe('stale');
+    if (!stale) throw new Error('Expected stale Reflection');
+
+    const rewrite = domain.requestReflection(slot.id, owner, {
+      expectedRevision: stale.revision,
+    }).reflection;
+    expect(rewrite.status).toBe('queued');
+    expect(rewrite.versions).toHaveLength(1);
+    if (!rewrite.requestId) throw new Error('Expected rewrite request id');
+    domain.claimReflection(slot.weekStart, rewrite.requestId, agent);
+    const failed = domain.failReflection(
+      {
+        weekStart: slot.weekStart,
+        requestId: rewrite.requestId,
+        reason: 'Generator timed out before producing text.',
+      },
+      agent,
+    ).reflection;
+    expect(failed).toMatchObject({
+      status: 'failed',
+      failure: 'Generator timed out before producing text.',
+    });
+    const retried = domain.retryReflection(slot.id, owner, {
+      expectedRevision: failed.revision,
+    }).reflection;
+    expect(retried.status).toBe('queued');
+    if (!retried.requestId) throw new Error('Expected retry request id');
+    domain.claimReflection(slot.weekStart, retried.requestId, agent);
+    const rewritten = domain.completeReflection(
+      {
+        weekStart: slot.weekStart,
+        requestId: retried.requestId,
+        text: 'The revised plan still led to a calm close.',
+        source: 'Second bounded weekly synthesis.',
+      },
+      agent,
+    ).reflection;
+    expect(rewritten.status).toBe('current');
+    expect(rewritten.versions.map((version) => version.number)).toEqual([2, 1]);
+
+    const prior = rewritten.versions.find((version) => version.number === 1);
+    if (!prior) throw new Error('Expected prior version');
+    const restored = domain.restoreReflectionVersion(slot.id, prior.id, owner, {
+      expectedRevision: rewritten.revision,
+    }).reflection;
+    expect(restored.currentVersionId).toBe(prior.id);
+    expect(restored.status).toBe('stale');
+    expect(() =>
+      domain.restoreReflectionVersion(slot.id, rewritten.versions[0]!.id, owner, {
+        expectedRevision: rewritten.revision,
+      }),
+    ).toThrowError(/changed since revision/i);
+
+    domain.deleteEntry(secondSource.entry.id, owner);
+    const afterDelete = domain.getReflection(slot.id);
+    expect(afterDelete?.currentVersion?.sourceEntries).toContainEqual({
+      id: secondSource.entry.id,
+      revision: 1,
+    });
+    const ownerReflection = domain.createEntry(
+      {
+        id: ulid(),
+        date: slot.weekEnd,
+        type: 'note',
+        text: 'My own reflection remains an ordinary journal note.',
+      },
+      owner,
+    );
+    expect(ownerReflection.kind).toBe('entry');
+    if (ownerReflection.kind === 'entry') expect(ownerReflection.entry.author).toBe('me');
+  });
+
+  it('uses the configured journal timezone before completing a week boundary', () => {
+    const root = mkdtempSync(join(tmpdir(), 'journal-reflection-timezone-test-'));
+    roots.push(root);
+    let instant = new Date('2026-08-03T06:30:00.000Z');
+    const database = new JournalDatabase({ path: join(root, 'journal.db'), now: () => instant });
+    const domain = new JournalDomain({
+      database,
+      config: {
+        timezone: 'America/Los_Angeles',
+        dayBoundaryOffsetMin: 0,
+        deviceCredentialTtlDays: 365,
+      },
+      now: () => instant,
+    });
+    open.push(domain);
+    domain.createEntry(
+      {
+        id: ulid(),
+        date: '2026-07-28',
+        type: 'note',
+        text: 'A source entry near the journal time-zone boundary.',
+      },
+      { kind: 'owner', deviceId: ulid() },
+    );
+
+    expect(domain.today()).toBe('2026-08-02');
+    expect(domain.listReflections('2026-07-27', '2026-08-02')).toEqual([]);
+    instant = new Date('2026-08-03T07:30:00.000Z');
+    expect(domain.today()).toBe('2026-08-03');
+    expect(domain.listReflections('2026-07-27', '2026-08-02')).toMatchObject([
+      { weekStart: '2026-07-27', weekEnd: '2026-08-02', status: 'notRequested' },
+    ]);
+  });
+});
+
 describe('JournalDomain summaries and credentials', () => {
   it('files one summary per week, rewrites it, and saves it to today', () => {
     const { domain, agent, owner } = fixture();

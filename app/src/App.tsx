@@ -85,11 +85,32 @@ export default function App() {
     [store.entriesById],
   );
   const timelineEntries = selectTimelineEntries(store);
+  const timelineRange = useMemo(() => {
+    const dates = store.timelineEntryIds
+      .flatMap((id) => {
+        const entry = store.entriesById[id];
+        return entry && entry.deletedAt === null ? [entry.date] : [];
+      })
+      .sort();
+    return dates.length > 0 ? { from: dates[0]!, to: dates.at(-1)! } : null;
+  }, [store.entriesById, store.timelineEntryIds]);
   const collections = useMemo(() => Object.values(store.collectionsById), [store.collectionsById]);
   const activity = useMemo(
     () =>
       store.activityOrder.flatMap((id) => (store.activityById[id] ? [store.activityById[id]] : [])),
     [store.activityById, store.activityOrder],
+  );
+  const reflections = useMemo(
+    () =>
+      Object.values(store.reflectionsByWeek)
+        .filter(
+          (reflection) =>
+            timelineRange !== null &&
+            reflection.weekStart >= timelineRange.from &&
+            reflection.weekStart <= timelineRange.to,
+        )
+        .sort((left, right) => right.weekStart.localeCompare(left.weekStart)),
+    [store.reflectionsByWeek, timelineRange],
   );
   const detailEntry = detailId ? (store.entriesById[detailId] ?? null) : null;
   const preferences: DisplayPreferences = store.settings;
@@ -162,6 +183,30 @@ export default function App() {
     },
     [perform, say],
   );
+
+  const requestReflection = useCallback(
+    (id: string) => run(() => journalActions.requestReflection(id), 'Reflection requested'),
+    [run],
+  );
+
+  const retryReflection = useCallback(
+    (id: string) => run(() => journalActions.retryReflection(id), 'Reflection requested again'),
+    [run],
+  );
+
+  const restoreReflection = useCallback(
+    (id: string, versionId: string) =>
+      run(
+        () => journalActions.restoreReflectionVersion(id, versionId),
+        'Reflection version restored',
+      ),
+    [run],
+  );
+
+  const writeReflection = useCallback((weekEnd: string) => {
+    journalActions.setDefaultType('note');
+    journalActions.focusComposer({ kind: 'date', date: weekEnd });
+  }, []);
 
   useEffect(() => {
     void journalActions
@@ -424,7 +469,19 @@ export default function App() {
       return;
     }
     const request = (() => {
-      if (route.name === 'today') return null;
+      if (route.name === 'today') {
+        if (
+          !store.timelineLoaded ||
+          store.timelineAnchorDate !== route.date ||
+          timelineRange === null
+        ) {
+          return null;
+        }
+        return {
+          key: `timeline-reflections:${route.date ?? 'latest'}:${timelineRange.from}:${timelineRange.to}`,
+          load: () => journalActions.loadReflections(),
+        };
+      }
       if (route.name === 'month') {
         const month = route.month ?? store.today.slice(0, 7);
         return { key: `month:${month}`, load: () => journalActions.loadMonth(month) };
@@ -449,7 +506,20 @@ export default function App() {
       loadedRoutesRef.current.delete(request.key);
       say(messageFromError(error), 'error');
     });
-  }, [route, say, store.connectionStatus, store.cursor, store.hydrated, store.online, store.today]);
+  }, [
+    route,
+    say,
+    store.connectionStatus,
+    store.cursor,
+    store.entriesById,
+    store.hydrated,
+    store.online,
+    store.timelineAnchorDate,
+    store.timelineEntryIds,
+    store.timelineLoaded,
+    store.today,
+    timelineRange,
+  ]);
 
   const screen = (() => {
     switch (route.name) {
@@ -460,6 +530,8 @@ export default function App() {
               store.timelineLoaded && store.timelineAnchorDate === route.date ? timelineEntries : []
             }
             collectionsById={store.collectionsById}
+            entriesById={store.entriesById}
+            reflections={reflections}
             today={store.today}
             selectedDate={route.date}
             loading={
@@ -474,10 +546,16 @@ export default function App() {
             }
             loadingEarlier={store.timelineLoadingEarlier}
             preferences={preferences}
+            online={store.online}
+            timezone={store.timezone}
             onOpenEntry={(entry) => setDetailId(entry.id)}
             onToggleEntry={toggleEntry}
             onStartMigration={setMigrationEntries}
             onLoadEarlier={() => run(() => journalActions.loadEarlierTimeline())}
+            onRequestReflection={requestReflection}
+            onRetryReflection={retryReflection}
+            onRestoreReflection={restoreReflection}
+            onWriteReflection={writeReflection}
           />
         );
       case 'month':

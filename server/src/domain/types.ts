@@ -18,6 +18,8 @@ import type {
   JournalExportV2,
   MigrationKind,
   MigrationOperation,
+  Reflection,
+  ReflectionVersion,
   SearchInput,
   Settings,
   Summary,
@@ -42,6 +44,8 @@ export type {
   JournalExport,
   JournalExportV1,
   JournalExportV2,
+  Reflection,
+  ReflectionVersion,
   Settings,
   Summary,
   TagUsage,
@@ -119,6 +123,8 @@ export interface CreateEntryInput {
   readonly collection?: string | null;
   readonly source?: string;
   readonly summaryWeekStart?: string;
+  readonly reflectionAction?: 'claim' | 'complete' | 'fail';
+  readonly reflectionRequestId?: string;
   /** Compatibility alias accepted internally; summaryWeekStart is canonical. */
   readonly weekStart?: string;
 }
@@ -136,7 +142,8 @@ export interface ApplyAgentMigrationInput {
 
 export type EntryWriteResult =
   | { readonly kind: 'entry'; readonly entry: Entry; readonly activityId?: string }
-  | { readonly kind: 'summary'; readonly summary: Summary; readonly activityId: string };
+  | { readonly kind: 'summary'; readonly summary: Summary; readonly activityId: string }
+  | { readonly kind: 'reflection'; readonly reflection: Reflection; readonly activityId: string };
 
 export interface AgentMigrationResult {
   readonly entries: readonly Entry[];

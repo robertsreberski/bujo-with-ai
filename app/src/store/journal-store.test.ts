@@ -3,7 +3,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError, journalApi } from '../api/client';
-import type { ActivityView, ChangeBatch, Collection, Entry, Settings, Summary } from '../api/types';
+import type {
+  ActivityView,
+  ChangeBatch,
+  Collection,
+  Entry,
+  Reflection,
+  Settings,
+  Summary,
+} from '../api/types';
 import {
   applyChangeBatch,
   journalActions,
@@ -55,6 +63,27 @@ function summary(patch: Partial<Summary> = {}): Summary {
     createdAt: '2026-07-05T08:00:00.000Z',
     updatedAt: '2026-07-05T08:00:00.000Z',
     revision: 1,
+    ...patch,
+  };
+}
+
+function reflection(patch: Partial<Reflection> = {}): Reflection {
+  return {
+    id: canonicalId('41'),
+    weekStart: '2026-07-20',
+    weekEnd: '2026-07-26',
+    status: 'notRequested',
+    revision: 1,
+    requestId: null,
+    requestedAt: null,
+    claimedAt: null,
+    claimedBy: null,
+    failure: null,
+    currentVersionId: null,
+    currentVersion: null,
+    versions: [],
+    createdAt: '2026-07-27T08:00:00.000Z',
+    updatedAt: '2026-07-27T08:00:00.000Z',
     ...patch,
   };
 }
@@ -120,6 +149,32 @@ afterEach(() => {
 });
 
 describe('journal store reconciliation', () => {
+  it('keeps cached Reflections offline and sends revision-safe requests online', async () => {
+    const slot = reflection();
+    useJournalStore.setState({
+      reflectionsByWeek: { [slot.weekStart]: slot },
+      online: false,
+    });
+    const list = vi.spyOn(journalApi, 'listReflections');
+    await expect(journalActions.loadReflections()).resolves.toEqual([slot]);
+    expect(list).not.toHaveBeenCalled();
+
+    const queued = reflection({
+      status: 'queued',
+      revision: 2,
+      requestId: canonicalId('42'),
+      requestedAt: '2026-07-27T08:05:00.000Z',
+      updatedAt: '2026-07-27T08:05:00.000Z',
+    });
+    useJournalStore.setState({ online: true });
+    const request = vi.spyOn(journalApi, 'requestReflection').mockResolvedValue({
+      reflection: queued,
+    });
+    await expect(journalActions.requestReflection(slot.id)).resolves.toEqual(queued);
+    expect(request).toHaveBeenCalledWith(slot.id, 1);
+    expect(useJournalStore.getState().reflectionsByWeek[slot.weekStart]).toEqual(queued);
+  });
+
   it('undoes an offline delete exactly without sending a restore request', async () => {
     const original = entry(90, { text: 'Undo this offline delete' });
     const restore = vi.spyOn(journalApi, 'restoreEntry');

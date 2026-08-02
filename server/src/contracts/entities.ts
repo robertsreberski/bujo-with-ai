@@ -135,6 +135,123 @@ export const SummarySchema = z
     }
   });
 
+export const ReflectionStatusSchema = z.enum([
+  'notRequested',
+  'queued',
+  'running',
+  'current',
+  'stale',
+  'failed',
+]);
+
+export const ReflectionGeneratorSchema = z.strictObject({
+  tokenId: UlidSchema,
+  label: z.string().trim().min(1).max(80),
+  tool: z.string().trim().min(1).max(80).optional(),
+  source: SourceSchema,
+});
+
+export const ReflectionSourceEntrySchema = z.strictObject({
+  id: UlidSchema,
+  revision: z.number().int().positive(),
+});
+
+export const ReflectionVersionSchema = z.strictObject({
+  id: UlidSchema,
+  number: z.number().int().positive(),
+  text: SummaryTextSchema,
+  sourceFrom: CalendarDateSchema,
+  sourceTo: CalendarDateSchema,
+  generator: ReflectionGeneratorSchema,
+  generatedAt: IsoTimestampSchema,
+  sourceEntries: z.array(ReflectionSourceEntrySchema),
+});
+
+export const ReflectionSchema = z
+  .strictObject({
+    id: UlidSchema,
+    weekStart: WeekStartSchema,
+    weekEnd: CalendarDateSchema,
+    status: ReflectionStatusSchema,
+    revision: z.number().int().positive(),
+    requestId: UlidSchema.nullable(),
+    requestedAt: IsoTimestampSchema.nullable(),
+    claimedAt: IsoTimestampSchema.nullable(),
+    claimedBy: ReflectionGeneratorSchema.omit({ source: true }).nullable(),
+    failure: z.string().trim().min(1).max(500).nullable(),
+    currentVersionId: UlidSchema.nullable(),
+    currentVersion: ReflectionVersionSchema.nullable(),
+    versions: z.array(ReflectionVersionSchema),
+    createdAt: IsoTimestampSchema,
+    updatedAt: IsoTimestampSchema,
+  })
+  .superRefine((reflection, context) => {
+    if (reflection.weekEnd <= reflection.weekStart) {
+      context.addIssue({
+        code: 'custom',
+        path: ['weekEnd'],
+        message: 'weekEnd must follow weekStart.',
+      });
+    }
+    const requested = reflection.requestId !== null && reflection.requestedAt !== null;
+    if (['queued', 'running', 'failed'].includes(reflection.status) !== requested) {
+      context.addIssue({
+        code: 'custom',
+        path: ['requestId'],
+        message: 'Queued, running, and failed reflections require a durable request.',
+      });
+    }
+    if ((reflection.status === 'running') !== (reflection.claimedAt !== null)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['claimedAt'],
+        message: 'Only a running reflection may have an active claim.',
+      });
+    }
+    if ((reflection.status === 'running') !== (reflection.claimedBy !== null)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['claimedBy'],
+        message: 'Only a running reflection may identify its claimant.',
+      });
+    }
+    if ((reflection.status === 'failed') !== (reflection.failure !== null)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['failure'],
+        message: 'Only a failed reflection may include a failure reason.',
+      });
+    }
+    const hasCurrent = reflection.currentVersionId !== null && reflection.currentVersion !== null;
+    if (['current', 'stale'].includes(reflection.status) && !hasCurrent) {
+      context.addIssue({
+        code: 'custom',
+        path: ['currentVersion'],
+        message: 'Current and stale reflections require a selected version.',
+      });
+    }
+    if (
+      reflection.currentVersion !== null &&
+      reflection.currentVersion.id !== reflection.currentVersionId
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['currentVersionId'],
+        message: 'currentVersionId must identify currentVersion.',
+      });
+    }
+    if (
+      reflection.currentVersionId !== null &&
+      !reflection.versions.some((version) => version.id === reflection.currentVersionId)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['versions'],
+        message: 'The selected reflection version must be retained in version history.',
+      });
+    }
+  });
+
 const EntryActivitySnapshotSchema = z.strictObject({
   entity: z.literal('entry'),
   id: UlidSchema,
@@ -368,6 +485,11 @@ export type Entry = z.infer<typeof EntrySchema>;
 export type Collection = z.infer<typeof CollectionSchema>;
 export type SummaryStatus = z.infer<typeof SummaryStatusSchema>;
 export type Summary = z.infer<typeof SummarySchema>;
+export type ReflectionStatus = z.infer<typeof ReflectionStatusSchema>;
+export type ReflectionGenerator = z.infer<typeof ReflectionGeneratorSchema>;
+export type ReflectionSourceEntry = z.infer<typeof ReflectionSourceEntrySchema>;
+export type ReflectionVersion = z.infer<typeof ReflectionVersionSchema>;
+export type Reflection = z.infer<typeof ReflectionSchema>;
 export type ActivitySnapshot = z.infer<typeof ActivitySnapshotSchema>;
 export type ActivityKind = z.infer<typeof ActivityKindSchema>;
 export type ActivityOrigin = z.infer<typeof ActivityOriginSchema>;

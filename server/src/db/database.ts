@@ -226,6 +226,10 @@ export class JournalDatabase {
       { version: 2, type: 'trigger', name: 'entries_fts_delete' },
       { version: 2, type: 'trigger', name: 'entries_fts_update' },
       { version: 3, type: 'index', name: 'idx_entries_page' },
+      { version: 5, type: 'table', name: 'reflection_slots' },
+      { version: 5, type: 'table', name: 'reflection_versions' },
+      { version: 5, type: 'index', name: 'idx_reflection_slots_week' },
+      { version: 5, type: 'index', name: 'idx_reflection_versions_slot' },
     ] as const;
     const lookup = this.raw.prepare('SELECT type FROM sqlite_master WHERE name = ?');
     for (const object of required) {
