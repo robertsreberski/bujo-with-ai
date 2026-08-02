@@ -147,6 +147,19 @@ test('manifest, install metadata, icons, and custom service worker ship from one
   await expect
     .poll(() => page.evaluate(() => navigator.serviceWorker.controller?.scriptURL ?? null))
     .toMatch(/\/sw\.js$/);
+
+  const cachedApiRequests = await page.evaluate(async () => {
+    const response = await fetch('/api/entries?limit=1');
+    if (!response.ok) throw new Error(`API probe failed with ${response.status}.`);
+    const cached = await Promise.all(
+      (await caches.keys()).map(async (cacheName) => {
+        const requests = await (await caches.open(cacheName)).keys();
+        return requests.map((request) => new URL(request.url).pathname);
+      }),
+    );
+    return cached.flat().filter((path) => path.startsWith('/api/'));
+  });
+  expect(cachedApiRequests).toEqual([]);
 });
 
 test('every iOS launch image is media-gated, served, and sized for the device it claims', async ({

@@ -6,9 +6,10 @@ export interface PwaRegistrationState {
 type Listener = (state: PwaRegistrationState) => void;
 
 let registration: ServiceWorkerRegistration | null = null;
+let registrationAttempt: Promise<void> | null = null;
 let waitingWorker: ServiceWorker | null = null;
 let activationRequested = false;
-let started = false;
+let observingControllerChanges = false;
 let state: PwaRegistrationState = { updateReady: false, offlineReady: false };
 const listeners = new Set<Listener>();
 
@@ -29,34 +30,59 @@ function observeInstallingWorker(worker: ServiceWorker): void {
   });
 }
 
-/** Registers the module worker once and leaves an update waiting for explicit activation. */
-export async function registerJournalServiceWorker(): Promise<void> {
-  if (started || !import.meta.env.PROD || !('serviceWorker' in navigator)) return;
-  started = true;
-
+function observeControllerChanges(): void {
+  if (observingControllerChanges) return;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!activationRequested) return;
     activationRequested = false;
     window.location.reload();
   });
+  observingControllerChanges = true;
+}
 
-  registration = await navigator.serviceWorker.register('/sw.js', {
+async function performRegistration(): Promise<void> {
+  observeControllerChanges();
+  const nextRegistration = await navigator.serviceWorker.register('/sw.js', {
     scope: '/',
     type: 'module',
   });
+  registration = nextRegistration;
 
-  if (registration.waiting && navigator.serviceWorker.controller) {
-    waitingWorker = registration.waiting;
+  if (nextRegistration.waiting && navigator.serviceWorker.controller) {
+    waitingWorker = nextRegistration.waiting;
     emit({ updateReady: true });
   }
 
-  if (registration.installing) observeInstallingWorker(registration.installing);
-  registration.addEventListener('updatefound', () => {
+  if (nextRegistration.installing) observeInstallingWorker(nextRegistration.installing);
+  nextRegistration.addEventListener('updatefound', () => {
     if (registration?.installing) observeInstallingWorker(registration.installing);
   });
 
   await navigator.serviceWorker.ready;
   emit({ offlineReady: true });
+}
+
+/**
+ * Registers the module worker once and leaves an update waiting for explicit
+ * activation. Concurrent owners share one attempt; a rejected attempt remains
+ * observable to its caller and can be retried later.
+ */
+export async function registerJournalServiceWorker(): Promise<void> {
+  if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
+  if (registrationAttempt) return registrationAttempt;
+  if (registration) return;
+
+  registrationAttempt = performRegistration().catch((error: unknown) => {
+    registration = null;
+    waitingWorker = null;
+    emit({ offlineReady: false });
+    throw error;
+  });
+  try {
+    await registrationAttempt;
+  } finally {
+    registrationAttempt = null;
+  }
 }
 
 export function subscribePwaRegistration(listener: Listener): () => void {
@@ -66,6 +92,7 @@ export function subscribePwaRegistration(listener: Listener): () => void {
 }
 
 export async function checkForJournalUpdate(): Promise<void> {
+  if (!registration) await registerJournalServiceWorker();
   await registration?.update();
 }
 

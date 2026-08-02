@@ -15,10 +15,17 @@ const MCP_CONTRACT_MODULE_SUFFIX = '/server/src/contracts/mcp.ts';
 const PUBLIC_DIRECTORY = fileURLToPath(new URL('./public', import.meta.url));
 const INDEX_HTML = fileURLToPath(new URL('./index.html', import.meta.url));
 export const APP_ENTRY_RAW_BUDGET_BYTES = 500_000;
+export const DEFAULT_TIMELINE_RAW_BUDGET_BYTES = 550_000;
+export const PRECACHE_RAW_BUDGET_BYTES = 1_000_000;
 
 type PrecacheOutput =
   | { fileName: string; type: 'asset'; source: string | Uint8Array }
   | { fileName: string; type: 'chunk'; code: string };
+
+interface AdditionalPrecacheAsset {
+  url: string;
+  source: string | Uint8Array;
+}
 
 type GraphOutput =
   | { fileName: string; type: 'asset' }
@@ -33,6 +40,10 @@ type GraphOutput =
 
 function sourceText(source: string | Uint8Array): string {
   return typeof source === 'string' ? source : new TextDecoder().decode(source);
+}
+
+function sourceBytes(source: string | Uint8Array): number {
+  return typeof source === 'string' ? new TextEncoder().encode(source).length : source.byteLength;
 }
 
 function publicFiles(directory = PUBLIC_DIRECTORY): string[] {
@@ -72,6 +83,29 @@ export function emittedPrecacheEntries(
     });
 }
 
+/** Complete raw payload fetched while installing the offline application. */
+export function precacheInstallGraph(
+  outputs: readonly PrecacheOutput[],
+  additionalAssets: readonly AdditionalPrecacheAsset[] = [],
+): { bytes: number; files: string[] } {
+  const assets = new Map<string, number>();
+  for (const output of outputs) {
+    if (output.fileName === 'sw.js' || output.fileName.endsWith('.map')) continue;
+    assets.set(
+      `/${output.fileName}`,
+      output.type === 'asset' ? sourceBytes(output.source) : sourceBytes(output.code),
+    );
+  }
+  for (const asset of additionalAssets) {
+    assets.set(asset.url, sourceBytes(asset.source));
+  }
+  const files = [...assets.keys()].sort();
+  return {
+    files,
+    bytes: files.reduce((total, file) => total + (assets.get(file) ?? 0), 0),
+  };
+}
+
 /** Raw JS bytes fetched before the first dynamic-import boundary. */
 export function appEntryStaticGraph(outputs: readonly GraphOutput[]): {
   bytes: number;
@@ -83,6 +117,13 @@ export function appEntryStaticGraph(outputs: readonly GraphOutput[]): {
   if (!entry || entry.type !== 'chunk')
     throw new Error('The Journal app entry chunk was not emitted.');
 
+  return staticChunkGraph(outputs, [entry.fileName]);
+}
+
+function staticChunkGraph(
+  outputs: readonly GraphOutput[],
+  roots: readonly string[],
+): { bytes: number; files: string[] } {
   const chunks = new Map(
     outputs.flatMap((output) =>
       output.type === 'chunk' ? [[output.fileName, output] as const] : [],
@@ -96,7 +137,7 @@ export function appEntryStaticGraph(outputs: readonly GraphOutput[]): {
     visited.add(fileName);
     for (const imported of chunk.imports) visit(imported);
   };
-  visit(entry.fileName);
+  for (const root of roots) visit(root);
 
   const files = [...visited].sort();
   return {
@@ -109,40 +150,82 @@ export function appEntryStaticGraph(outputs: readonly GraphOutput[]): {
   };
 }
 
+/** Raw JS required to render the default Timeline after its lazy route resolves. */
+export function defaultTimelineRouteGraph(outputs: readonly GraphOutput[]): {
+  bytes: number;
+  files: string[];
+} {
+  const app = outputs.find(
+    (output) => output.type === 'chunk' && output.isEntry && output.name === 'app',
+  );
+  if (!app || app.type !== 'chunk') throw new Error('The Journal app entry chunk was not emitted.');
+  const timeline = outputs.find(
+    (output) => output.type === 'chunk' && output.name === 'TimelineView',
+  );
+  if (!timeline || timeline.type !== 'chunk')
+    throw new Error('The Journal default Timeline route chunk was not emitted.');
+  return staticChunkGraph(outputs, [app.fileName, timeline.fileName]);
+}
+
 /** Keeps startup growth visible even when Rollup moves code into shared static chunks. */
-export function appEntryBudgetPlugin(limit = APP_ENTRY_RAW_BUDGET_BYTES): Plugin {
+export function appEntryBudgetPlugin(
+  startupLimit = APP_ENTRY_RAW_BUDGET_BYTES,
+  timelineLimit = DEFAULT_TIMELINE_RAW_BUDGET_BYTES,
+): Plugin {
   return {
     name: 'journal-app-entry-budget',
     apply: 'build',
     enforce: 'post',
     generateBundle(_options, bundle) {
       const graph = appEntryStaticGraph(Object.values(bundle));
-      if (graph.bytes <= limit) return;
-      this.error(
-        `Journal startup graph is ${graph.bytes.toLocaleString('en-US')} raw bytes; ` +
-          `the budget is ${limit.toLocaleString('en-US')} bytes (${graph.files.join(', ')}).`,
-      );
+      if (graph.bytes > startupLimit) {
+        this.error(
+          `Journal startup graph is ${graph.bytes.toLocaleString('en-US')} raw bytes; ` +
+            `the budget is ${startupLimit.toLocaleString('en-US')} bytes (${graph.files.join(', ')}).`,
+        );
+      }
+      const timeline = defaultTimelineRouteGraph(Object.values(bundle));
+      if (timeline.bytes > timelineLimit) {
+        this.error(
+          `Journal default Timeline graph is ${timeline.bytes.toLocaleString('en-US')} raw bytes; ` +
+            `the budget is ${timelineLimit.toLocaleString('en-US')} bytes (${timeline.files.join(', ')}).`,
+        );
+      }
     },
   };
 }
 
 /** Injects a revisioned precache list without the vulnerable Workbox build toolchain. */
-export function journalServiceWorkerPlugin(): Plugin {
+export function journalServiceWorkerPlugin(limit = PRECACHE_RAW_BUDGET_BYTES): Plugin {
   return {
     name: 'journal-service-worker',
     apply: 'build',
     enforce: 'post',
     generateBundle(_options, bundle) {
       const emittedManifest = emittedPrecacheEntries(Object.values(bundle));
-      const publicManifest = publicFiles()
-        .filter((path) => !PRECACHE_EXCLUDED.test(relative(PUBLIC_DIRECTORY, path)))
-        .map((path) => {
-          const contents = readFileSync(path);
-          return {
-            url: `/${relative(PUBLIC_DIRECTORY, path).split(sep).join('/')}`,
-            revision: createHash('sha256').update(contents).digest('hex').slice(0, 16),
-          };
-        });
+      const installablePublicFiles = publicFiles().filter(
+        (path) => !PRECACHE_EXCLUDED.test(relative(PUBLIC_DIRECTORY, path)),
+      );
+      const publicManifest = installablePublicFiles.map((path) => {
+        const contents = readFileSync(path);
+        return {
+          url: `/${relative(PUBLIC_DIRECTORY, path).split(sep).join('/')}`,
+          revision: createHash('sha256').update(contents).digest('hex').slice(0, 16),
+        };
+      });
+      const installGraph = precacheInstallGraph(Object.values(bundle), [
+        ...installablePublicFiles.map((path) => ({
+          url: `/${relative(PUBLIC_DIRECTORY, path).split(sep).join('/')}`,
+          source: readFileSync(path),
+        })),
+        { url: '/index.html', source: readFileSync(INDEX_HTML) },
+      ]);
+      if (installGraph.bytes > limit) {
+        this.error(
+          `Journal offline install is ${installGraph.bytes.toLocaleString('en-US')} raw bytes; ` +
+            `the precache budget is ${limit.toLocaleString('en-US')} bytes (${installGraph.files.join(', ')}).`,
+        );
+      }
       // Vite emits transformed index.html after Rollup's generateBundle hook.
       // Key its revision to the complete emitted asset graph so every app build
       // fetches the newly transformed shell during service-worker install.
