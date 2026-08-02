@@ -37,6 +37,15 @@ export type JournalSynchronizationState = 'idle' | 'pending' | 'syncing' | 'atte
 /** Whether the current local mirror and outbox survived their latest durable write. */
 export type JournalPersistenceState = 'available' | 'unavailable';
 
+/** One authoritative search page, either from Journal or the downloaded mirror. */
+export interface JournalSearchPage {
+  items: Entry[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  source: 'journal' | 'downloaded';
+  reason: 'offline' | 'unavailable' | null;
+}
+
 /** A truthful UI projection over resource, transport, and mutation state. */
 export interface JournalStatus {
   resource: JournalResourceStatus;

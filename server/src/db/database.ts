@@ -16,6 +16,7 @@ import { createRequire } from 'node:module';
 import { basename, dirname, join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 import { DomainError } from '../domain/errors.js';
+import { normalizeJournalSearchText } from '../domain/search-query.js';
 import { ensurePrivateDirectory } from '../private-path.js';
 import { migrations, type Migration } from './migrations.js';
 
@@ -90,6 +91,9 @@ export class JournalDatabase {
     try {
       if (expectedIdentity !== undefined) assertSameFile(this.path, expectedIdentity);
       this.raw.function('unicode_lower', { deterministic: true }, unicodeLower);
+      this.raw.function('journal_search_normalize', { deterministic: true }, (value: unknown) =>
+        normalizeJournalSearchText(String(value ?? '')),
+      );
       if (!this.readonlyMode) {
         this.raw.pragma('journal_mode = WAL');
         this.raw.pragma('synchronous = NORMAL');

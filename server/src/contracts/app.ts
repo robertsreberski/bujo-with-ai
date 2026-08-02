@@ -22,3 +22,11 @@ export {
   type ParsedCapture,
   type SafeCaptureParseResult,
 } from '../domain/parser.js';
+export {
+  JournalSearchParseError,
+  entryMatchesJournalSearch,
+  journalSearchNeedles,
+  normalizeJournalSearchText,
+  parseJournalSearch,
+  type JournalSearchFilters,
+} from '../domain/search-query.js';

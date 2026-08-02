@@ -23,6 +23,7 @@ import {
 } from '../contracts/index.js';
 import type { JournalDatabase } from '../db/database.js';
 import { DomainError } from './errors.js';
+import { journalSearchNeedles } from './search-query.js';
 import type {
   ActivityItem,
   ActivityKind,
@@ -552,7 +553,7 @@ function addWhere(where: string[], params: unknown[], clause: string, value: unk
 }
 
 function ftsPrefixQuery(value: string): string {
-  const tokens = value.toLowerCase().match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu) ?? [];
+  const tokens = value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
   if (tokens.length === 0) return '"journal-no-token-sentinel"';
   return tokens.map((token) => `"${token}"*`).join(' AND ');
 }
@@ -576,12 +577,15 @@ function entryPredicate(input: SearchEntriesInput): { predicate: string; params:
     where.push('EXISTS (SELECT 1 FROM json_each(e.tags) WHERE value = ?)');
     params.push(tag);
   } else if (input.query !== undefined && input.query.trim() !== '') {
-    const query = input.query.trim().normalize('NFC').toLocaleLowerCase('und');
-    where.push(
-      `(e.rowid IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?)
-        OR instr(unicode_lower(e.text), ?) > 0 OR instr(unicode_lower(e.tags), ?) > 0)`,
-    );
-    params.push(ftsPrefixQuery(query), query, query);
+    const needles = journalSearchNeedles(input.query);
+    for (const needle of needles) {
+      where.push(
+        `(e.rowid IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?)
+          OR instr(journal_search_normalize(e.text), ?) > 0
+          OR instr(journal_search_normalize(e.tags), ?) > 0)`,
+      );
+      params.push(ftsPrefixQuery(needle), needle, needle);
+    }
   }
   return { predicate: where.length === 0 ? '1 = 1' : where.join(' AND '), params };
 }

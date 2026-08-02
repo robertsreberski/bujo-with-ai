@@ -1,7 +1,10 @@
+import { parseJournalSearch, type JournalSearchFilters } from '@journal/server/contracts/app';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Dialog } from './Dialog';
 import { EntryRow } from './EntryRow';
 import { Icon } from './Icon';
+import { buildSearchSnippet } from './search-snippet';
+import type { JournalSearchPage } from '../store/models';
 import { EMPTY_PANEL } from '../views/view-classes';
 import type { DisplayPreferences, JournalEntry } from './types';
 
@@ -13,25 +16,40 @@ interface SearchDialogProps {
   entries: JournalEntry[];
   preferences: DisplayPreferences;
   initialQuery?: string;
-  onSearch: (query: string) => Promise<JournalEntry[]>;
+  onSearch: (query: string, cursor?: string) => Promise<JournalSearchPage>;
   onClose: () => void;
   onOpenEntry: (entry: JournalEntry) => void;
   onToggleEntry: (entry: JournalEntry) => void;
 }
 
-const matches = (entry: JournalEntry, raw: string): boolean => {
-  const tokens = raw.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return true;
-  return tokens.every((token) => {
-    if (token === 'is:open' || token === 'open')
-      return entry.type === 'task' && entry.state === 'open';
-    if (token === 'by:assistant' || token === 'claude') return entry.author === 'ai';
-    if (token.startsWith('#')) return entry.tags.includes(token.slice(1));
-    return (
-      entry.text.toLowerCase().includes(token) || entry.tags.some((tag) => tag.includes(token))
-    );
-  });
-};
+function SearchEntryText({
+  entry,
+  filters,
+}: {
+  entry: JournalEntry;
+  filters: JournalSearchFilters;
+}) {
+  const snippet = buildSearchSnippet(entry.text, filters.q);
+  return (
+    <>
+      {snippet.leadingEllipsis ? '…' : null}
+      {snippet.segments.map((segment, index) =>
+        segment.highlighted ? (
+          <mark className="rounded-sm bg-ai-bg text-inherit" key={index}>
+            {segment.text}
+          </mark>
+        ) : (
+          segment.text
+        ),
+      )}
+      {snippet.trailingEllipsis ? '…' : null}
+    </>
+  );
+}
+
+function messageFromError(error: unknown): string {
+  return error instanceof Error ? error.message : 'Journal search failed.';
+}
 
 export function SearchDialog({
   entries,
@@ -43,60 +61,102 @@ export function SearchDialog({
   onToggleEntry,
 }: SearchDialogProps) {
   const [query, setQuery] = useState(initialQuery);
-  const [remoteSearch, setRemoteSearch] = useState<{
-    query: string;
-    entries: JournalEntry[];
-    status: 'complete' | 'unavailable';
-  } | null>(null);
-  const [pendingQuery, setPendingQuery] = useState<string | null>(initialQuery.trim() || null);
+  const [result, setResult] = useState<{ query: string; page: JournalSearchPage } | null>(null);
+  const [loading, setLoading] = useState<'initial' | 'more' | null>(
+    initialQuery.trim() ? 'initial' : null,
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const normalizedQuery = query.trim();
+
   const updateQuery = (value: string) => {
     setQuery(value);
-    setPendingQuery(value.trim() || null);
+    setResult(null);
+    setError(null);
+    setLoading(value.trim() ? 'initial' : null);
   };
+
   useEffect(() => {
     const normalized = query.trim();
     if (!normalized) return;
     let active = true;
     const timer = window.setTimeout(() => {
-      void Promise.resolve()
-        .then(() => onSearch(normalized))
-        .then((result) => {
-          if (active) setRemoteSearch({ query: normalized, entries: result, status: 'complete' });
+      void onSearch(normalized)
+        .then((page) => {
+          if (active) setResult({ query: normalized, page });
         })
-        .catch(() => {
-          if (active) setRemoteSearch({ query: normalized, entries: [], status: 'unavailable' });
+        .catch((searchError: unknown) => {
+          if (active) setError(messageFromError(searchError));
         })
         .finally(() => {
-          if (active) setPendingQuery((current) => (current === normalized ? null : current));
+          if (active) setLoading(null);
         });
     }, 140);
     return () => {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [onSearch, query]);
-  const normalizedQuery = query.trim();
-  const remoteResults = remoteSearch?.query === normalizedQuery ? remoteSearch.entries : null;
-  const remoteUnavailable =
-    remoteSearch?.query === normalizedQuery && remoteSearch.status === 'unavailable';
-  const searching = pendingQuery === normalizedQuery;
-  const results = useMemo(() => {
-    const candidates = remoteResults
-      ? [...new Map([...entries, ...remoteResults].map((entry) => [entry.id, entry])).values()]
-      : entries;
-    return candidates
-      .filter((entry) => matches(entry, query))
-      .sort(
-        (left, right) =>
-          right.date.localeCompare(left.date) || right.createdAt.localeCompare(left.createdAt),
-      )
-      .slice(0, 100);
-  }, [entries, query, remoteResults]);
+  }, [onSearch, query, retryNonce]);
+
+  const activeResult = result?.query === normalizedQuery ? result.page : null;
+  const filters = useMemo(() => {
+    try {
+      return parseJournalSearch(normalizedQuery);
+    } catch {
+      return {};
+    }
+  }, [normalizedQuery]);
+  const recentEntries = useMemo(
+    () =>
+      [...entries]
+        .filter((entry) => entry.deletedAt === null)
+        .sort(
+          (left, right) =>
+            right.date.localeCompare(left.date) ||
+            right.createdAt.localeCompare(left.createdAt) ||
+            right.id.localeCompare(left.id),
+        )
+        .slice(0, 50),
+    [entries],
+  );
+  const results = normalizedQuery ? (activeResult?.items ?? []) : recentEntries;
+  const searching = loading === 'initial';
+
+  const retry = () => {
+    setResult(null);
+    setError(null);
+    setLoading('initial');
+    setRetryNonce((nonce) => nonce + 1);
+  };
+
+  const loadMore = async () => {
+    if (!activeResult?.hasMore || !activeResult.nextCursor || loading !== null) return;
+    setLoading('more');
+    setError(null);
+    try {
+      const page = await onSearch(normalizedQuery, activeResult.nextCursor);
+      setResult((current) => {
+        if (current?.query !== normalizedQuery) return current;
+        if (current.page.source !== page.source) return { query: normalizedQuery, page };
+        const items = [
+          ...new Map(
+            [...current.page.items, ...page.items].map((entry) => [entry.id, entry]),
+          ).values(),
+        ];
+        return { query: normalizedQuery, page: { ...page, items } };
+      });
+    } catch (searchError) {
+      setError(messageFromError(searchError));
+    } finally {
+      setLoading(null);
+    }
+  };
+
   return (
     <Dialog
       title="Search journal"
-      description="Find text, tags, open tasks, or assistant entries."
+      description="Find text, tags, dates, entry types, open tasks, or assistant entries."
       onClose={onClose}
       initialFocusRef={inputRef}
       size="wide"
@@ -139,39 +199,81 @@ export function SearchDialog({
         className="overflow-hidden rounded-lg border border-border"
         aria-live="polite"
         aria-label="Search results"
-        aria-busy={searching}
+        aria-busy={loading !== null}
       >
-        {!normalizedQuery ? <p className={RESULTS_NOTE}>Showing your most recent entries</p> : null}
+        {!normalizedQuery ? (
+          <p className={RESULTS_NOTE}>Showing your 50 most recent entries</p>
+        ) : null}
         {normalizedQuery && searching ? (
           <p className={RESULTS_NOTE}>Searching the full journal…</p>
         ) : null}
-        {normalizedQuery && remoteUnavailable && !searching ? (
-          <p
-            className="border-b border-bg-line bg-danger-bg px-2.5 py-2 text-tag text-warning"
+        {normalizedQuery && activeResult?.source === 'downloaded' && !searching ? (
+          <div
+            className="flex items-center justify-between gap-3 border-b border-bg-line bg-danger-bg px-2.5 py-2 text-tag text-warning"
             role="status"
           >
-            Search unavailable — showing downloaded entries.
-          </p>
+            <span>Searching downloaded history — results may be incomplete.</span>
+            <button className="shrink-0 underline underline-offset-2" type="button" onClick={retry}>
+              Retry
+            </button>
+          </div>
+        ) : null}
+        {error && !searching ? (
+          <div
+            className="flex items-center justify-between gap-3 border-b border-bg-line bg-danger-bg px-2.5 py-2 text-tag text-warning"
+            role="alert"
+          >
+            <span>Search couldn’t finish — {error}</span>
+            <button className="shrink-0 underline underline-offset-2" type="button" onClick={retry}>
+              Retry
+            </button>
+          </div>
         ) : null}
         {results.length > 0 ? (
-          results.map((entry) => (
-            <EntryRow
-              entry={entry}
-              preferences={preferences}
-              showDate
-              key={entry.id}
-              onOpen={(selected) => {
-                onClose();
-                onOpenEntry(selected);
-              }}
-              onToggle={onToggleEntry}
-            />
-          ))
-        ) : searching ? null : remoteUnavailable ? (
+          <>
+            {results.map((entry) => (
+              <EntryRow
+                entry={entry}
+                preferences={preferences}
+                showDate
+                {...(filters.tag === undefined ? {} : { highlightedTag: filters.tag })}
+                textContent={<SearchEntryText entry={entry} filters={filters} />}
+                key={entry.id}
+                onOpen={(selected) => {
+                  onClose();
+                  onOpenEntry(selected);
+                }}
+                onToggle={onToggleEntry}
+              />
+            ))}
+            {activeResult?.hasMore && activeResult.nextCursor ? (
+              <div className="flex justify-center border-t border-bg-line p-2.5">
+                <button
+                  className="min-h-9 rounded-md border border-border-control px-3 text-xs text-fg-mid hover:bg-bg-hover disabled:opacity-60"
+                  type="button"
+                  disabled={loading === 'more'}
+                  onClick={() => void loadMore()}
+                >
+                  {loading === 'more' ? 'Loading…' : 'Load more'}
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : searching ? null : error ? (
+          <div className={EMPTY}>
+            <Icon name="search" size={18} />
+            <p className={EMPTY_TITLE}>Search couldn’t finish.</p>
+            <span className="text-xs">Edit the query or retry.</span>
+          </div>
+        ) : activeResult?.source === 'downloaded' ? (
           <div className={EMPTY}>
             <Icon name="wifiOff" size={18} />
             <p className={EMPTY_TITLE}>No downloaded entries match “{normalizedQuery}”.</p>
-            <span className="text-xs">Reconnect to search the full journal.</span>
+            <span className="text-xs">
+              {activeResult.reason === 'offline'
+                ? 'Reconnect to search the full journal.'
+                : 'Retry when Journal is reachable.'}
+            </span>
           </div>
         ) : normalizedQuery ? (
           <div className={EMPTY}>

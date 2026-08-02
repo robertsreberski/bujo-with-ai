@@ -1,4 +1,12 @@
-import { useCallback, useId, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
+import {
+  useCallback,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
 import { Icon } from './Icon';
 import { Badge } from './ui/badge';
 import { entryIcon } from './entry-icons';
@@ -18,6 +26,9 @@ interface EntryRowProps {
   onOpen: (entry: JournalEntry) => void;
   onToggle: (entry: JournalEntry) => void;
   showDate?: boolean;
+  /** Presentation-only text, used for search snippets without changing the entry. */
+  textContent?: ReactNode;
+  highlightedTag?: string;
 }
 
 /*
@@ -57,6 +68,8 @@ export function EntryRow({
   onOpen,
   onToggle,
   showDate = false,
+  textContent,
+  highlightedTag,
 }: EntryRowProps) {
   const previewId = useId();
   const previewRef = useRef<HTMLSpanElement>(null);
@@ -126,7 +139,7 @@ export function EntryRow({
       observer?.disconnect();
       window.removeEventListener('resize', measurePreview);
     };
-  }, [entry.id, entry.text, measurePreview]);
+  }, [entry.id, entry.text, measurePreview, textContent]);
 
   const handleOpen = (event: MouseEvent<HTMLButtonElement>) => {
     // A pointer drag that selected canonical text is not an intent to open the
@@ -187,6 +200,7 @@ export function EntryRow({
         <button
           className="entry-row__content flex min-w-0 flex-col items-stretch text-left touch:min-h-10"
           type="button"
+          aria-label={textContent === undefined ? undefined : entry.text}
           onClick={handleOpen}
         >
           <span
@@ -199,7 +213,7 @@ export function EntryRow({
               struck && 'line-through',
             )}
           >
-            {entry.text}
+            {textContent ?? entry.text}
           </span>
         </button>
         {metaVisible || previewOverflows ? (
@@ -229,11 +243,20 @@ export function EntryRow({
                 <Icon name="sparkle" size={10} />
               </Badge>
             ) : null}
-            {entry.tags.map((tag) => (
-              <span className="entry-row__tag text-tag text-fg-mute" key={tag}>
-                #{tag}
-              </span>
-            ))}
+            {entry.tags.map((tag) =>
+              tag === highlightedTag ? (
+                <mark
+                  className="entry-row__tag rounded-sm bg-ai-bg px-0.5 text-tag text-fg"
+                  key={tag}
+                >
+                  #{tag}
+                </mark>
+              ) : (
+                <span className="entry-row__tag text-tag text-fg-mute" key={tag}>
+                  #{tag}
+                </span>
+              ),
+            )}
             {previewOverflows ? (
               <button
                 className="entry-row__expand ml-auto min-h-6 rounded-sm px-1.5 text-tag font-medium text-fg-mute underline decoration-border-strong underline-offset-2 hover:text-fg touch:min-h-10 touch:px-2"

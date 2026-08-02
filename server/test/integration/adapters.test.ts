@@ -418,6 +418,45 @@ describe('HTTP and MCP domain adapters', () => {
     expect(second.nextCursor).toBeNull();
   });
 
+  it('applies the shared search grammar before cursor paging', async () => {
+    const { domain, owner, adapters, advance } = fixture();
+    const wanted = createdEntry(domain, owner, {
+      text: 'CAFÉ launch plan',
+      type: 'note',
+      tags: ['work'],
+      date: '2026-07-30',
+    });
+    advance();
+    createdEntry(domain, owner, {
+      text: 'CAFÉ launch plan outside the date range',
+      type: 'note',
+      tags: ['work'],
+      date: '2026-06-30',
+    });
+    createdEntry(domain, owner, {
+      text: 'CAFÉ launch plan with the wrong type',
+      type: 'task',
+      tags: ['work'],
+      date: '2026-07-30',
+    });
+
+    const page = (await adapters.api.listEntries(
+      {
+        q: 'type:note #work from:2026-07-01 to:2026-07-31 cafe launch',
+        limit: 50,
+      },
+      owner,
+    )) as { items: Entry[]; nextCursor: string | null };
+    expect(page.items.map((entry) => entry.id)).toEqual([wanted.id]);
+    expect(page.nextCursor).toBeNull();
+    expect(() => adapters.api.listEntries({ q: 'type:unknown', limit: 50 }, owner)).toThrowError(
+      /Type must/i,
+    );
+    expect(() =>
+      adapters.api.listEntries({ q: 'type:note', type: 'task', limit: 50 }, owner),
+    ).toThrowError(/Conflicting entry type/i);
+  });
+
   it('pages a large entry fixture with one bounded SQL query per page', async () => {
     const statements: string[] = [];
     const { database, owner, adapters } = fixture((sql) => statements.push(sql));

@@ -30,6 +30,11 @@ import type {
 } from './mcp/server.js';
 import { DomainError } from './domain/errors.js';
 import type { JournalDomain } from './domain/journal.js';
+import {
+  JournalSearchParseError,
+  parseJournalSearch,
+  type JournalSearchFilters,
+} from './domain/search-query.js';
 import type { ActorContext, SearchEntriesInput } from './domain/types.js';
 
 interface DomainAdapters {
@@ -176,6 +181,53 @@ function decodeActivityCursor(cursor: string | undefined): ActivityCursor | unde
   }
 }
 
+function mergeSearchFilter<K extends keyof JournalSearchFilters>(
+  grammar: JournalSearchFilters,
+  key: K,
+  explicit: JournalSearchFilters[K],
+  label: string,
+): JournalSearchFilters[K] {
+  const parsed = grammar[key];
+  if (explicit !== undefined && parsed !== undefined && explicit !== parsed) {
+    throw new DomainError('VALIDATION_ERROR', `Conflicting ${label} search filters.`);
+  }
+  return explicit ?? parsed;
+}
+
+function parseApiSearch(query: {
+  readonly q?: string | undefined;
+  readonly type?: JournalSearchFilters['type'] | undefined;
+  readonly state?: JournalSearchFilters['state'] | undefined;
+  readonly author?: JournalSearchFilters['author'] | undefined;
+  readonly tag?: string | undefined;
+  readonly from?: string | undefined;
+  readonly to?: string | undefined;
+}): JournalSearchFilters {
+  try {
+    const grammar = parseJournalSearch(query.q ?? '');
+    const type = mergeSearchFilter(grammar, 'type', query.type, 'entry type');
+    const state = mergeSearchFilter(grammar, 'state', query.state, 'entry state');
+    const author = mergeSearchFilter(grammar, 'author', query.author, 'author');
+    const tag = mergeSearchFilter(grammar, 'tag', query.tag, 'tag');
+    const from = mergeSearchFilter(grammar, 'from', query.from, 'from date');
+    const to = mergeSearchFilter(grammar, 'to', query.to, 'to date');
+    return {
+      ...(grammar.q === undefined ? {} : { q: grammar.q }),
+      ...(type === undefined ? {} : { type }),
+      ...(state === undefined ? {} : { state }),
+      ...(author === undefined ? {} : { author }),
+      ...(tag === undefined ? {} : { tag }),
+      ...(from === undefined ? {} : { from }),
+      ...(to === undefined ? {} : { to }),
+    };
+  } catch (error) {
+    if (error instanceof JournalSearchParseError) {
+      throw new DomainError('VALIDATION_ERROR', error.message);
+    }
+    throw error;
+  }
+}
+
 function calendar(date: string) {
   const instant = new Date(`${date}T12:00:00.000Z`);
   return {
@@ -243,17 +295,18 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
 
     listEntries: (raw) => {
       const query = EntryQuerySchema.parse(raw);
+      const search = parseApiSearch(query);
       const cursor = decodeEntryCursor(query.cursor);
       const page = domain.pageEntries(
         {
-          ...(query.q === undefined ? {} : { query: query.q }),
-          ...(query.type === undefined ? {} : { type: query.type }),
-          ...(query.state === undefined ? {} : { state: query.state }),
-          ...(query.author === undefined ? {} : { author: query.author }),
-          ...(query.tag === undefined ? {} : { tag: query.tag }),
+          ...(search.q === undefined ? {} : { query: search.q }),
+          ...(search.type === undefined ? {} : { type: search.type }),
+          ...(search.state === undefined ? {} : { state: search.state }),
+          ...(search.author === undefined ? {} : { author: search.author }),
+          ...(search.tag === undefined ? {} : { tag: search.tag }),
           ...(query.collection === undefined ? {} : { collection: query.collection }),
-          ...(query.from === undefined ? {} : { dateFrom: query.from }),
-          ...(query.to === undefined ? {} : { dateTo: query.to }),
+          ...(search.from === undefined ? {} : { dateFrom: search.from }),
+          ...(search.to === undefined ? {} : { dateTo: search.to }),
           limit: query.limit,
         },
         cursor,
