@@ -162,6 +162,32 @@ test('manifest, install metadata, icons, and custom service worker ship from one
   expect(cachedApiRequests).toEqual([]);
 });
 
+test('capture stays available when the connection drops before offline setup finishes', async ({
+  context,
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+
+  await openJournal(page);
+  await context.setOffline(true);
+
+  try {
+    const text = uniqueText('Fast offline capture');
+    await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text}`);
+    await expect(page.getByRole('button', { name: 'Destination: Today' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Capture help' })).toBeVisible();
+    await page.getByRole('button', { name: 'Add entry' }).click();
+
+    await expect(page.locator('#root')).not.toBeEmpty();
+    await expect(page.locator('#journal-content')).toContainText(text);
+    await expect(page.locator('.status-strip')).toContainText(/changes? saved on this device/);
+    expect(pageErrors).toEqual([]);
+  } finally {
+    await context.setOffline(false);
+  }
+});
+
 test('every iOS launch image is media-gated, served, and sized for the device it claims', async ({
   context,
   page,

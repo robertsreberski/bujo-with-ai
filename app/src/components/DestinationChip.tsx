@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { ComposerPopover } from './ComposerPopover';
+import { DeferredComposerPopover } from './DeferredComposerPopover';
 import { Icon } from './Icon';
 import { Badge } from './ui/badge';
 import { Input } from './ui/input';
@@ -109,7 +109,7 @@ export function DestinationChip({
 
   return (
     <span className={WRAP}>
-      <ComposerPopover
+      <DeferredComposerPopover
         open={open}
         onOpenChange={setOpen}
         title="File this capture"
@@ -158,7 +158,7 @@ export function DestinationChip({
           screenDestination={screenDestination}
           onSelect={select}
         />
-      </ComposerPopover>
+      </DeferredComposerPopover>
       {onClear ? (
         <button
           // `justify-start` is the seam's guard: on touch the button is 40px
