@@ -31,6 +31,12 @@ function setPreviewMetrics(element: HTMLElement, scrollHeight: number, clientHei
   fireEvent(window, new Event('resize'));
 }
 
+function dispatchPointer(target: Element, type: string, x: number, y: number): void {
+  const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
+  Object.defineProperty(event, 'pointerId', { value: 1 });
+  fireEvent(target, event);
+}
+
 afterEach(cleanup);
 
 describe('EntryRow', () => {
@@ -196,11 +202,19 @@ describe('EntryRow', () => {
     selection?.removeAllRanges();
     selection?.addRange(range);
 
+    dispatchPointer(content, 'pointerdown', 10, 10);
+    dispatchPointer(content, 'pointermove', 24, 10);
     fireEvent.click(content, { detail: 1 });
     expect(onOpen).not.toHaveBeenCalled();
 
-    fireEvent.click(content, { detail: 0 });
+    // WebKit can leave a Range selection behind after an ordinary tap. With no
+    // drag in this gesture, that stale selection must not swallow activation.
+    dispatchPointer(content, 'pointerdown', 10, 10);
+    fireEvent.click(content, { detail: 1 });
     expect(onOpen).toHaveBeenCalledWith(entry);
+
+    fireEvent.click(content, { detail: 0 });
+    expect(onOpen).toHaveBeenCalledTimes(2);
   });
 
   it('shows a Timeline destination without changing the canonical text', () => {

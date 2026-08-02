@@ -86,18 +86,18 @@ function humanizeSlug(slug: string): string {
   return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
 }
 
-/** Reads the persisted client record straight out of IndexedDB. */
-async function persistedActivityAcknowledgement(page: Page): Promise<boolean> {
+/** Reads the exact persisted acknowledgement straight out of IndexedDB. */
+async function persistedActivityAcknowledgement(page: Page): Promise<string | null> {
   return page.evaluate(
     () =>
-      new Promise<boolean>((resolve) => {
+      new Promise<string | null>((resolve) => {
         const request = indexedDB.open('journal-pwa');
-        request.onerror = () => resolve(false);
+        request.onerror = () => resolve(null);
         request.onsuccess = () => {
           const database = request.result;
           if (!database.objectStoreNames.contains('client-state')) {
             database.close();
-            resolve(false);
+            resolve(null);
             return;
           }
           const read = database
@@ -106,7 +106,7 @@ async function persistedActivityAcknowledgement(page: Page): Promise<boolean> {
             .get('journal-client-state-v1');
           read.onerror = () => {
             database.close();
-            resolve(false);
+            resolve(null);
           };
           read.onsuccess = () => {
             const record = read.result as
@@ -117,7 +117,12 @@ async function persistedActivityAcknowledgement(page: Page): Promise<boolean> {
               | undefined;
             database.close();
             resolve(
-              record?.activitySeenThrough != null || (record?.seenActivityIds?.length ?? 0) > 0,
+              record
+                ? JSON.stringify({
+                    cursor: record.activitySeenThrough ?? null,
+                    seenIds: [...(record.seenActivityIds ?? [])].sort(),
+                  })
+                : null,
             );
           };
         };
@@ -524,7 +529,7 @@ test('an automatic MCP write appears in Activity and can be reverted by the owne
   await expect(page.getByText('Change reverted')).toBeVisible();
   await expect(activity.getByText('Reverted', { exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: /^Timeline/ }).click();
+  await page.getByRole('button', { name: 'Timeline', exact: true }).click();
   await expect(page.getByText(text, { exact: true })).toHaveCount(0);
 });
 
@@ -590,8 +595,8 @@ test('owner capture and automatic add-update-revert stay live and conflict safe'
   }
 
   await page.getByRole('button', { name: /^Activity/ }).click();
-  const updateActivity = page.getByRole('article').filter({ hasText: updateReason });
-  const addActivity = page.getByRole('article').filter({ hasText: originalText });
+  const updateActivity = page.locator(`[data-activity-id="${updated.activityId}"]`);
+  const addActivity = page.locator(`[data-activity-id="${added.activityId}"]`);
   await expect(updateActivity).toContainText(updatedText);
   await expect(addActivity).toContainText('added');
   await updateActivity.getByRole('button', { name: 'Revert' }).click();
@@ -603,7 +608,7 @@ test('owner capture and automatic add-update-revert stay live and conflict safe'
   await expect(addActivity.getByText('Changed since — newer work preserved')).toBeVisible();
   await expect(addActivity.getByRole('button', { name: 'Revert' })).toHaveCount(0);
 
-  await page.getByRole('button', { name: /^Timeline/ }).click();
+  await page.getByRole('button', { name: 'Timeline', exact: true }).click();
   const restoredRow = page.locator(`[data-entry-id="${added.entry.id}"]`);
   await expect(restoredRow.getByText(originalText, { exact: true })).toBeVisible();
   await expect(restoredRow.getByText(updatedText, { exact: true })).toHaveCount(0);
@@ -649,12 +654,14 @@ test('a capture on the month spread lands in the monthly log without leaving it'
   await expect(page).toHaveURL(/\/month(?:\?|$)/);
 
   // The screen's own default: the month being browsed, named as the chip says.
+  const input = page.getByRole('combobox', { name: 'Add an entry' });
+  await input.focus();
   const chip = page.getByRole('button', { name: /^Destination: / });
   const chipLabel = ((await chip.getAttribute('aria-label')) ?? '').replace('Destination: ', '');
   expect(chipLabel).toMatch(/^[A-Z][a-z]+ \d{4}$/);
 
   const text = uniqueText('Month spread capture');
-  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text}`);
+  await input.fill(`- ${text}`);
   await page.getByRole('button', { name: 'Add entry' }).click();
 
   const monthlyLog = page.getByRole('region', { name: 'Monthly log' });
@@ -859,6 +866,7 @@ test('Timeline avoids a partial count while Activity uses a truthful unseen indi
 }) => {
   await pairAndBootstrap(context, baseURL);
   await openJournal(page);
+  const acknowledgementBefore = await persistedActivityAcknowledgement(page);
 
   // Timeline is cursor-bounded, so it must not imply a complete task total.
   await expect(page.getByRole('button', { name: 'Timeline', exact: true })).toBeVisible();
@@ -898,7 +906,8 @@ test('Timeline avoids a partial count while Activity uses a truthful unseen indi
   // the explicit acknowledgement when the conservative signal remains.
   const markAllSeen = page.getByRole('button', { name: 'Mark all seen' });
   if (await markAllSeen.isVisible()) await markAllSeen.click();
-  await expect.poll(() => persistedActivityAcknowledgement(page)).toBe(true);
+  await expect(page.getByRole('button', { name: 'Activity', exact: true })).toBeVisible();
+  await expect.poll(() => persistedActivityAcknowledgement(page)).not.toBe(acknowledgementBefore);
 
   await page.reload();
   await expect(page.locator('#journal-content')).toBeVisible();

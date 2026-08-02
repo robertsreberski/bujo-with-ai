@@ -353,7 +353,7 @@ test('offline Search remains useful for downloaded entries', async ({ context, p
     await expect(
       page
         .getByRole('status')
-        .filter({ hasText: 'Search unavailable — showing downloaded entries.' }),
+        .filter({ hasText: 'Searching downloaded history — results may be incomplete.' }),
     ).toBeVisible();
     await expect(
       page.getByRole('dialog', { name: 'Search journal' }).getByText(text, { exact: true }),

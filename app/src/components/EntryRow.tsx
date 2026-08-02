@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type MouseEvent,
+  type PointerEvent,
   type ReactNode,
 } from 'react';
 import { Icon } from './Icon';
@@ -80,6 +81,12 @@ export function EntryRow({
 }: EntryRowProps) {
   const previewId = useId();
   const previewRef = useRef<HTMLSpanElement>(null);
+  const pointerSelectionRef = useRef<{
+    id: number;
+    x: number;
+    y: number;
+    dragged: boolean;
+  } | null>(null);
   const previewVersion = `${entry.id}:${entry.revision}:${entry.text}`;
   const [expandedPreviewVersion, setExpandedPreviewVersion] = useState<string | null>(null);
   const previewExpanded = expandedPreviewVersion === previewVersion;
@@ -157,8 +164,27 @@ export function EntryRow({
   const handleOpen = (event: MouseEvent<HTMLButtonElement>) => {
     // A pointer drag that selected canonical text is not an intent to open the
     // details surface. Keyboard-generated clicks have detail=0 and still open.
-    if (event.detail > 0 && selectionIsInside(event.currentTarget)) return;
+    const dragged = pointerSelectionRef.current?.dragged === true;
+    pointerSelectionRef.current = null;
+    if (event.detail > 0 && dragged && selectionIsInside(event.currentTarget)) return;
     onOpen(entry);
+  };
+
+  const beginPointerSelection = (event: PointerEvent<HTMLButtonElement>) => {
+    pointerSelectionRef.current = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      dragged: false,
+    };
+  };
+
+  const trackPointerSelection = (event: PointerEvent<HTMLButtonElement>) => {
+    const gesture = pointerSelectionRef.current;
+    if (!gesture || gesture.id !== event.pointerId || gesture.dragged) return;
+    if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= 4) {
+      gesture.dragged = true;
+    }
   };
 
   return (
@@ -215,6 +241,11 @@ export function EntryRow({
           type="button"
           aria-label={textContent === undefined ? undefined : entry.text}
           onClick={handleOpen}
+          onPointerDown={beginPointerSelection}
+          onPointerMove={trackPointerSelection}
+          onPointerCancel={() => {
+            pointerSelectionRef.current = null;
+          }}
         >
           <span
             ref={previewRef}

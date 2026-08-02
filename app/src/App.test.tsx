@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -114,6 +114,30 @@ describe('App resource loading', () => {
 
     expect(screen.getByText('Opening your local journal…')).toBeInTheDocument();
     expect(screen.queryByLabelText('Add an entry')).not.toBeInTheDocument();
+  });
+
+  it('focuses the journal surface when the initial resource finishes loading', async () => {
+    useJournalStore.setState({
+      hydrated: true,
+      loading: true,
+      resourceStatus: 'loading',
+      networkOnline: true,
+      online: false,
+      connectionStatus: 'connecting',
+    });
+
+    render(<App />);
+    expect(document.getElementById('journal-content')).not.toBeInTheDocument();
+
+    act(() => {
+      useJournalStore.setState({
+        loading: false,
+        resourceStatus: 'ready',
+        connectionStatus: 'offline',
+      });
+    });
+
+    await waitFor(() => expect(document.getElementById('journal-content')).toHaveFocus());
   });
 
   it('opens Index through its aggregate read model instead of lifetime hydration', async () => {

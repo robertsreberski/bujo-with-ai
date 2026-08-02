@@ -127,6 +127,12 @@ export default function App() {
     null,
   );
   const [focusRequest, setFocusRequest] = useState<number | undefined>(undefined);
+  const [timelineFocusRequest, setTimelineFocusRequest] = useState<{
+    date: string;
+    key: number;
+  } | null>(null);
+  const timelineFocusRequestRef = useRef<{ date: string; key: number } | null>(null);
+  const timelineFocusSequenceRef = useRef(0);
   const latestNoticeRef = useRef<string | null>(null);
   const activityTokensLoadedRef = useRef(false);
   const loadedRoutesRef = useRef(new Set<string>());
@@ -467,6 +473,12 @@ export default function App() {
     }
   }, []);
 
+  const finishTimelineFocusRequest = useCallback((key: number) => {
+    if (timelineFocusRequestRef.current?.key !== key) return;
+    timelineFocusRequestRef.current = null;
+    setTimelineFocusRequest((request) => (request?.key === key ? null : request));
+  }, []);
+
   const refreshTokens = useCallback(() => {
     run(() => journalActions.refreshTokens());
   }, [run]);
@@ -605,6 +617,8 @@ export default function App() {
             reflections={reflections}
             today={store.today}
             selectedDate={route.date}
+            focusRequest={timelineFocusRequest}
+            onFocusRequestHandled={finishTimelineFocusRequest}
             loading={
               store.timelineLoading ||
               !store.timelineLoaded ||
@@ -641,9 +655,17 @@ export default function App() {
             logView={store.monthLogView ?? DEFAULT_LOG_VIEW}
             onLogViewChange={journalActions.setMonthLogView}
             onMonthChange={(month) => navigate({ name: 'month', month })}
-            onDaySelect={(date) =>
-              navigate({ name: 'today', date: date === store.today ? null : date })
-            }
+            onDaySelect={(date) => {
+              if (date === store.today) {
+                const request = { date, key: ++timelineFocusSequenceRef.current };
+                timelineFocusRequestRef.current = request;
+                setTimelineFocusRequest(request);
+              } else {
+                timelineFocusRequestRef.current = null;
+                setTimelineFocusRequest(null);
+              }
+              navigate({ name: 'today', date: date === store.today ? null : date });
+            }}
             onOpenEntry={(entry) => openEntry(entry.id)}
             onToggleEntry={toggleEntry}
             onSaveSummary={(summary) =>
@@ -790,7 +812,16 @@ export default function App() {
   }, [routeTitle]);
 
   useEffect(() => {
-    if (selectedTodayDate) return;
+    // The resource-loading shell does not render journal-content. Wait for the
+    // real route surface, then establish its keyboard focus exactly once it is
+    // available instead of losing the initial requestAnimationFrame forever.
+    if (
+      selectedTodayDate ||
+      timelineFocusRequestRef.current !== null ||
+      journalStatus.resource !== 'ready'
+    ) {
+      return;
+    }
     const frame = window.requestAnimationFrame(() => {
       if (document.querySelector('[role="dialog"]')) return;
       // Never pull focus (and the keyboard) out of an active capture.
@@ -807,7 +838,7 @@ export default function App() {
       content?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [routeFocusKey, selectedTodayDate, store.hydrated]);
+  }, [journalStatus.resource, routeFocusKey, selectedTodayDate, store.hydrated]);
 
   if (journalStatus.resource === 'loading') {
     return (

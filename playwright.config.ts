@@ -39,6 +39,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium-desktop',
+      testIgnore: /accessibility-mobile\.spec\.ts/,
       use: {
         browserName: 'chromium',
         viewport: { width: 1_280, height: 900 },

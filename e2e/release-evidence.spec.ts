@@ -553,7 +553,7 @@ test('a collection can be created, renamed, filled, opened, and archived without
   await expect(page.getByRole('status').filter({ hasText: 'Collection updated' })).toBeVisible();
   await expect(collectionsSection.getByText(renamedCollection, { exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: /^Timeline/ }).click();
+  await page.getByRole('button', { name: 'Timeline', exact: true }).click();
   const entryRow = page.locator(`[data-entry-id="${entry.id}"]`);
   await entryRow.locator('.entry-row__content').click();
   const entryDialog = page.getByRole('dialog', { name: entryText });
@@ -567,7 +567,7 @@ test('a collection can be created, renamed, filled, opened, and archived without
   const collectionRow = collectionsSection.locator('.index-row').filter({
     hasText: renamedCollection,
   });
-  await expect(collectionRow).toContainText('1 items');
+  await expect(collectionRow).toContainText('1 item');
   await collectionRow.locator('.index-row__main').click();
   await expect(page).toHaveURL(new RegExp(`/c/${collectionId}$`));
   await expect(
@@ -668,11 +668,15 @@ test('entry detail supports a full edit followed by legal move, file, and delete
     .getByRole('combobox', { name: 'File in collection' })
     .selectOption(collectionId);
   await expect(page.getByRole('status').filter({ hasText: 'Entry filed' })).toBeVisible();
-  await expect(page.locator(`[data-entry-id="${entry.id}"]`)).toHaveCount(0);
+  const filedTimelineRow = page.locator(`[data-entry-id="${entry.id}"]`);
+  await expect(filedTimelineRow).toHaveCount(1);
+  await expect(filedTimelineRow).toContainText(updatedText);
+  await expect(filedTimelineRow).toContainText(collectionName);
 
   await page.getByRole('button', { name: 'Index', exact: true }).click();
   await page.getByRole('button', { name: new RegExp(`^${collectionName}`) }).click();
   row = page.locator(`[data-entry-id="${entry.id}"]`);
+  await expect(row).toHaveCount(1);
   await expect(row).toContainText(updatedText);
   await row.locator('.entry-row__content').click();
   await page
@@ -721,6 +725,17 @@ test('authoritative text, exact tags, and all three saved views return the inten
     date: bootstrap.today,
     type: 'task',
   });
+  const savedViewsResponse = await context.request.patch('/api/settings', {
+    data: {
+      savedViews: [
+        { id: 'open-tasks', name: 'Open tasks', query: 'is:open' },
+        { id: 'assistant', name: 'Added by assistant', query: 'by:assistant' },
+        { id: 'work', name: 'Tagged #work', query: '#work' },
+      ],
+    },
+    headers: { Origin: origin },
+  });
+  expect(savedViewsResponse.ok()).toBeTruthy();
 
   await openJournal(page);
   const assistantText = uniqueText('Saved assistant entry');
@@ -875,9 +890,7 @@ test('the month flow exposes calendar navigation and the complete habit grid at 
         await screenshotPage.getByRole('button', { name: 'Next month' }).click();
         await expect(screenshotPage).toHaveURL(new RegExp(`month=${month}`));
         await screenshotPage.locator('.calendar-day[aria-current="date"]').click();
-        await expect(screenshotPage).toHaveURL(
-          new RegExp(`\\?date=${bootstrap.today.replaceAll('-', '\\-')}$`),
-        );
+        await expect(screenshotPage).toHaveURL(`${origin}/`);
         await expect(screenshotPage.locator(`[data-day="${bootstrap.today}"]`)).toBeFocused();
       }
     } finally {
@@ -1035,7 +1048,7 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
 
     // The coarse-pointer entry surface is the sheet, so the sweep has to reach
     // its rows too — they are the densest stack of controls the phone renders.
-    await page.getByRole('button', { name: /^Timeline/ }).click();
+    await page.getByRole('button', { name: 'Timeline', exact: true }).click();
     await page.locator('.entry-row__content').filter({ hasText: aiText }).click();
     const entrySheet = page.locator('.entry-sheet');
     await expect(entrySheet).toBeVisible();
@@ -1080,7 +1093,10 @@ test('normal motion stays within the approved bounds and reduced motion removes 
   expect(cssTimeMilliseconds(panelMotion.animationDuration)).toBeGreaterThan(0);
   expect(cssTimeMilliseconds(panelMotion.animationDuration)).toBeLessThanOrEqual(160);
   await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0);
 
+  const composer = page.getByRole('combobox', { name: 'Add an entry' });
+  await composer.click();
   await page.getByRole('button', { name: /^Entry type:/ }).click();
   const menuMotion = await motionStyle(page.locator('.type-menu'));
   expect(menuMotion.animationName).toBe('dialog-in');
@@ -1090,7 +1106,7 @@ test('normal motion stays within the approved bounds and reduced motion removes 
   await page.keyboard.press('Escape');
 
   const text = uniqueText('Motion evidence');
-  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text}`);
+  await composer.fill(`- ${text}`);
   await page.getByRole('button', { name: 'Add entry' }).click();
   const toastMotion = await motionStyle(page.locator('.toast'));
   const row = page.locator('.entry-row').filter({ hasText: text });
@@ -1119,6 +1135,8 @@ test('normal motion stays within the approved bounds and reduced motion removes 
   expect((await motionStyle(page.locator('.dialog-overlay'))).animationName).toBe('none');
   expect((await motionStyle(page.locator('.dialog-panel'))).animationName).toBe('none');
   await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0);
+  await composer.click();
   await page.getByRole('button', { name: /^Entry type:/ }).click();
   expect((await motionStyle(page.locator('.type-menu'))).animationName).toBe('none');
 
