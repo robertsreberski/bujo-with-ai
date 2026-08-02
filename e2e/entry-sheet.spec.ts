@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { ulid } from 'ulid';
 import { openJournal, uniqueText } from './helpers';
 
 /** The pointer decides the entry surface, so the test asks the page, not the project. */
@@ -17,6 +18,42 @@ async function captureEntry(page: Page, draft: string, text: string): Promise<Lo
   const row = entryRow(page, text);
   await expect(row).toBeVisible();
   return row;
+}
+
+/** Makes the monthly-log row require a real auto-scroll before its coarse-pointer click. */
+async function seedPreviousMonthScrollDepth(page: Page, baseURL: string): Promise<void> {
+  const bootstrapResponse = await page.request.get('/api/bootstrap');
+  expect(bootstrapResponse.ok()).toBeTruthy();
+  const bootstrap = (await bootstrapResponse.json()) as { today: string; timezone: string };
+  const previousMonth = new Date(`${bootstrap.today.slice(0, 7)}-01T12:00:00.000Z`);
+  previousMonth.setUTCMonth(previousMonth.getUTCMonth() - 1);
+  const date = previousMonth.toISOString().slice(0, 10);
+
+  for (let start = 0; start < 36; start += 12) {
+    const responses = await Promise.all(
+      Array.from({ length: 12 }, (_, offset) =>
+        page.request.post('/api/entries', {
+          data: {
+            id: ulid(),
+            text: uniqueText(`Sheet scroll fixture ${start + offset}`),
+            type: 'note',
+            time: null,
+            tags: [],
+            collection: null,
+            dateIntent: {
+              kind: 'absolute',
+              date,
+              baseToday: bootstrap.today,
+              capturedAt: new Date().toISOString(),
+              timezone: bootstrap.timezone,
+            },
+          },
+          headers: { 'Idempotency-Key': ulid(), Origin: baseURL },
+        }),
+      ),
+    );
+    for (const response of responses) expect(response.status()).toBe(201);
+  }
 }
 
 /** DS-14/PWA-18: every row the sheet offers is a thumb target, not a mouse one. */
@@ -47,7 +84,7 @@ test('a coarse pointer opens the entry as a bottom sheet with thumb-sized rows',
 
   const taskText = uniqueText('Sheet task');
   const row = await captureEntry(page, `. ${taskText}`, taskText);
-  await row.click();
+  await row.tap();
 
   const sheet = page.getByRole('dialog', { name: taskText });
   await expect(sheet).toBeVisible();
@@ -111,10 +148,14 @@ test('delete and edit swap the sheet face instead of stacking another dialog', a
   await expect(row).toBeVisible();
 });
 
-test('the sheet names the month it would file into on the month spread', async ({ page }) => {
+test('the sheet names the month it would file into on the month spread', async ({
+  baseURL,
+  page,
+}) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openJournal(page);
   test.skip(!(await isCoarsePointer(page)), 'The sheet is the coarse-pointer surface.');
+  await seedPreviousMonthScrollDepth(page, baseURL!);
 
   /*
    * Off the current month the schedule action names its target rather than
@@ -156,7 +197,7 @@ test('the sheet names the month it would file into on the month spread', async (
   // bottom row. Wait for that live feedback to clear before exercising the
   // row's own pointer action instead of asking Playwright to click through it.
   await expect(page.locator('.toast')).toHaveCount(0);
-  await row.click();
+  await row.tap();
   const sheet = page.locator('.entry-sheet');
   await expect(sheet).toBeVisible();
   await expect(sheet.getByRole('button', { name: scheduleName })).toBeVisible();

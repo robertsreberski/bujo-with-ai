@@ -120,6 +120,7 @@ export function Composer({
   const menuRef = useRef<HTMLDivElement>(null);
   const focusMenuOnOpenRef = useRef(false);
   const pendingCaretRef = useRef<number | null>(null);
+  const coarseBlurTimerRef = useRef<number | null>(null);
   // Set when Enter accepted a completion, so the submit it would otherwise
   // trigger is swallowed without also disarming a click on "Add entry" —
   // iOS Safari never blurs the input for that click, so it would still look open.
@@ -243,6 +244,15 @@ export function Composer({
       document.removeEventListener('click', collapseOutside, true);
     };
   }, [focused]);
+
+  useEffect(
+    () => () => {
+      if (coarseBlurTimerRef.current !== null) {
+        window.clearTimeout(coarseBlurTimerRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -491,7 +501,13 @@ export function Composer({
       ref={shellRef}
       className="composer-shell relative z-(--z-composer) flex-none border-t border-border bg-bg pb-(--sab) keyboard-open:fixed keyboard-open:right-auto keyboard-open:bottom-[calc(100%_-_var(--vv-offset,0px)_-_var(--vv-height,100%))] keyboard-open:left-[var(--pane-left,var(--sal))] keyboard-open:w-[var(--pane-width,calc(100%_-_var(--sal)_-_var(--sar)))] keyboard-open:pb-0"
       data-expanded={expanded ? 'true' : 'false'}
-      onFocusCapture={() => setFocused(true)}
+      onFocusCapture={() => {
+        if (coarseBlurTimerRef.current !== null) {
+          window.clearTimeout(coarseBlurTimerRef.current);
+          coarseBlurTimerRef.current = null;
+        }
+        setFocused(true);
+      }}
     >
       <div
         className={cn(
@@ -680,6 +696,23 @@ export function Composer({
               onBlur={(event) => {
                 const next = event.relatedTarget;
                 if (next instanceof Node && shellRef.current?.contains(next)) return;
+                if (
+                  typeof window.matchMedia === 'function' &&
+                  window.matchMedia('(pointer: coarse)').matches
+                ) {
+                  // Touch browsers focus the tapped control before dispatching
+                  // its compatibility click. Collapsing this fixed footer in
+                  // that focusout moves a deeply scrolled row out from under
+                  // the click, so let the complete tap task settle first.
+                  if (coarseBlurTimerRef.current !== null) {
+                    window.clearTimeout(coarseBlurTimerRef.current);
+                  }
+                  coarseBlurTimerRef.current = window.setTimeout(() => {
+                    coarseBlurTimerRef.current = null;
+                    if (!shellRef.current?.contains(document.activeElement)) setFocused(false);
+                  }, 0);
+                  return;
+                }
                 setFocused(false);
               }}
               onClick={(event) => trackCaret(event.currentTarget)}
