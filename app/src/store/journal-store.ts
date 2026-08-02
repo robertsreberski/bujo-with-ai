@@ -17,6 +17,7 @@ import type {
   Entry,
   EntryPatch,
   EntryType,
+  IndexResponse,
   DateIntent,
   Settings,
   Summary,
@@ -110,6 +111,7 @@ const DEFAULT_SETTINGS: Settings = {
   density: 'comfortable',
   showTypeBadges: true,
   highlightAiEntries: true,
+  savedViews: [],
   updatedAt: EPOCH,
 };
 
@@ -151,6 +153,7 @@ function initialMirror(): MirrorData {
     summariesByMonth: {},
     latestSummary: null,
     settings: DEFAULT_SETTINGS,
+    index: null,
     mcpStatus: null,
     today,
     serverToday: today,
@@ -161,6 +164,7 @@ function initialMirror(): MirrorData {
 }
 
 export interface JournalState extends MirrorData {
+  index: IndexResponse | null;
   hydrated: boolean;
   loading: boolean;
   /** Canonical rows are kept separate from service availability. */
@@ -233,12 +237,15 @@ export interface JournalState extends MirrorData {
   rewriteSummary(id?: string): Promise<Summary>;
   revertActivity(id: string): Promise<ActivityView>;
   updateSettings(
-    patch: Partial<Pick<Settings, 'density' | 'showTypeBadges' | 'highlightAiEntries'>>,
+    patch: Partial<
+      Pick<Settings, 'density' | 'showTypeBadges' | 'highlightAiEntries' | 'savedViews'>
+    >,
   ): Promise<Settings>;
   searchEntries(query: string, cursor?: string): Promise<JournalSearchPage>;
   loadEntries(query: LoadEntriesQuery): Promise<Entry[]>;
   loadTimeline(anchorDate?: string | null): Promise<Entry[]>;
   loadEarlierTimeline(): Promise<Entry[]>;
+  loadIndex(): Promise<IndexResponse>;
   loadDate(date: string): Promise<Entry[]>;
   loadMonth(month: string): Promise<Entry[]>;
   loadCollection(id: string): Promise<Entry[]>;
@@ -311,6 +318,7 @@ function mirrorFromState(state: JournalState): MirrorData {
     summariesByMonth: state.summariesByMonth,
     latestSummary: state.latestSummary,
     settings: state.settings,
+    index: state.index,
     mcpStatus: state.mcpStatus,
     today: state.today,
     serverToday: state.serverToday,
@@ -788,12 +796,26 @@ async function prepareBootstrapReconciliation(
   let base: MirrorData = {
     entriesById,
     ...buildEntryIndexes(entriesById),
-    collectionsById: Object.fromEntries(
-      [...response.collections, ...(response.timeline?.collections ?? [])].map((collection) => [
-        collection.id,
-        collection,
-      ]),
-    ),
+    collectionsById: {
+      ...Object.fromEntries(
+        (state.index?.collections ?? [])
+          .filter((collection) => collection.archivedAt !== null)
+          .map((collection) => [
+            collection.id,
+            {
+              id: collection.id,
+              name: collection.name,
+              note: collection.note,
+              createdAt: collection.createdAt,
+              archivedAt: collection.archivedAt,
+            },
+          ]),
+      ),
+      ...Object.fromEntries(response.collections.map((collection) => [collection.id, collection])),
+      ...Object.fromEntries(
+        (response.timeline?.collections ?? []).map((collection) => [collection.id, collection]),
+      ),
+    },
     activityById,
     activityOrder: Object.values(activityById)
       .sort((left, right) => right.at.localeCompare(left.at) || right.id.localeCompare(left.id))
@@ -801,6 +823,7 @@ async function prepareBootstrapReconciliation(
     summariesByMonth: options.authoritative ? {} : state.summariesByMonth,
     latestSummary: options.preserveLatestSummary ? state.latestSummary : null,
     settings: response.settings,
+    index: state.index,
     mcpStatus: assistant,
     today: response.today,
     serverToday: response.today,
@@ -2167,6 +2190,46 @@ async function loadEarlierTimelinePage(): Promise<Entry[]> {
   }
 }
 
+async function loadIndexIntoMirror(attempt = 0): Promise<IndexResponse> {
+  requireOnline();
+  const lifecycle = lifecycleGeneration;
+  const responseGeneration = sseGeneration;
+  const response = await authenticated(() => journalApi.getIndex());
+  if (lifecycle !== lifecycleGeneration) return response;
+  if (pairingExpired) {
+    throw new ApiError(401, 'unauthenticated', 'Pairing expired. Reload Journal to reconnect.');
+  }
+  if (responseGeneration !== sseGeneration) {
+    if (attempt < 3) return loadIndexIntoMirror(attempt + 1);
+    throw new Error('Journal changed while the index was loading. Please retry.');
+  }
+
+  const state = useJournalStore.getState();
+  let mirror: MirrorData = {
+    ...mirrorFromState(state),
+    index: response,
+    collectionsById: {
+      ...state.collectionsById,
+      ...Object.fromEntries(
+        response.collections.map((collection) => [
+          collection.id,
+          {
+            id: collection.id,
+            name: collection.name,
+            note: collection.note,
+            createdAt: collection.createdAt,
+            archivedAt: collection.archivedAt,
+          },
+        ]),
+      ),
+    },
+  };
+  mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, state.outbox));
+  useJournalStore.setState(mirror);
+  await persistNow();
+  return response;
+}
+
 function requireEntry(id: string): Entry {
   const entry = useJournalStore.getState().entriesById[id];
   if (!entry || entry.deletedAt !== null) throw new Error('Entry no longer exists.');
@@ -2271,6 +2334,7 @@ async function initializeJournal(): Promise<void> {
     if (saved?.version === 1) {
       const mirror = recomputeActivityRevertEligibility({
         ...saved.mirror,
+        index: saved.mirror.index ?? null,
         summariesByMonth: saved.mirror.summariesByMonth ?? {},
         serverToday: saved.mirror.serverToday ?? saved.mirror.today,
         ...buildEntryIndexes(saved.mirror.entriesById),
@@ -2616,6 +2680,7 @@ export function mergeTagUsage(
 export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<JournalState>()(
   (set, get) => ({
     ...initialMirror(),
+    index: null,
     hydrated: false,
     loading: true,
     resourceStatus: 'loading',
@@ -3139,6 +3204,7 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
     loadEntries: loadEntriesIntoMirror,
     loadTimeline: (anchorDate = null) => loadTimelinePage(anchorDate),
     loadEarlierTimeline: loadEarlierTimelinePage,
+    loadIndex: loadIndexIntoMirror,
     loadDate: (date) => loadEntriesIntoMirror({ from: date, to: date }),
     loadMonth: async (month) => {
       const lifecycle = lifecycleGeneration;
@@ -3351,7 +3417,9 @@ export const journalActions = {
   revertActivity: (id: string): Promise<ActivityView> =>
     useJournalStore.getState().revertActivity(id),
   updateSettings: (
-    patch: Partial<Pick<Settings, 'density' | 'showTypeBadges' | 'highlightAiEntries'>>,
+    patch: Partial<
+      Pick<Settings, 'density' | 'showTypeBadges' | 'highlightAiEntries' | 'savedViews'>
+    >,
   ): Promise<Settings> => useJournalStore.getState().updateSettings(patch),
   setDraft: (draft: string): void => useJournalStore.getState().setDraft(draft),
   markReviewSeen: (): void => useJournalStore.getState().markReviewSeen(),
@@ -3367,6 +3435,7 @@ export const journalActions = {
   loadTimeline: (anchorDate?: string | null): Promise<Entry[]> =>
     useJournalStore.getState().loadTimeline(anchorDate),
   loadEarlierTimeline: (): Promise<Entry[]> => useJournalStore.getState().loadEarlierTimeline(),
+  loadIndex: (): Promise<IndexResponse> => useJournalStore.getState().loadIndex(),
   loadDate: (date: string): Promise<Entry[]> => useJournalStore.getState().loadDate(date),
   loadMonth: (month: string): Promise<Entry[]> => useJournalStore.getState().loadMonth(month),
   loadCollection: (id: string): Promise<Entry[]> => useJournalStore.getState().loadCollection(id),

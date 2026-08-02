@@ -9,7 +9,7 @@ import {
   FIELD_SMALL,
   FORM_STACK,
 } from '../components/ui/dialog-classes';
-import { formatMonth, monthKey } from '../components/dates';
+import { formatMonth } from '../components/dates';
 import { cn } from '../lib/utils';
 import { journalActions } from '../store/journal-store';
 import {
@@ -20,7 +20,8 @@ import {
   SECTION_HEADING_ACTION,
   SECTION_TITLE,
 } from './view-classes';
-import type { JournalCollection, JournalEntry } from '../components/types';
+import type { IndexResponse } from '../api/types';
+import type { JournalCollection } from '../components/types';
 
 /* `.index-row__main` / `.index-row__edit`: a 46px list row with a hairline-split
    trailing edit affordance. `--solo` rows drop the split and own the divider. */
@@ -35,8 +36,7 @@ const INDEX_ROW_ACTION =
   'grid w-[42px] place-items-center border-l border-bg-line text-fg-mute hover:bg-bg-hover hover:text-fg';
 
 interface IndexViewProps {
-  collections: JournalCollection[];
-  entries: JournalEntry[];
+  index: IndexResponse | null;
   onOpenCollection: (collection: JournalCollection) => void;
   onOpenMonth: (month: string) => void;
   onOpenSearch: (query: string) => void;
@@ -116,7 +116,11 @@ function CollectionEditor({ collection, onSave, onClose, onArchive }: Collection
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit" disabled={!name.trim() || !slugify(name)}>
+          <Button
+            variant="primary"
+            type="submit"
+            disabled={!name.trim() || (!collection && !slugify(name))}
+          >
             {collection ? 'Save changes' : 'Create collection'}
           </Button>
         </div>
@@ -125,15 +129,8 @@ function CollectionEditor({ collection, onSave, onClose, onArchive }: Collection
   );
 }
 
-const savedViews = [
-  { name: 'Open tasks', count: 'is:open', query: 'is:open' },
-  { name: 'Added by assistant', count: 'by:assistant', query: 'by:assistant' },
-  { name: 'Tagged #work', count: '#work', query: '#work' },
-];
-
 export function IndexView({
-  collections,
-  entries,
+  index,
   onOpenCollection,
   onOpenMonth,
   onOpenSearch,
@@ -142,26 +139,30 @@ export function IndexView({
 }: IndexViewProps) {
   const [editing, setEditing] = useState<JournalCollection | 'new' | null>(null);
   const [archiving, setArchiving] = useState<JournalCollection | null>(null);
-  const visibleCollections = collections.filter(
-    (collection) => !collection.archivedAt && !collection.id.startsWith('month:'),
-  );
-  const collectionCounts = useMemo(() => {
+  const visibleCollections =
+    index?.collections.filter((collection) => !collection.archivedAt) ?? [];
+  const archivedCollections =
+    index?.collections.filter((collection) => collection.archivedAt !== null) ?? [];
+  const duplicateNames = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const entry of entries) {
-      if (entry.collection) counts.set(entry.collection, (counts.get(entry.collection) ?? 0) + 1);
+    for (const collection of index?.collections ?? []) {
+      const name = collection.name.toLocaleLowerCase();
+      counts.set(name, (counts.get(name) ?? 0) + 1);
     }
-    return counts;
-  }, [entries]);
-  const months = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const entry of entries) {
-      const month = entry.collection?.startsWith('month:')
-        ? entry.collection.slice(6)
-        : monthKey(entry.date);
-      counts.set(month, (counts.get(month) ?? 0) + 1);
-    }
-    return [...counts.entries()].sort(([left], [right]) => right.localeCompare(left));
-  }, [entries]);
+    return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name));
+  }, [index]);
+
+  if (index === null) {
+    return (
+      <section className="min-h-full" aria-label="Journal index" aria-busy="true">
+        <div className={cn(SECTION, 'index-group pt-4')}>
+          <div className="rounded-xl border border-border px-4 py-8 text-center text-sm text-fg-mute">
+            Loading journal index…
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="min-h-full" aria-label="Journal index">
@@ -191,9 +192,18 @@ export function IndexView({
                   type="button"
                   onClick={() => onOpenCollection(collection)}
                 >
-                  <span className={INDEX_ROW_LABEL}>{collection.name}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block overflow-hidden text-base text-fg text-ellipsis whitespace-nowrap">
+                      {collection.name}
+                    </span>
+                    {duplicateNames.has(collection.name.toLocaleLowerCase()) ? (
+                      <small className="block overflow-hidden font-mono text-2xs text-fg-mute text-ellipsis whitespace-nowrap">
+                        /{collection.id}
+                      </small>
+                    ) : null}
+                  </span>
                   <small className={INDEX_ROW_COUNT}>
-                    {collectionCounts.get(collection.id) ?? 0} items
+                    {collection.count} {collection.count === 1 ? 'item' : 'items'}
                   </small>
                   <Icon name="chevronRight" size={14} className="flex-none text-fg-faint" />
                 </button>
@@ -236,47 +246,109 @@ export function IndexView({
           </div>
         </header>
         <div className={CARD}>
-          {months.map(([month, count]) => (
-            <button
-              className={INDEX_ROW_SOLO}
-              type="button"
-              key={month}
-              onClick={() => onOpenMonth(month)}
-            >
-              <span className={INDEX_ROW_LABEL}>{formatMonth(month)}</span>
-              <small className={INDEX_ROW_COUNT}>
-                {count} {count === 1 ? 'entry' : 'entries'}
-              </small>
-              <Icon name="chevronRight" size={14} className="flex-none text-fg-faint" />
-            </button>
-          ))}
+          {index.months.length > 0 ? (
+            index.months.map(({ month, count }) => (
+              <button
+                className={INDEX_ROW_SOLO}
+                type="button"
+                key={month}
+                onClick={() => onOpenMonth(month)}
+              >
+                <span className={INDEX_ROW_LABEL}>{formatMonth(month)}</span>
+                <small className={INDEX_ROW_COUNT}>
+                  {count} {count === 1 ? 'entry' : 'entries'}
+                </small>
+                <Icon name="chevronRight" size={14} className="flex-none text-fg-faint" />
+              </button>
+            ))
+          ) : (
+            <div className="flex min-h-[62px] items-center justify-center gap-[7px] text-sm text-fg-mute">
+              <Icon name="calendar" size={16} />
+              <span>No monthly spreads yet.</span>
+            </div>
+          )}
         </div>
       </section>
 
-      <section className={cn(SECTION, 'index-group pt-4')} aria-labelledby="saved-heading">
-        <header className={SECTION_HEADING}>
-          <div>
-            <h2 className={SECTION_TITLE} id="saved-heading">
-              Saved views
-            </h2>
-            <p className={SECTION_COPY}>Useful cuts through the journal.</p>
+      {archivedCollections.length > 0 ? (
+        <section className={cn(SECTION, 'index-group pt-4')} aria-labelledby="archived-heading">
+          <header className={SECTION_HEADING}>
+            <div>
+              <h2 className={SECTION_TITLE} id="archived-heading">
+                Archived collections
+              </h2>
+              <p className={SECTION_COPY}>Out of the way, with every entry still intact.</p>
+            </div>
+          </header>
+          <div className={CARD}>
+            {archivedCollections.map((collection) => (
+              <div
+                className="index-row grid grid-cols-[minmax(0,1fr)_auto] border-b border-bg-line last:border-b-0"
+                key={collection.id}
+              >
+                <button
+                  className={INDEX_ROW_MAIN}
+                  type="button"
+                  onClick={() => onOpenCollection(collection)}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block overflow-hidden text-base text-fg text-ellipsis whitespace-nowrap">
+                      {collection.name}
+                    </span>
+                    <small className="block overflow-hidden font-mono text-2xs text-fg-mute text-ellipsis whitespace-nowrap">
+                      /{collection.id}
+                    </small>
+                  </span>
+                  <small className={INDEX_ROW_COUNT}>
+                    {collection.count} {collection.count === 1 ? 'item' : 'items'}
+                  </small>
+                </button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="m-1.5 self-center"
+                  aria-label={`Restore ${collection.name} /${collection.id}`}
+                  onClick={() => onUpdateCollection(collection.id, { archived: false })}
+                >
+                  Restore
+                </Button>
+              </div>
+            ))}
           </div>
-        </header>
-        <div className={CARD}>
-          {savedViews.map((view) => (
-            <button
-              className={INDEX_ROW_SOLO}
-              type="button"
-              key={view.name}
-              onClick={() => onOpenSearch(view.query)}
-            >
-              <span className={INDEX_ROW_LABEL}>{view.name}</span>
-              <small className={INDEX_ROW_COUNT}>{view.count}</small>
-              <Icon name="chevronRight" size={14} className="flex-none text-fg-faint" />
-            </button>
-          ))}
-        </div>
-      </section>
+        </section>
+      ) : null}
+
+      {index.savedViews.length > 0 ? (
+        <section className={cn(SECTION, 'index-group pt-4')} aria-labelledby="saved-heading">
+          <header className={SECTION_HEADING}>
+            <div>
+              <h2 className={SECTION_TITLE} id="saved-heading">
+                Saved views
+              </h2>
+              <p className={SECTION_COPY}>Queries you chose to keep close.</p>
+            </div>
+          </header>
+          <div className={CARD}>
+            {index.savedViews.map((view) => (
+              <button
+                className={INDEX_ROW_SOLO}
+                type="button"
+                key={view.id}
+                onClick={() => onOpenSearch(view.query)}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className={INDEX_ROW_LABEL}>{view.name}</span>
+                  <small className="block overflow-hidden font-mono text-2xs text-fg-mute text-ellipsis whitespace-nowrap">
+                    {view.query}
+                  </small>
+                </span>
+                <small className={INDEX_ROW_COUNT}>{view.count}</small>
+                <Icon name="chevronRight" size={14} className="flex-none text-fg-faint" />
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
       <div className="h-6" aria-hidden="true" />
 
       {editing ? (
@@ -301,7 +373,7 @@ export function IndexView({
       {archiving ? (
         <ConfirmDialog
           title={`Archive ${archiving.name}?`}
-          description="Its entries remain safe and searchable. Creating this collection again will restore it."
+          description="Its entries remain safe and searchable. Restore it later from Archived collections."
           confirmLabel="Archive collection"
           onCancel={() => setArchiving(null)}
           onConfirm={() => {

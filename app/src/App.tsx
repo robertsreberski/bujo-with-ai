@@ -436,7 +436,10 @@ export default function App() {
         };
       }
       if (route.name === 'index') {
-        return { key: 'index:all', load: () => journalActions.loadEntries({}) };
+        return {
+          key: `index:${store.cursor ?? 'initial'}`,
+          load: () => journalActions.loadIndex(),
+        };
       }
       return null;
     })();
@@ -446,7 +449,7 @@ export default function App() {
       loadedRoutesRef.current.delete(request.key);
       say(messageFromError(error), 'error');
     });
-  }, [route, say, store.connectionStatus, store.hydrated, store.online, store.today]);
+  }, [route, say, store.connectionStatus, store.cursor, store.hydrated, store.online, store.today]);
 
   const screen = (() => {
     switch (route.name) {
@@ -483,6 +486,7 @@ export default function App() {
             month={displayedMonth}
             today={store.today}
             entries={entries}
+            collections={collections}
             summary={store.summariesByMonth[displayedMonth] ?? null}
             preferences={preferences}
             logView={store.monthLogView ?? DEFAULT_LOG_VIEW}
@@ -504,8 +508,7 @@ export default function App() {
       case 'index':
         return (
           <IndexView
-            collections={collections}
-            entries={entries}
+            index={store.index}
             onOpenCollection={(collection) =>
               navigate({ name: 'collection', collectionId: collection.id })
             }
@@ -517,7 +520,11 @@ export default function App() {
             onUpdateCollection={(id, patch) =>
               run(
                 () => journalActions.updateCollection(id, patch),
-                patch.archived ? 'Collection archived' : 'Collection updated',
+                patch.archived === true
+                  ? 'Collection archived'
+                  : patch.archived === false
+                    ? 'Collection restored'
+                    : 'Collection updated',
               )
             }
           />

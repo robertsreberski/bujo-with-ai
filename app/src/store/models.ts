@@ -6,6 +6,7 @@ import type {
   Entry,
   EntryPatch,
   EntryType,
+  IndexResponse,
   McpStatus,
   OwnerEntryCreate,
   Settings,
@@ -70,6 +71,8 @@ export interface MirrorData extends EntryIndexes {
   summariesByMonth: Record<string, Summary | null>;
   latestSummary: Summary | null;
   settings: Settings;
+  /** Bounded server-owned aggregate snapshot; optional on pre-index persisted records. */
+  index?: IndexResponse | null;
   mcpStatus: McpStatus | null;
   today: string;
   /** Last server-issued date, retained across offline midnight rollover. */

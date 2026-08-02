@@ -253,10 +253,50 @@ export const ActivitySchema = ActivityItemSchema;
 
 export const DensitySchema = z.enum(['comfortable', 'compact']);
 
+export const SavedViewSchema = z.strictObject({
+  id: z
+    .string()
+    .trim()
+    .min(1)
+    .max(80)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/, 'Saved view ids use letters, numbers, _ or -.'),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(80)
+    .refine((value) => !/[\r\n]/u.test(value), 'Saved view names must be one line.'),
+  query: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .refine((value) => !/[\r\n]/u.test(value), 'Saved view queries must be one line.'),
+});
+
+export const SavedViewsSchema = z
+  .array(SavedViewSchema)
+  .max(50)
+  .superRefine((views, context) => {
+    const ids = new Set<string>();
+    for (const [index, view] of views.entries()) {
+      if (ids.has(view.id)) {
+        context.addIssue({
+          code: 'custom',
+          path: [index, 'id'],
+          message: 'Saved view ids must be unique.',
+        });
+      }
+      ids.add(view.id);
+    }
+  });
+
 export const SettingsSchema = z.strictObject({
   density: DensitySchema,
   showTypeBadges: z.boolean(),
   highlightAiEntries: z.boolean(),
+  /** Optional only at the compatibility boundary; current settings always persist an array. */
+  savedViews: SavedViewsSchema.optional(),
   updatedAt: IsoTimestampSchema,
 });
 
@@ -335,6 +375,7 @@ export type ActivityItem = z.infer<typeof ActivityItemSchema>;
 export type Activity = ActivityItem;
 export type ActivityView = z.infer<typeof ActivityViewSchema>;
 export type Settings = z.infer<typeof SettingsSchema>;
+export type SavedView = z.infer<typeof SavedViewSchema>;
 export type AgentToken = z.infer<typeof AgentTokenSchema>;
 export type AgentTokenScope = z.infer<typeof AgentTokenScopeSchema>;
 export type DeviceToken = z.infer<typeof DeviceTokenSchema>;

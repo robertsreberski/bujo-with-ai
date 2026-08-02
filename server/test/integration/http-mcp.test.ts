@@ -147,6 +147,15 @@ class MockOperations implements ApiJournalOperations {
     };
   }
 
+  getIndex() {
+    return {
+      collections: [],
+      months: [{ month: '2026-07', count: 1 }],
+      types: [{ type: 'task', count: 1 }],
+      savedViews: [],
+    };
+  }
+
   listEntries() {
     return { today: '2026-07-31', total: 1, entries: [entry] };
   }
@@ -851,6 +860,24 @@ describe('one-origin HTTP application', () => {
         entry,
         destination: { outcome: 'original', originalCollectionId: null },
       });
+  });
+
+  it('serves the bounded index read model to a paired device only', async () => {
+    const { application } = await build();
+    openApplications.push(application);
+    await request(application.app).get('/api/index').set('Host', 'localhost:5178').expect(401);
+    const cookie = await pair(application);
+    const response = await request(application.app)
+      .get('/api/index')
+      .set('Host', 'localhost:5178')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(response.body).toEqual({
+      collections: [],
+      months: [{ month: '2026-07', count: 1 }],
+      types: [{ type: 'task', count: 1 }],
+      savedViews: [],
+    });
   });
 
   it('surfaces a capture into an unknown collection as a 404', async () => {

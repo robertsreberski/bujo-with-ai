@@ -2,7 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { JournalEntry } from '../components/types';
+import type { JournalCollection, JournalEntry } from '../components/types';
 import { DEFAULT_LOG_VIEW, type LogViewConfig } from './log-arrangement';
 import { MonthView } from './MonthView';
 
@@ -18,12 +18,17 @@ const callbacks = {
   onLogViewChange: vi.fn(),
 };
 
-const renderMonth = (entries: JournalEntry[] = [], logView: LogViewConfig = DEFAULT_LOG_VIEW) =>
+const renderMonth = (
+  entries: JournalEntry[] = [],
+  logView: LogViewConfig = DEFAULT_LOG_VIEW,
+  collections: JournalCollection[] = [],
+) =>
   render(
     <MonthView
       month="2026-08"
       today="2026-08-03"
       entries={entries}
+      collections={collections}
       summary={null}
       preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
       logView={logView}
@@ -51,6 +56,48 @@ const logEntry = (id: string, patch: Partial<JournalEntry> = {}): JournalEntry =
 });
 
 describe('MonthView', () => {
+  it('renders every counted destination exactly once in the owning month', () => {
+    const atlas: JournalCollection = {
+      id: 'project-atlas',
+      name: 'Project Atlas',
+      note: null,
+      createdAt: '2026-08-01T08:00:00.000Z',
+      archivedAt: null,
+    };
+    renderMonth(
+      [
+        logEntry('daily', { text: 'Daily line', collection: null }),
+        logEntry('filed', { text: 'Filed line', collection: 'project-atlas' }),
+        logEntry('august', {
+          text: 'August destination',
+          date: '2026-09-02',
+          collection: 'month:2026-08',
+        }),
+        logEntry('september', {
+          text: 'September destination',
+          date: '2026-08-05',
+          collection: 'month:2026-09',
+        }),
+      ],
+      DEFAULT_LOG_VIEW,
+      [atlas],
+    );
+
+    const timeline = screen.getByRole('region', { name: 'Month timeline' });
+    const monthlyLog = screen.getByRole('region', { name: 'Monthly log' });
+    expect(within(timeline).getByText('Daily line')).toBeInTheDocument();
+    expect(within(timeline).getByText('Filed line')).toBeInTheDocument();
+    expect(within(timeline).getByText('Project Atlas')).toBeInTheDocument();
+    expect(within(monthlyLog).getByText('August destination')).toBeInTheDocument();
+    expect(screen.queryByText('September destination')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Daily line')).toHaveLength(1);
+    expect(screen.getAllByText('Filed line')).toHaveLength(1);
+    expect(screen.getAllByText('August destination')).toHaveLength(1);
+    expect(
+      screen.getByRole('button', { name: /Wednesday, August 5 — 2 entries/i }),
+    ).toBeInTheDocument();
+  });
+
   it('completes the Monday-start calendar through the final week', () => {
     const { container } = renderMonth();
     const grid = screen.getByRole('group', { name: 'August 2026 calendar' });

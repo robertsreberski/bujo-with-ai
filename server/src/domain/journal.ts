@@ -12,6 +12,7 @@ import {
   CollectionSchema,
   EntryPatchSchema,
   EntrySchema,
+  EntryTypeSchema,
   IsoTimestampSchema,
   JournalExportSchema,
   JournalExportV2Schema,
@@ -562,6 +563,9 @@ function entryPredicate(input: SearchEntriesInput): { predicate: string; params:
   const where: string[] = [];
   const params: unknown[] = [];
   if (input.includeDeleted !== true) where.push('e.deleted_at IS NULL');
+  if (input.excludeMonthlyCollections === true) {
+    where.push("(e.collection IS NULL OR e.collection NOT LIKE 'month:%')");
+  }
   if (input.type !== undefined) addWhere(where, params, 'e.type = ?', input.type);
   if (input.state !== undefined) addWhere(where, params, 'e.state = ?', input.state);
   if (input.author !== undefined) addWhere(where, params, 'e.author = ?', input.author);
@@ -681,6 +685,20 @@ interface CollectionRow {
   readonly archived_at: string | null;
 }
 
+interface CountedCollectionRow extends CollectionRow {
+  readonly count: number;
+}
+
+interface MonthCountRow {
+  readonly month: string;
+  readonly count: number;
+}
+
+interface TypeCountRow {
+  readonly type: string;
+  readonly count: number;
+}
+
 interface SummaryRow {
   readonly id: string;
   readonly week_start: string;
@@ -765,6 +783,12 @@ export interface EntryPage {
   readonly hasMore: boolean;
 }
 
+export interface JournalIndexAggregates {
+  readonly collections: ReadonlyArray<Collection & { readonly count: number }>;
+  readonly months: ReadonlyArray<{ readonly month: string; readonly count: number }>;
+  readonly types: ReadonlyArray<{ readonly type: EntryType; readonly count: number }>;
+}
+
 export interface ActivityPage {
   readonly items: readonly ActivityView[];
   readonly hasMore: boolean;
@@ -824,13 +848,7 @@ export class JournalDomain {
   public searchEntries(input: SearchEntriesInput = {}): SearchEntriesResult {
     validateSearch(input);
     const { predicate, params } = entryPredicate(input);
-    const total = (
-      this.db
-        .prepare(`SELECT count(*) AS count FROM entries e WHERE ${predicate}`)
-        .get(...params) as {
-        count: number;
-      }
-    ).count;
+    const total = this.countEntries(input);
     const limit = input.limit ?? 25;
     const offset = input.offset ?? 0;
     const rows = this.db
@@ -883,6 +901,16 @@ export class JournalDomain {
         destination,
       };
     });
+  }
+
+  public countEntries(input: SearchEntriesInput = {}): number {
+    validateSearch(input);
+    const { predicate, params } = entryPredicate(input);
+    return (
+      this.db
+        .prepare(`SELECT count(*) AS count FROM entries e WHERE ${predicate}`)
+        .get(...params) as { count: number }
+    ).count;
   }
 
   public pageEntries(
@@ -957,6 +985,60 @@ export class JournalDomain {
         .prepare(`SELECT * FROM collections ${where} ORDER BY name COLLATE NOCASE`)
         .all() as CollectionRow[]
     ).map(mapCollection);
+  }
+
+  /**
+   * One bounded read model for Index. Collection and type counts are dimensions;
+   * month ownership is exclusive: a month-log destination wins, otherwise the
+   * entry's calendar date owns it.
+   */
+  public getIndexAggregates(): JournalIndexAggregates {
+    const collections = (
+      this.db
+        .prepare(
+          `SELECT c.*, count(e.id) AS count
+           FROM collections c
+           LEFT JOIN entries e ON e.collection = c.id AND e.deleted_at IS NULL
+           WHERE c.id NOT LIKE 'month:%'
+           GROUP BY c.id
+           ORDER BY (c.archived_at IS NOT NULL), c.name COLLATE NOCASE, c.id`,
+        )
+        .all() as CountedCollectionRow[]
+    ).map((row) => ({ ...mapCollection(row), count: row.count }));
+
+    const months = (
+      this.db
+        .prepare(
+          `SELECT CASE
+             WHEN substr(e.collection, 1, 6) = 'month:' THEN substr(e.collection, 7, 7)
+             ELSE substr(e.date, 1, 7)
+           END AS month,
+           count(*) AS count
+           FROM entries e
+           WHERE e.deleted_at IS NULL
+           GROUP BY month
+           ORDER BY month DESC`,
+        )
+        .all() as MonthCountRow[]
+    ).map((row) => ({ month: CalendarMonthSchema.parse(row.month), count: row.count }));
+
+    const countedTypes = new Map<EntryType, number>(
+      (
+        this.db
+          .prepare(
+            `SELECT e.type AS type, count(*) AS count
+           FROM entries e
+           WHERE e.deleted_at IS NULL
+           GROUP BY e.type`,
+          )
+          .all() as TypeCountRow[]
+      ).map((row) => [EntryTypeSchema.parse(row.type), row.count]),
+    );
+    const types = (['task', 'event', 'note', 'idea', 'question', 'habit', 'mood'] as const).map(
+      (type) => ({ type, count: countedTypes.get(type) ?? 0 }),
+    );
+
+    return { collections, months, types };
   }
 
   /** Tag vocabulary ranked by use, so capture can suggest what the owner already writes. */
@@ -2209,6 +2291,7 @@ export class JournalDomain {
           density: Settings['density'];
           show_type_badges: number;
           highlight_ai_entries: number;
+          saved_views: string;
           updated_at: string;
         }
       | undefined;
@@ -2218,24 +2301,28 @@ export class JournalDomain {
             density: 'comfortable',
             showTypeBadges: true,
             highlightAiEntries: true,
+            savedViews: [],
             updatedAt: '1970-01-01T00:00:00.000Z',
           }
         : {
             density: row.density,
             showTypeBadges: row.show_type_badges === 1,
             highlightAiEntries: row.highlight_ai_entries === 1,
+            savedViews: JSON.parse(row.saved_views) as unknown,
             updatedAt: row.updated_at,
           },
     );
   }
 
   public setSettings(
-    patch: Partial<Pick<Settings, 'density' | 'showTypeBadges' | 'highlightAiEntries'>>,
+    patch: Partial<
+      Pick<Settings, 'density' | 'showTypeBadges' | 'highlightAiEntries' | 'savedViews'>
+    >,
     actor: ActorContext,
     mutation?: MutationContext,
   ): Settings {
     if (Object.keys(patch).length === 0) invalid('Settings patch must not be empty');
-    const allowed = new Set(['density', 'showTypeBadges', 'highlightAiEntries']);
+    const allowed = new Set(['density', 'showTypeBadges', 'highlightAiEntries', 'savedViews']);
     for (const key of Object.keys(patch)) {
       if (!allowed.has(key)) invalid(`Unknown setting: ${key}`);
     }
@@ -2260,17 +2347,19 @@ export class JournalDomain {
       });
       this.db
         .prepare(
-          `INSERT INTO settings(id,density,show_type_badges,highlight_ai_entries,updated_at)
-           VALUES (1,@density,@showTypeBadges,@highlightAiEntries,@updatedAt)
+          `INSERT INTO settings(id,density,show_type_badges,highlight_ai_entries,saved_views,updated_at)
+           VALUES (1,@density,@showTypeBadges,@highlightAiEntries,@savedViews,@updatedAt)
            ON CONFLICT(id) DO UPDATE SET density=excluded.density,
              show_type_badges=excluded.show_type_badges,
              highlight_ai_entries=excluded.highlight_ai_entries,
+             saved_views=excluded.saved_views,
              updated_at=excluded.updated_at`,
         )
         .run({
           ...settings,
           showTypeBadges: Number(settings.showTypeBadges),
           highlightAiEntries: Number(settings.highlightAiEntries),
+          savedViews: JSON.stringify(settings.savedViews ?? []),
         });
       context.changes.push(settingsChange(settings));
       return settings;
@@ -2414,19 +2503,23 @@ export class JournalDomain {
         this.db.prepare('SELECT count(*) AS count FROM settings').get() as { count: number }
       ).count;
       if (settingCount > 0) {
-        assertImportMatch('settings', 'singleton', this.getSettings(), journal.settings);
+        assertImportMatch('settings', 'singleton', this.getSettings(), {
+          ...journal.settings,
+          savedViews: journal.settings.savedViews ?? [],
+        });
         skipped.settings++;
         return;
       }
       this.db
         .prepare(
-          `INSERT INTO settings(id,density,show_type_badges,highlight_ai_entries,updated_at)
-           VALUES (1,@density,@showTypeBadges,@highlightAiEntries,@updatedAt)`,
+          `INSERT INTO settings(id,density,show_type_badges,highlight_ai_entries,saved_views,updated_at)
+           VALUES (1,@density,@showTypeBadges,@highlightAiEntries,@savedViews,@updatedAt)`,
         )
         .run({
           ...journal.settings,
           showTypeBadges: Number(journal.settings.showTypeBadges),
           highlightAiEntries: Number(journal.settings.highlightAiEntries),
+          savedViews: JSON.stringify(journal.settings.savedViews ?? []),
         });
       inserted.settings++;
     });

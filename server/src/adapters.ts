@@ -4,6 +4,7 @@ import {
   CreateCollectionRequestSchema,
   CreateEntryRequestSchema,
   EntryQuerySchema,
+  IndexResponseSchema,
   IsoTimestampSchema,
   MigrateEntryRequestSchema,
   ScheduleMonthlyRequestSchema,
@@ -244,6 +245,7 @@ function timelinePage(domain: JournalDomain, config: JournalConfig, raw: unknown
   const page = domain.pageEntries(
     {
       ...(query.to === undefined ? {} : { dateTo: query.to }),
+      excludeMonthlyCollections: true,
       limit: query.limit,
     },
     cursor,
@@ -284,6 +286,34 @@ function domainAgent(actor: AgentActor): Extract<ActorContext, { kind: 'agent' }
       ? {}
       : { tailscaleUserLogin: actor.tailscaleUserLogin }),
   };
+}
+
+/** Reuses the canonical owner grammar without hydrating matching entry rows. */
+function savedViewSearch(query: string): SearchEntriesInput {
+  const search = parseApiSearch({ q: query });
+  return {
+    ...(search.q === undefined ? {} : { query: search.q }),
+    ...(search.type === undefined ? {} : { type: search.type }),
+    ...(search.state === undefined ? {} : { state: search.state }),
+    ...(search.author === undefined ? {} : { author: search.author }),
+    ...(search.tag === undefined ? {} : { tag: search.tag }),
+    ...(search.from === undefined ? {} : { dateFrom: search.from }),
+    ...(search.to === undefined ? {} : { dateTo: search.to }),
+  };
+}
+
+function countedSavedViews(domain: JournalDomain) {
+  return (domain.getSettings().savedViews ?? []).map((view) => ({
+    ...view,
+    count: domain.countEntries(savedViewSearch(view.query)),
+  }));
+}
+
+function indexReadModel(domain: JournalDomain) {
+  return IndexResponseSchema.parse({
+    ...domain.getIndexAggregates(),
+    savedViews: countedSavedViews(domain),
+  });
 }
 
 export function createDomainAdapters(domain: JournalDomain, config: JournalConfig): DomainAdapters {
@@ -337,6 +367,8 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
         nextCursor: page.hasMore ? encodeEntryCursor(items[items.length - 1]!) : null,
       };
     },
+
+    getIndex: () => indexReadModel(domain),
 
     createEntry: (raw, owner, mutation) => {
       const input = CreateEntryRequestSchema.parse(raw);
@@ -530,6 +562,7 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
           ...(input.highlightAiEntries === undefined
             ? {}
             : { highlightAiEntries: input.highlightAiEntries }),
+          ...(input.savedViews === undefined ? {} : { savedViews: input.savedViews }),
         },
         owner,
       );
@@ -652,32 +685,7 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
       };
     },
 
-    index: () => {
-      const countedCollections = domain
-        .listCollections({ includeMonths: true })
-        .map((collection) => ({
-          ...collection,
-          count: domain.searchEntries({ collection: collection.id, limit: 1 }).total,
-        }));
-      const collections = countedCollections.filter(
-        (collection) => !collection.id.startsWith('month:'),
-      );
-      const months = countedCollections
-        .filter((collection) => collection.id.startsWith('month:') && collection.count > 0)
-        .sort((left, right) => right.id.localeCompare(left.id));
-      const openTasks = domain.searchEntries({ type: 'task', state: 'open', limit: 1 }).total;
-      const assistantEntries = domain.searchEntries({ author: 'ai', limit: 1 }).total;
-      const workEntries = domain.searchEntries({ tag: 'work', limit: 1 }).total;
-      return {
-        collections,
-        months,
-        savedViews: [
-          { id: 'open-tasks', count: openTasks },
-          { id: 'assistant', count: assistantEntries },
-          { id: 'work', count: workEntries },
-        ],
-      };
-    },
+    index: () => indexReadModel(domain),
 
     collection: (id) => {
       const collection = domain.getCollection(id);

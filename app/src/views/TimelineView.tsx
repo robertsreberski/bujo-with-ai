@@ -60,16 +60,16 @@ export function TimelineView({
     () => [...new Map(entries.map((entry) => [entry.id, entry])).values()],
     [entries],
   );
-  const dayEntries = useMemo(
+  const dailyEntries = useMemo(
     () => timelineEntries.filter((entry) => entry.collection === null),
     [timelineEntries],
   );
   const leftovers = useMemo(
     () =>
-      dayEntries
+      dailyEntries
         .filter((entry) => entry.type === 'task' && entry.state === 'open' && entry.date < today)
         .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt)),
-    [dayEntries, today],
+    [dailyEntries, today],
   );
   const sections = useMemo(() => {
     const grouped = new Map<string, JournalEntry[]>();
