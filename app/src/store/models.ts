@@ -159,6 +159,11 @@ export interface JournalNotice {
   at: string;
 }
 
+export interface ActivitySeenCursor {
+  at: string;
+  id: string;
+}
+
 export interface JournalClientRecord {
   version: 1;
   savedAt: string;
@@ -170,14 +175,17 @@ export interface JournalClientRecord {
   /** Secret-free token metadata retained for offline Activity attribution. */
   agentTokens: AgentToken[];
   /**
-   * When the owner last opened Review, for the unseen-change count. Optional
-   * because records written before the count existed simply do not have it;
-   * they hydrate as `null`, which reads every recorded change as unseen.
+   * Legacy Activity timestamp from records written before exact cursors and
+   * visible-row acknowledgement. New writes retain it for rollback safety.
    */
   lastReviewSeenAt?: string | null;
+  /** Exact high-water mark set only by the explicit "Mark all seen" action. */
+  activitySeenThrough?: ActivitySeenCursor | null;
+  /** Individually acknowledged rows that actually crossed the Activity viewport. */
+  seenActivityIds?: string[];
   /**
    * Per-device monthly-log arrangement. Optional for the same reason as the
-   * review mark: older records lack it and hydrate as `null`, which means
+   * Activity mark: older records lack it and hydrate as `null`, which means
    * "use the default view".
    */
   monthLogView?: LogViewConfig | null;

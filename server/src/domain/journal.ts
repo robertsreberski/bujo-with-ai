@@ -28,8 +28,12 @@ import type { JournalDatabase } from '../db/database.js';
 import { DomainError } from './errors.js';
 import { journalSearchNeedles } from './search-query.js';
 import type {
+  ActivityAction,
+  ActivityActorSummary,
   ActivityItem,
   ActivityKind,
+  ActivityLineage,
+  ActivityPresentation,
   ActivityView,
   ActorContext,
   AgentMigrationResult,
@@ -529,6 +533,7 @@ function activityOrigin(actor: ActorContext): ActivityItem['origin'] {
       return {
         actor: 'mcp',
         tokenId: actor.tokenId,
+        tokenLabel: actor.tokenLabel,
         ...(actor.tool === undefined ? {} : { tool: actor.tool }),
         ...(actor.tailscaleUserLogin === undefined
           ? {}
@@ -541,6 +546,121 @@ function activityOrigin(actor: ActorContext): ActivityItem['origin'] {
 
 function actorRefs(_actor: ActorContext, entryIds: readonly string[]): ActivityItem['refs'] {
   return { entryIds: [...entryIds] };
+}
+
+function auditActor(
+  origin: ActivityItem['origin'],
+  tokenLabels: ReadonlyMap<string, string>,
+): ActivityActorSummary {
+  if (origin.actor === 'app') return { kind: 'owner', label: 'You' };
+  if (origin.actor === 'system') return { kind: 'system', label: 'Journal' };
+  const tokenId = origin.tokenId;
+  const label =
+    origin.tokenLabel ??
+    (tokenId === undefined
+      ? 'Assistant'
+      : (tokenLabels.get(tokenId) ?? `Agent …${tokenId.slice(-6)}`));
+  return {
+    kind: 'agent',
+    label,
+    ...(tokenId === undefined ? {} : { tokenId }),
+    ...(origin.tool === undefined ? {} : { tool: origin.tool }),
+  };
+}
+
+function auditAction(activity: ActivityItem): ActivityAction {
+  switch (activity.kind) {
+    case 'agent-add':
+      return 'added';
+    case 'agent-update':
+      return 'updated';
+    case 'agent-delete':
+      return 'deleted';
+    case 'agent-migration':
+      return activity.text.startsWith('Scheduled ') ? 'scheduled' : 'migrated';
+    case 'summary-filed':
+      return 'filed-summary';
+    case 'summary-saved':
+      return 'saved-summary';
+    case 'revert':
+      return 'reverted';
+  }
+}
+
+function activityEntryContentRedacted(activity: ActivityItem): boolean {
+  return (
+    activity.refs.entryIds.length > 0 &&
+    ![...activity.preImages, ...activity.postImages].some(
+      (snapshot) => snapshot.entity === 'entry' && snapshot.row !== null,
+    )
+  );
+}
+
+function auditReason(activity: ActivityItem): string | null {
+  if (activityEntryContentRedacted(activity)) return null;
+  const separator = activity.text.indexOf(' — ');
+  if (separator >= 0) return activity.text.slice(separator + 3).trim() || null;
+  if (activity.kind === 'agent-add') {
+    const snapshot = activity.postImages.find(
+      (snapshot) => snapshot.entity === 'entry' && snapshot.row !== null,
+    );
+    return snapshot?.entity === 'entry' ? snapshot.row?.source?.trim() || null : null;
+  }
+  if (activity.kind === 'summary-filed') {
+    const snapshot = activity.postImages.find(
+      (snapshot) => snapshot.entity === 'summary' && snapshot.row !== null,
+    );
+    return snapshot?.entity === 'summary' ? snapshot.row?.source?.trim() || null : null;
+  }
+  return null;
+}
+
+function activityEntry(activity: ActivityItem, entryId: string): Entry | null {
+  for (const images of [activity.postImages, activity.preImages]) {
+    const snapshot = images.find(
+      (candidate) => candidate.entity === 'entry' && candidate.id === entryId,
+    );
+    if (snapshot?.entity === 'entry' && snapshot.row !== null) return snapshot.row;
+  }
+  return null;
+}
+
+function auditObjectLabel(activity: ActivityItem): string {
+  const primaryEntryId = activity.refs.entryIds[0];
+  if (primaryEntryId !== undefined) {
+    if (activity.refs.entryIds.length > 1) return `${activity.refs.entryIds.length} entries`;
+    const row = activityEntry(activity, primaryEntryId);
+    if (row === null) return `Entry …${primaryEntryId.slice(-6)}`;
+    const label = row.text.length <= 100 ? row.text : `${row.text.slice(0, 99)}…`;
+    return `“${label}”`;
+  }
+  const summary = [...activity.postImages, ...activity.preImages].find(
+    (snapshot) => snapshot.entity === 'summary' && snapshot.row !== null,
+  );
+  if (summary?.entity === 'summary' && summary.row !== null) {
+    return `weekly summary for ${summary.row.weekStart}`;
+  }
+  return 'journal activity';
+}
+
+function migrationLineage(activity: ActivityItem): ActivityLineage | null {
+  if (activity.kind !== 'agent-migration') return null;
+  const fromEntryIds: string[] = [];
+  const toEntryIds: string[] = [];
+  const createdEntryIds: string[] = [];
+  for (const [index, before] of activity.preImages.entries()) {
+    const after = activity.postImages[index];
+    if (before.entity !== 'entry' || after?.entity !== 'entry') continue;
+    if (before.row !== null) fromEntryIds.push(before.id);
+    if (before.row === null && after.row !== null) createdEntryIds.push(after.id);
+    if (after.row !== null) toEntryIds.push(after.id);
+  }
+  if (fromEntryIds.length === 0 && toEntryIds.length === 0) return null;
+  return {
+    fromEntryIds: [...new Set(fromEntryIds)],
+    toEntryIds: [...new Set(createdEntryIds.length > 0 ? createdEntryIds : toEntryIds)],
+    relatedActivityId: activity.refs.activityId ?? activity.revertedByActivityId ?? null,
+  };
 }
 
 function snapshotEntry(entry: Entry): Snapshot {
@@ -1242,6 +1362,7 @@ export class JournalDomain {
   private activityViews(activities: readonly ActivityItem[]): readonly ActivityView[] {
     const snapshots = activities.flatMap((activity) => activity.postImages);
     const current = new Map<string, Snapshot['row']>();
+    const currentEntries = new Map<string, Entry>();
     const load = <Row>(
       entity: Snapshot['entity'],
       rows: readonly Row[],
@@ -1255,16 +1376,18 @@ export class JournalDomain {
         snapshots.filter((snapshot) => snapshot.entity === entity).map((snapshot) => snapshot.id),
       ),
     ];
-    const entryIds = ids('entry');
+    const entryIds = [
+      ...new Set([...ids('entry'), ...activities.flatMap((activity) => activity.refs.entryIds)]),
+    ];
     if (entryIds.length > 0) {
-      load(
-        'entry',
-        this.db
-          .prepare('SELECT * FROM entries WHERE id IN (SELECT value FROM json_each(?))')
-          .all(JSON.stringify(entryIds)) as EntryRow[],
-        (row) => row.id,
-        mapEntry,
-      );
+      const rows = this.db
+        .prepare('SELECT * FROM entries WHERE id IN (SELECT value FROM json_each(?))')
+        .all(JSON.stringify(entryIds)) as EntryRow[];
+      load('entry', rows, (row) => row.id, mapEntry);
+      for (const row of rows) {
+        const entry = mapEntry(row);
+        currentEntries.set(entry.id, entry);
+      }
     }
     const collectionIds = ids('collection');
     if (collectionIds.length > 0) {
@@ -1289,6 +1412,16 @@ export class JournalDomain {
       );
     }
 
+    const latestActivityByEntry = new Map<string, ActivityItem>();
+    for (const candidate of [...activities].sort(
+      (left, right) => right.at.localeCompare(left.at) || right.id.localeCompare(left.id),
+    )) {
+      for (const entryId of candidate.refs.entryIds) {
+        if (!latestActivityByEntry.has(entryId)) latestActivityByEntry.set(entryId, candidate);
+      }
+    }
+    const tokenLabels = new Map<string, string>();
+
     return activities.map((activity) => {
       let reason: 'already_reverted' | 'post_image_mismatch' | 'not_reversible' | null = null;
       if (activity.revertedAt !== null) reason = 'already_reverted';
@@ -1306,9 +1439,65 @@ export class JournalDomain {
       ) {
         reason = 'post_image_mismatch';
       }
+      const actor = auditActor(activity.origin, tokenLabels);
+      const action = auditAction(activity);
+      const primaryEntryId = activity.refs.entryIds[0] ?? null;
+      let lineage = migrationLineage(activity);
+      if (activity.kind === 'revert' && activity.refs.activityId !== undefined) {
+        const original = this.getActivity(activity.refs.activityId);
+        const originalLineage = original === null ? null : migrationLineage(original);
+        if (originalLineage !== null) {
+          lineage = {
+            fromEntryIds: originalLineage.toEntryIds,
+            toEntryIds: originalLineage.fromEntryIds,
+            relatedActivityId: activity.refs.activityId,
+          };
+        }
+      }
+      const presentationReason = auditReason(activity);
+      const presentation: ActivityPresentation = {
+        actor,
+        action,
+        objectLabel: auditObjectLabel(activity),
+        primaryEntryId,
+        reason: presentationReason,
+        attribution: activity.refs.entryIds.map((entryId) => {
+          const row = currentEntries.get(entryId) ?? activityEntry(activity, entryId);
+          const latest = latestActivityByEntry.get(entryId);
+          const latestSnapshot = latest === undefined ? null : activityEntry(latest, entryId);
+          const latestIsCurrent =
+            row !== null && latest !== undefined && latestSnapshot?.revision === row.revision;
+          return {
+            entryId,
+            originalAuthor:
+              row === null
+                ? 'unknown'
+                : row.author === 'ai'
+                  ? ('agent' as const)
+                  : ('owner' as const),
+            latestModifier:
+              row === null || latest === undefined || !latestIsCurrent
+                ? null
+                : auditActor(latest.origin, tokenLabels),
+          };
+        }),
+        lineage,
+        latestAgentTouch:
+          actor.kind === 'agent' && primaryEntryId !== null
+            ? {
+                activityId: activity.id,
+                entryId: primaryEntryId,
+                at: activity.at,
+                actor,
+                action,
+                reason: presentationReason,
+              }
+            : null,
+      };
       return ActivityViewSchema.parse({
         ...activity,
         revert: { eligible: reason === null, reason },
+        presentation,
       });
     });
   }

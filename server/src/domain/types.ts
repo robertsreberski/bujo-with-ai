@@ -1,6 +1,10 @@
 import type {
+  ActivityAction,
+  ActivityActorSummary,
   ActivityItem,
   ActivityKind,
+  ActivityLineage,
+  ActivityPresentation,
   ActivitySnapshot,
   ActivityView,
   AgentToken,
@@ -27,8 +31,12 @@ import type {
 } from '../contracts/index.js';
 
 export type {
+  ActivityAction,
+  ActivityActorSummary,
   ActivityItem,
   ActivityKind,
+  ActivityLineage,
+  ActivityPresentation,
   ActivitySnapshot,
   ActivityView,
   AgentToken,

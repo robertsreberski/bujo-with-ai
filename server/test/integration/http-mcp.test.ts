@@ -176,6 +176,9 @@ class MockOperations implements ApiJournalOperations {
   listEntries() {
     return { today: '2026-07-31', total: 1, entries: [entry] };
   }
+  getEntry(id: string) {
+    return { entry: { ...entry, id } };
+  }
   createEntry(input: Record<string, unknown>, actor: OwnerActor, mutation: MutationContext) {
     void actor;
     this.rememberMutation(this.ownerMutations, mutation.id, input);
@@ -768,6 +771,11 @@ describe('one-origin HTTP application', () => {
     openApplications.push(application);
     await request(application.app).get('/api/bootstrap').set('Host', 'localhost:5178').expect(401);
     const cookie = await pair(application);
+    await request(application.app)
+      .get(`/api/entries/${ENTRY_ID}`)
+      .set('Host', 'localhost:5178')
+      .set('Cookie', cookie)
+      .expect(200, { entry });
 
     const payload = {
       id: ENTRY_ID,

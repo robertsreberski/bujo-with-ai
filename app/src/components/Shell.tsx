@@ -12,8 +12,8 @@ import type { JournalStatus } from '../store/models';
 export interface ShellCounts {
   /** Open tasks and habits due today or earlier, outside collections. */
   today?: number;
-  /** Automatic changes recorded since Activity was last opened. */
-  review?: number;
+  /** At least one loaded event is still unseen; deliberately not a total. */
+  activity?: boolean;
 }
 
 interface ShellProps {
@@ -34,7 +34,7 @@ interface ShellProps {
   onOpenRecovery: () => void;
 }
 
-type NavName = 'today' | 'month' | 'index' | 'review';
+type NavName = 'today' | 'month' | 'index' | 'activity';
 
 const navItems: Array<{
   name: NavName;
@@ -46,7 +46,7 @@ const navItems: Array<{
   { name: 'today', label: 'Timeline', icon: 'check', unit: 'open item' },
   { name: 'month', label: 'Month', icon: 'calendar' },
   { name: 'index', label: 'Index', icon: 'folder' },
-  { name: 'review', label: 'Activity', icon: 'sparkle', unit: 'unseen change' },
+  { name: 'activity', label: 'Activity', icon: 'sparkle', unit: 'unseen change' },
 ];
 
 /** Two digits is all the badge has room for; past that the number stops mattering. */
@@ -103,9 +103,10 @@ export function Shell({
   // Counts are announced, not just drawn: the badge itself is decorative, so the
   // number joins the button's accessible name instead of being read as a digit
   // floating after the label.
-  const countFor = (name: NavName): number =>
-    name === 'today' ? (counts?.today ?? 0) : name === 'review' ? (counts?.review ?? 0) : 0;
+  const countFor = (name: NavName): number => (name === 'today' ? (counts?.today ?? 0) : 0);
+  const hasActivity = counts?.activity === true;
   const accessibleName = (item: (typeof navItems)[number]): string | undefined => {
+    if (item.name === 'activity' && hasActivity) return 'Activity — unseen changes';
     const count = countFor(item.name);
     if (count === 0 || !item.unit) return undefined;
     return `${item.label} — ${count} ${item.unit}${count === 1 ? '' : 's'}`;
@@ -197,7 +198,15 @@ export function Shell({
               >
                 <Icon name={item.icon} size={15} />
                 <span className="min-w-0 flex-1">{item.label}</span>
-                {countFor(item.name) > 0 ? (
+                {item.name === 'activity' && hasActivity ? (
+                  <span
+                    className={cn(
+                      'nav-item__count size-2 flex-none rounded-full',
+                      isActive(item.name) ? 'bg-primary' : 'bg-border-strong',
+                    )}
+                    aria-hidden="true"
+                  />
+                ) : countFor(item.name) > 0 ? (
                   <Badge
                     variant={isActive(item.name) ? 'countActive' : 'count'}
                     className="nav-item__count flex-none"
@@ -288,7 +297,15 @@ export function Shell({
                   onClick={() => navigate(item.name)}
                 >
                   {item.label}
-                  {countFor(item.name) > 0 ? (
+                  {item.name === 'activity' && hasActivity ? (
+                    <span
+                      className={cn(
+                        'tab__count size-2 flex-none rounded-full',
+                        isActive(item.name) ? 'bg-primary' : 'bg-border-strong',
+                      )}
+                      aria-hidden="true"
+                    />
+                  ) : countFor(item.name) > 0 ? (
                     <Badge
                       variant={isActive(item.name) ? 'countActive' : 'count'}
                       className="tab__count flex-none"

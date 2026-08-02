@@ -141,12 +141,12 @@ describe('resolveDestination screen defaults', () => {
     });
   });
 
-  it('uses today on the index and review screens', () => {
+  it('uses today on the index and Activity screens', () => {
     expect(resolve({ route: { name: 'index' } }).destination).toEqual({
       kind: 'date',
       date: TODAY,
     });
-    expect(resolve({ route: { name: 'review' } }).destination).toEqual({
+    expect(resolve({ route: { name: 'activity' } }).destination).toEqual({
       kind: 'date',
       date: TODAY,
     });
@@ -480,7 +480,7 @@ describe('viewedDestination', () => {
 
   it('reports nothing for the screens that display no destination', () => {
     expect(viewedDestination({ name: 'index' }, TODAY)).toBeNull();
-    expect(viewedDestination({ name: 'review' }, TODAY)).toBeNull();
+    expect(viewedDestination({ name: 'activity' }, TODAY)).toBeNull();
   });
 
   it('names an archived collection route, which files elsewhere but still shows it', () => {

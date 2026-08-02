@@ -29,6 +29,7 @@ vi.mock('./store/journal-store', async (importOriginal) => {
         Promise.resolve({ collections: [], months: [], types: [], savedViews: [] }),
       ),
       loadEntries: vi.fn(() => Promise.resolve([])),
+      loadEntry: vi.fn(() => Promise.resolve({} as Entry)),
       createEntry: vi.fn(() => Promise.resolve({} as Entry)),
       createCollection: vi.fn(() => Promise.resolve({} as Collection)),
     },
@@ -49,6 +50,7 @@ const createEntry = vi.mocked(journalActions.createEntry);
 const createCollection = vi.mocked(journalActions.createCollection);
 const loadIndex = vi.mocked(journalActions.loadIndex);
 const loadEntries = vi.mocked(journalActions.loadEntries);
+const loadEntry = vi.mocked(journalActions.loadEntry);
 
 beforeAll(() => {
   globalThis.ResizeObserver ??= class {
@@ -75,6 +77,11 @@ beforeEach(() => {
     defaultType: 'task',
     entriesById: {},
     index: null,
+    activityById: {},
+    activityOrder: [],
+    lastReviewSeenAt: null,
+    activitySeenThrough: null,
+    seenActivityIds: [],
     collectionsById: { reading },
     notices: [],
     composerPreset: null,
@@ -125,6 +132,28 @@ describe('App resource loading', () => {
 
     await waitFor(() => expect(loadIndex).toHaveBeenCalledTimes(1));
     expect(loadEntries).not.toHaveBeenCalled();
+  });
+});
+
+describe('App Activity acknowledgement', () => {
+  it('does not acknowledge the history merely because the route opened', async () => {
+    const markAllSeen = vi.spyOn(journalActions, 'markAllActivitySeen');
+    window.history.replaceState(null, '', '/activity');
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Agent history' })).toBeInTheDocument();
+    expect(markAllSeen).not.toHaveBeenCalled();
+    markAllSeen.mockRestore();
+  });
+
+  it('resolves a deep-linked entry that was outside the bootstrap window', async () => {
+    window.history.replaceState(null, '', '/activity?entry=01K1H0000000000000000042');
+    useJournalStore.setState({ online: true, connectionStatus: 'connected' });
+
+    render(<App />);
+
+    await waitFor(() => expect(loadEntry).toHaveBeenCalledWith('01K1H0000000000000000042'));
   });
 });
 

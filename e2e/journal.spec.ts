@@ -86,28 +86,18 @@ function humanizeSlug(slug: string): string {
   return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
 }
 
-/** The count a nav item announces, or 0 when it carries no badge at all. */
-async function navCount(page: Page, label: 'Timeline' | 'Activity'): Promise<number> {
-  const name = await page
-    .getByRole('button', { name: new RegExp(`^${label}`) })
-    .first()
-    .getAttribute('aria-label');
-  const match = /— (\d+) /.exec(name ?? '');
-  return match ? Number(match[1]) : 0;
-}
-
 /** Reads the persisted client record straight out of IndexedDB. */
-async function persistedReviewMark(page: Page): Promise<string | null> {
+async function persistedActivityAcknowledgement(page: Page): Promise<boolean> {
   return page.evaluate(
     () =>
-      new Promise<string | null>((resolve) => {
+      new Promise<boolean>((resolve) => {
         const request = indexedDB.open('journal-pwa');
-        request.onerror = () => resolve(null);
+        request.onerror = () => resolve(false);
         request.onsuccess = () => {
           const database = request.result;
           if (!database.objectStoreNames.contains('client-state')) {
             database.close();
-            resolve(null);
+            resolve(false);
             return;
           }
           const read = database
@@ -116,12 +106,19 @@ async function persistedReviewMark(page: Page): Promise<string | null> {
             .get('journal-client-state-v1');
           read.onerror = () => {
             database.close();
-            resolve(null);
+            resolve(false);
           };
           read.onsuccess = () => {
-            const record = read.result as { lastReviewSeenAt?: string | null } | undefined;
+            const record = read.result as
+              | {
+                  activitySeenThrough?: { at: string; id: string } | null;
+                  seenActivityIds?: string[];
+                }
+              | undefined;
             database.close();
-            resolve(record?.lastReviewSeenAt ?? null);
+            resolve(
+              record?.activitySeenThrough != null || (record?.seenActivityIds?.length ?? 0) > 0,
+            );
           };
         };
       }),
@@ -230,7 +227,7 @@ test('owner capture persists and the four primary views navigate by semantic con
   const routes = [
     { button: 'Month', path: '/month', landmark: /^[A-Z][a-z]+ \d{4} monthly log$/ },
     { button: 'Index', path: '/index', landmark: 'Journal index' },
-    { button: 'Activity', path: '/review', landmark: 'Assistant activity' },
+    { button: 'Activity', path: '/activity', landmark: 'Activity history' },
     { button: 'Timeline', path: '/', landmark: 'Timeline' },
   ] as const;
 
@@ -594,12 +591,9 @@ test('owner capture and automatic add-update-revert stay live and conflict safe'
 
   await page.getByRole('button', { name: /^Activity/ }).click();
   const updateActivity = page.getByRole('article').filter({ hasText: updateReason });
-  const addActivity = page
-    .getByRole('article')
-    .filter({ hasText: 'agent add' })
-    .filter({ hasText: originalText });
+  const addActivity = page.getByRole('article').filter({ hasText: originalText });
   await expect(updateActivity).toContainText(updatedText);
-  await expect(addActivity).toContainText('agent add');
+  await expect(addActivity).toContainText('added');
   await updateActivity.getByRole('button', { name: 'Revert' }).click();
 
   const confirmation = page.getByRole('dialog', { name: 'Revert this change?' });
@@ -858,7 +852,7 @@ test('every capture sigil opens its own completion panel', async ({ page }) => {
   await expect(panel).toBeHidden();
 });
 
-test('Timeline avoids a partial count while Activity announces unseen changes', async ({
+test('Timeline avoids a partial count while Activity uses a truthful unseen indicator', async ({
   baseURL,
   context,
   page,
@@ -870,7 +864,6 @@ test('Timeline avoids a partial count while Activity announces unseen changes', 
   await expect(page.getByRole('button', { name: 'Timeline', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /^Timeline — / })).toHaveCount(0);
 
-  const unseenBefore = await navCount(page, 'Activity');
   const secret = await issueMcpSecret(page, uniqueText('Badge agent'));
   const client = new Client({ name: 'journal-badge-evidence', version: '1.0.0' });
   const transport = new StreamableHTTPClientTransport(new URL('/mcp', baseURL), {
@@ -884,7 +877,7 @@ test('Timeline avoids a partial count while Activity announces unseen changes', 
         name: 'add_entry',
         arguments: {
           idempotencyKey: ulid(),
-          source: 'Playwright review-badge coverage',
+          source: 'Playwright Activity indicator coverage',
           text: agentText,
           type: 'note',
         },
@@ -895,19 +888,20 @@ test('Timeline avoids a partial count while Activity announces unseen changes', 
     await client.close();
   }
 
-  await expect.poll(() => navCount(page, 'Activity')).toBe(unseenBefore + 1);
-  await expect(
-    page.getByRole('button', { name: /^Activity — \d+ unseen changes?$/ }),
-  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Activity — unseen changes' })).toBeVisible();
 
   await page.getByRole('button', { name: /^Activity/ }).click();
-  await expect(page.getByRole('region', { name: 'Assistant activity' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Activity', exact: true })).toBeVisible();
-  // The mark is local and debounced; reload only proves anything once it landed.
-  await expect.poll(() => persistedReviewMark(page)).not.toBeNull();
+  await expect(page.getByRole('region', { name: 'Activity history' })).toBeVisible();
+  await expect(page.getByRole('article').filter({ hasText: agentText })).toBeVisible();
+  // A visible row is acknowledged locally; route opening alone is not the mark.
+  // The shared E2E database may have older unloaded rows, so deliberately use
+  // the explicit acknowledgement when the conservative signal remains.
+  const markAllSeen = page.getByRole('button', { name: 'Mark all seen' });
+  if (await markAllSeen.isVisible()) await markAllSeen.click();
+  await expect.poll(() => persistedActivityAcknowledgement(page)).toBe(true);
 
   await page.reload();
   await expect(page.locator('#journal-content')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Activity', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: /^Activity — / })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Activity — unseen changes' })).toHaveCount(0);
 });

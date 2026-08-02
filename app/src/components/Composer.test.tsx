@@ -507,12 +507,12 @@ describe('Composer destination chip', () => {
     expect(onChipOverrideChange).toHaveBeenLastCalledWith(null);
   });
 
-  it('warns that review captures land in the daily log', async () => {
+  it('warns that Activity captures land in the daily log', async () => {
     const user = userEvent.setup();
-    render(<Harness route={{ name: 'review' }} />);
+    render(<Harness route={{ name: 'activity' }} />);
     await user.click(input());
     await user.click(screen.getByRole('button', { name: 'Destination: Today' }));
-    expect(await screen.findByText(/Review is an audit screen/)).toBeInTheDocument();
+    expect(await screen.findByText(/Activity is an audit screen/)).toBeInTheDocument();
   });
 });
 

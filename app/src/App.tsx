@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CollectionView } from './views/CollectionView';
 import { IndexView } from './views/IndexView';
 import { MonthView } from './views/MonthView';
-import { ReviewView } from './views/ReviewView';
+import { ActivityView } from './views/ActivityView';
 import { TimelineView } from './views/TimelineView';
 import { Composer } from './components/Composer';
 import { RecoveryDialog } from './components/DeadLetterDialog';
@@ -36,9 +36,10 @@ import { createUlid } from './store/ids';
 import {
   journalActions,
   selectActiveCollections,
+  selectHasUnseenActivity,
   selectJournalStatus,
   selectTimelineEntries,
-  selectUnseenReviewCount,
+  selectUnseenActivityIds,
   useJournalStore,
 } from './store/journal-store';
 
@@ -61,12 +62,11 @@ const messageFromError = (error: unknown): string => {
 
 export default function App() {
   useViewportLayout();
-  const { route, navigate } = useJournalRoute();
+  const { route, entryId, navigate, openEntry, closeEntry } = useJournalRoute();
   const store = useJournalStore();
   const journalStatus = selectJournalStatus(store);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [detailId, setDetailId] = useState<string | null>(null);
   const [migrationEntries, setMigrationEntries] = useState<JournalEntry[] | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
   // Keyed by the focus key so a picked destination survives repeated captures on
@@ -76,8 +76,9 @@ export default function App() {
   );
   const [focusRequest, setFocusRequest] = useState<number | undefined>(undefined);
   const latestNoticeRef = useRef<string | null>(null);
-  const reviewTokensLoadedRef = useRef(false);
+  const activityTokensLoadedRef = useRef(false);
   const loadedRoutesRef = useRef(new Set<string>());
+  const loadedEntryLinksRef = useRef(new Set<string>());
   const routeFocusKeyRef = useRef('');
 
   const entries = useMemo(
@@ -112,7 +113,7 @@ export default function App() {
         .sort((left, right) => right.weekStart.localeCompare(left.weekStart)),
     [store.reflectionsByWeek, timelineRange],
   );
-  const detailEntry = detailId ? (store.entriesById[detailId] ?? null) : null;
+  const detailEntry = entryId ? (store.entriesById[entryId] ?? null) : null;
   const preferences: DisplayPreferences = store.settings;
   const displayedMonth =
     route.name === 'month' ? (route.month ?? store.today.slice(0, 7)) : store.today.slice(0, 7);
@@ -132,7 +133,8 @@ export default function App() {
   // `useJournalStore(selector)` would hand React a new snapshot every render.
   const activeCollections = useMemo(() => selectActiveCollections(store), [store]);
   const chipOverride = chipState?.key === routeFocusKey ? chipState.destination : null;
-  const counts = useMemo(() => ({ review: selectUnseenReviewCount(store) }), [store]);
+  const counts = useMemo(() => ({ activity: selectHasUnseenActivity(store) }), [store]);
+  const unseenActivityIds = useMemo(() => selectUnseenActivityIds(store), [store]);
 
   const say = useCallback(
     (message: string, tone: 'success' | 'error' = 'success', action?: ToastAction) => {
@@ -215,14 +217,6 @@ export default function App() {
     return () => journalActions.shutdown();
   }, [say]);
 
-  // Visiting Review stamps everything seen; the activity-length dep also clears
-  // items that stream in while the screen is open. No lastReviewSeenAt dep — a
-  // stamp must not retrigger itself.
-  useEffect(() => {
-    if (route.name !== 'review') return;
-    journalActions.markReviewSeen();
-  }, [route.name, store.activityOrder.length]);
-
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(
@@ -231,6 +225,16 @@ export default function App() {
     );
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    if (!entryId || detailEntry || !store.online || loadedEntryLinksRef.current.has(entryId))
+      return;
+    loadedEntryLinksRef.current.add(entryId);
+    void journalActions.loadEntry(entryId).catch((error: unknown) => {
+      loadedEntryLinksRef.current.delete(entryId);
+      say(messageFromError(error), 'error');
+    });
+  }, [detailEntry, entryId, say, store.online]);
 
   useEffect(() => {
     const notice = store.notices.at(-1);
@@ -414,10 +418,10 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (route.name !== 'review' || !store.online || reviewTokensLoadedRef.current) return;
-    reviewTokensLoadedRef.current = true;
+    if (route.name !== 'activity' || !store.online || activityTokensLoadedRef.current) return;
+    activityTokensLoadedRef.current = true;
     void journalActions.refreshTokens().catch(() => {
-      reviewTokensLoadedRef.current = false;
+      activityTokensLoadedRef.current = false;
     });
   }, [route.name, store.online]);
 
@@ -548,7 +552,7 @@ export default function App() {
             preferences={preferences}
             online={store.online}
             timezone={store.timezone}
-            onOpenEntry={(entry) => setDetailId(entry.id)}
+            onOpenEntry={(entry) => openEntry(entry.id)}
             onToggleEntry={toggleEntry}
             onStartMigration={setMigrationEntries}
             onLoadEarlier={() => run(() => journalActions.loadEarlierTimeline())}
@@ -573,7 +577,7 @@ export default function App() {
             onDaySelect={(date) =>
               navigate({ name: 'today', date: date === store.today ? null : date })
             }
-            onOpenEntry={(entry) => setDetailId(entry.id)}
+            onOpenEntry={(entry) => openEntry(entry.id)}
             onToggleEntry={toggleEntry}
             onSaveSummary={(summary) =>
               run(() => journalActions.saveSummary(summary.id), 'Weekly summary saved to today')
@@ -617,23 +621,28 @@ export default function App() {
             logView={store.collectionLogView ?? DEFAULT_LOG_VIEW}
             onLogViewChange={journalActions.setCollectionLogView}
             onBack={() => navigate({ name: 'index' })}
-            onOpenEntry={(entry) => setDetailId(entry.id)}
+            onOpenEntry={(entry) => openEntry(entry.id)}
             onToggleEntry={toggleEntry}
           />
         );
       }
-      case 'review': {
+      case 'activity': {
         const tokenLabels = Object.fromEntries(
           store.agentTokens.map((token) => [token.id, token.label]),
         );
         return (
-          <ReviewView
+          <ActivityView
             activity={activity}
             tokenLabels={tokenLabels}
+            unseenIds={unseenActivityIds}
+            hasUnseen={counts.activity}
             hasMore={store.activityHasMore}
             loadingMore={store.activityLoading}
             timezone={store.timezone}
             onLoadMore={loadMoreActivity}
+            onOpenEntry={openEntry}
+            onMarkVisible={journalActions.markActivityVisible}
+            onMarkAllSeen={journalActions.markAllActivitySeen}
             onRevert={(item: ActivityItem) =>
               run(() => journalActions.revertActivity(item.id), 'Change reverted')
             }
@@ -657,7 +666,7 @@ export default function App() {
         return 'Index';
       case 'collection':
         return store.collectionsById[route.collectionId]?.name ?? 'Collection';
-      case 'review':
+      case 'activity':
         return 'Activity';
     }
   })();
@@ -675,7 +684,7 @@ export default function App() {
         return `${activeCollections.length} active ${activeCollections.length === 1 ? 'collection' : 'collections'}`;
       case 'collection':
         return 'Collection in your journal index';
-      case 'review':
+      case 'activity':
         return 'Agent changes and reversible history';
     }
   })();
@@ -767,7 +776,7 @@ export default function App() {
           collections={collections}
           today={store.today}
           contextMonth={contextMonth}
-          onClose={() => setDetailId(null)}
+          onClose={closeEntry}
           onUpdate={updateEntry}
           onDelete={(entry: JournalEntry) => {
             void perform(() => journalActions.deleteEntry(entry.id))
@@ -803,7 +812,7 @@ export default function App() {
           initialQuery={searchQuery}
           onSearch={journalActions.searchEntries}
           onClose={() => setOverlay(null)}
-          onOpenEntry={(entry) => setDetailId(entry.id)}
+          onOpenEntry={(entry) => openEntry(entry.id)}
           onToggleEntry={toggleEntry}
         />
       ) : null}
@@ -841,7 +850,7 @@ export default function App() {
           onRestore={restoreEntry}
           onOpenEntry={(id) => {
             setOverlay(null);
-            setDetailId(id);
+            openEntry(id);
           }}
           onRetry={(id) => run(() => journalActions.retryDeadLetter(id), 'Retry queued')}
           onDiscard={(id) =>

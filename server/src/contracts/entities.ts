@@ -299,6 +299,7 @@ export const ActivityKindSchema = z.enum([
 export const ActivityOriginSchema = z.strictObject({
   actor: z.enum(['mcp', 'app', 'system']),
   tokenId: UlidSchema.optional(),
+  tokenLabel: z.string().trim().min(1).max(80).optional(),
   deviceId: UlidSchema.optional(),
   tool: z.string().trim().min(1).max(80).optional(),
   tailscaleUserLogin: z.string().trim().min(1).max(320).optional(),
@@ -361,8 +362,66 @@ export const ActivityRevertStatusSchema = z
     message: 'An eligible activity has no blocking reason; an ineligible one must explain why.',
   });
 
+/** Human-readable audit semantics derived from the immutable activity record. */
+export const ActivityActorSummarySchema = z.strictObject({
+  kind: z.enum(['owner', 'agent', 'system']),
+  label: z.string().trim().min(1).max(120),
+  tokenId: UlidSchema.optional(),
+  tool: z.string().trim().min(1).max(80).optional(),
+});
+
+export const ActivityActionSchema = z.enum([
+  'added',
+  'updated',
+  'deleted',
+  'migrated',
+  'scheduled',
+  'filed-summary',
+  'saved-summary',
+  'reverted',
+]);
+
+export const ActivityEntryAttributionSchema = z.strictObject({
+  entryId: UlidSchema,
+  originalAuthor: z.enum(['owner', 'agent', 'unknown']),
+  latestModifier: ActivityActorSummarySchema.nullable(),
+});
+
+export const ActivityLineageSchema = z.strictObject({
+  fromEntryIds: z.array(UlidSchema),
+  toEntryIds: z.array(UlidSchema),
+  relatedActivityId: UlidSchema.nullable(),
+});
+
+/**
+ * Deliberately compact: Timeline may surface this value without inheriting the
+ * audit screen's snapshots, migration graph, or revert controls.
+ */
+export const AgentTouchSchema = z.strictObject({
+  activityId: UlidSchema,
+  entryId: UlidSchema,
+  at: IsoTimestampSchema,
+  actor: ActivityActorSummarySchema,
+  action: ActivityActionSchema,
+  reason: z.string().trim().min(1).max(500).nullable(),
+});
+
+export const ActivityPresentationSchema = z.strictObject({
+  actor: ActivityActorSummarySchema,
+  action: ActivityActionSchema,
+  objectLabel: z.string().trim().min(1).max(160),
+  primaryEntryId: UlidSchema.nullable(),
+  reason: z.string().trim().min(1).max(500).nullable(),
+  attribution: z.array(ActivityEntryAttributionSchema),
+  lineage: ActivityLineageSchema.nullable(),
+  latestAgentTouch: AgentTouchSchema.nullable(),
+});
+
 export const ActivityViewSchema = ActivityItemSchema.safeExtend({
   revert: ActivityRevertStatusSchema,
+  // Optional only for compatibility with activity.appended stream records
+  // produced by older servers. HTTP activity pages always populate it.
+  presentation: ActivityPresentationSchema.optional(),
 });
 
 /** Compatibility alias for domain code; ActivityItem is the persisted entity name. */
@@ -495,6 +554,12 @@ export type ActivityKind = z.infer<typeof ActivityKindSchema>;
 export type ActivityOrigin = z.infer<typeof ActivityOriginSchema>;
 export type ActivityItem = z.infer<typeof ActivityItemSchema>;
 export type Activity = ActivityItem;
+export type ActivityActorSummary = z.infer<typeof ActivityActorSummarySchema>;
+export type ActivityAction = z.infer<typeof ActivityActionSchema>;
+export type ActivityEntryAttribution = z.infer<typeof ActivityEntryAttributionSchema>;
+export type ActivityLineage = z.infer<typeof ActivityLineageSchema>;
+export type AgentTouch = z.infer<typeof AgentTouchSchema>;
+export type ActivityPresentation = z.infer<typeof ActivityPresentationSchema>;
 export type ActivityView = z.infer<typeof ActivityViewSchema>;
 export type Settings = z.infer<typeof SettingsSchema>;
 export type SavedView = z.infer<typeof SavedViewSchema>;

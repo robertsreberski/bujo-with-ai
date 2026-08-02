@@ -42,7 +42,7 @@
     {
       "name": "Activity",
       "short_name": "Activity",
-      "url": "/review"
+      "url": "/activity"
     }
   ]
 }

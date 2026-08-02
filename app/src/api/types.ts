@@ -20,6 +20,7 @@ import {
   TimelinePageResponseSchema,
   type ActivityView,
   type ActivityItem,
+  type AgentTouch,
   type AgentToken,
   type BootstrapResponse,
   type Change,
@@ -46,6 +47,7 @@ import type { z } from 'zod';
 export type {
   ActivityView,
   ActivityItem,
+  AgentTouch,
   AgentToken,
   BootstrapResponse,
   Change,

@@ -94,7 +94,7 @@ test('manifest, install metadata, icons, and custom service worker ship from one
   expect(manifest.shortcuts).toEqual([
     { name: 'Timeline', short_name: 'Timeline', url: '/' },
     { name: 'This month', short_name: 'Month', url: '/month' },
-    { name: 'Activity', short_name: 'Activity', url: '/review' },
+    { name: 'Activity', short_name: 'Activity', url: '/activity' },
   ]);
   expect(manifest.icons).toEqual(
     expect.arrayContaining([
