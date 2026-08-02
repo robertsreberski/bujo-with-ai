@@ -148,12 +148,12 @@ describe('App Activity acknowledgement', () => {
   });
 
   it('resolves a deep-linked entry that was outside the bootstrap window', async () => {
-    window.history.replaceState(null, '', '/activity?entry=01K1H0000000000000000042');
+    window.history.replaceState(null, '', '/activity?entry=01K1H000000000000000000042');
     useJournalStore.setState({ online: true, connectionStatus: 'connected' });
 
     render(<App />);
 
-    await waitFor(() => expect(loadEntry).toHaveBeenCalledWith('01K1H0000000000000000042'));
+    await waitFor(() => expect(loadEntry).toHaveBeenCalledWith('01K1H000000000000000000042'));
   });
 });
 

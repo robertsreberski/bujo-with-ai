@@ -6,7 +6,7 @@ import pino from 'pino';
 import { createStream } from 'rotating-file-stream';
 import { createDomainAdapters } from './adapters.js';
 import { createApiRouter, type ApiJournalOperations } from './api/routes.js';
-import { errorHandler, notFoundHandler, requireApiJsonBody } from './api/errors.js';
+import { HttpError, errorHandler, notFoundHandler, requireApiJsonBody } from './api/errors.js';
 import { createHostGuard } from './api/security.js';
 import { SseHub, type ChangeBatch } from './api/sse.js';
 import {
@@ -141,6 +141,24 @@ export function createJournalApplication(options: JournalApplicationOptions): Jo
     app.use(options.viteMiddleware);
   } else {
     if (existsSync(appDist)) {
+      // `send` decodes request paths before serving static files and throws a
+      // URIError for incomplete percent escapes. A malformed SPA deep link is
+      // still a navigation: serve the shell so the client router can return it
+      // to a canonical safe location instead of leaking a generic JSON 500.
+      app.use((request, response, next) => {
+        const rawPath = request.originalUrl.split('?', 1)[0] ?? '';
+        try {
+          decodeURI(rawPath);
+          next();
+        } catch {
+          if (request.method === 'GET' && request.accepts('html')) {
+            response.setHeader('Cache-Control', 'no-cache');
+            response.sendFile('index.html', { root: appDist });
+            return;
+          }
+          next(new HttpError(400, 'validation_error', 'Request path is malformed.'));
+        }
+      });
       app.use(
         '/assets',
         express.static(join(appDist, 'assets'), {

@@ -157,7 +157,7 @@ export function Composer({
 
   /*
    * One line of draft has to look exactly like the fixed-height input it
-   * replaced, so nothing here hard-codes a height: `min-h-9`/`touch:min-h-10`
+   * replaced, so nothing here hard-codes a height: `min-h-9`/`touch:min-h-11`
    * own row one and the measurement takes over from row two. `scrollHeight` is
    * the padding box, so the two borders are added back to reach the border-box
    * height the layout actually uses, and the cap is derived from the field's
@@ -566,7 +566,7 @@ export function Composer({
               className={cn(
                 // Below 480px the label is hidden, so the button stops reserving
                 // room for it and gives the draft the width instead.
-                'composer__type flex h-9 min-w-[104px] items-center gap-1.5 rounded-md border border-border-control bg-bg px-[9px] text-sm max-[480px]:min-w-[62px] max-[480px]:justify-center max-[480px]:px-2 touch:h-10',
+                'composer__type flex h-9 min-w-[104px] items-center gap-1.5 rounded-md border border-border-control bg-bg px-[9px] text-sm max-[480px]:min-w-[62px] max-[480px]:justify-center max-[480px]:px-2 touch:h-11',
                 parsed.signifierWon ? 'composer__type--overridden text-fg-mute' : 'text-fg-body',
               )}
               type="button"
@@ -621,14 +621,14 @@ export function Composer({
                 /*
                  * `py-[7px]`: the reset gives inputs their vertical centring for
                  * free and a textarea none, so the padding is what centres line
-                 * one inside the same 36px (40px touch) box — 13.5 × 1.45 +
+                 * one inside the same 36px (44px touch) box — 13.5 × 1.45 +
                  * 14 + 2 borders lands just under it, and the min-height owns
                  * the last fraction. `break-words` says out loud what both
                  * engines' textarea defaults already do — a 200-character URL
                  * wraps rather than scrolling the field sideways, which is the
                  * whole point of growing it.
                  */
-                'composer__input min-h-9 w-full min-w-0 resize-none break-words py-[7px] touch:min-h-10',
+                'composer__input min-h-9 w-full min-w-0 resize-none break-words py-[7px] touch:min-h-11',
                 overflowing ? 'overflow-y-auto' : 'overflow-hidden',
                 draft && 'pr-10',
               )}
@@ -673,7 +673,7 @@ export function Composer({
             ) : null}
           </div>
           <button
-            className="composer__submit grid size-9 min-w-9 place-items-center rounded-md bg-primary text-primary-fg hover:bg-primary-hover touch:size-10 touch:min-w-10"
+            className="composer__submit grid size-9 min-w-9 place-items-center rounded-md bg-primary text-primary-fg hover:bg-primary-hover touch:size-11 touch:min-w-11"
             type="submit"
             aria-label="Add entry"
             disabled={!parsed.text || Boolean(parsed.error)}

@@ -9,8 +9,8 @@ export type ButtonSize = 'sm' | 'md' | 'lg' | 'icon';
 /*
  * Re-plumbing of the legacy `.button` / `.icon-button` recipes: same padding,
  * gap, weight, and radius, with the DS-4 ramp for text and the tighter control
- * heights (30 / 34 / 36 / 32-square). Every size keeps a 40px coarse-pointer
- * minimum through the `touch:` variant so the narrow e2e sweep stays green.
+ * heights (30 / 34 / 36 / 32-square). Every size keeps a 44px coarse-pointer
+ * minimum through the `touch:` variant for primary touch accessibility.
  */
 const buttonVariants = cva(
   'inline-flex items-center justify-center gap-1.5 rounded-md font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-hover',
@@ -25,10 +25,10 @@ const buttonVariants = cva(
         ghost: 'bg-transparent text-fg-mid hover:bg-bg-hover',
       },
       size: {
-        sm: 'min-h-[30px] px-2.5 text-xs touch:min-h-10',
-        md: 'min-h-[34px] px-3 text-md touch:min-h-10',
-        lg: 'min-h-9 px-3 text-md touch:min-h-10',
-        icon: 'size-8 touch:size-10 touch:min-h-10 touch:min-w-10',
+        sm: 'min-h-[30px] px-2.5 text-xs touch:min-h-11',
+        md: 'min-h-[34px] px-3 text-md touch:min-h-11',
+        lg: 'min-h-9 px-3 text-md touch:min-h-11',
+        icon: 'size-8 touch:size-11 touch:min-h-11 touch:min-w-11',
       },
     },
     defaultVariants: { variant: 'secondary', size: 'md' },

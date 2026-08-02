@@ -15,6 +15,9 @@ interface RenderOptions {
   onRetryConnection?: () => void;
   onRetryLocalSave?: () => void;
   onReload?: () => void;
+  offlineReady?: boolean;
+  updateReady?: boolean;
+  onActivateUpdate?: () => void;
   onOpenRecovery?: () => void;
 }
 
@@ -33,6 +36,8 @@ const renderShell = (options: RenderOptions = {}) =>
       route={options.route ?? { name: 'today', date: null }}
       today="2026-07-31"
       journalStatus={options.journalStatus ?? onlineStatus}
+      offlineReady={options.offlineReady ?? false}
+      updateReady={options.updateReady ?? false}
       {...(options.counts ? { counts: options.counts } : {})}
       title="Timeline"
       subtitle="Friday, July 31"
@@ -42,6 +47,7 @@ const renderShell = (options: RenderOptions = {}) =>
       onRetryConnection={options.onRetryConnection ?? vi.fn()}
       onRetryLocalSave={options.onRetryLocalSave ?? vi.fn()}
       onReload={options.onReload ?? vi.fn()}
+      onActivateUpdate={options.onActivateUpdate ?? vi.fn()}
       onOpenRecovery={options.onOpenRecovery ?? vi.fn()}
       composer={<div className="composer-shell" />}
     >
@@ -126,6 +132,25 @@ describe('Shell journal status', () => {
 
     expect(screen.getByText('Offline — 2 changes saved on this device')).toBeInTheDocument();
     expect(screen.queryByText(/will sync/i)).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a fully cached offline app from a best-effort fallback', () => {
+    renderShell({
+      offlineReady: true,
+      journalStatus: { ...onlineStatus, connection: 'offline' },
+    });
+
+    expect(
+      screen.getByText('Offline ready — showing what is saved on this device'),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps a waiting update visible and activates it only on request', () => {
+    const activate = vi.fn();
+    renderShell({ updateReady: true, onActivateUpdate: activate });
+
+    fireEvent.click(screen.getByRole('button', { name: /Update ready Reload safely/ }));
+    expect(activate).toHaveBeenCalledTimes(1);
   });
 
   it('offers a retry while keeping reconnecting mutations visibly local', () => {

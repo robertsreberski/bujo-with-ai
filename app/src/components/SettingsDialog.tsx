@@ -33,6 +33,7 @@ interface SettingsDialogProps {
   tokensLoading: boolean;
   preferences: DisplayPreferences;
   updateReady: boolean;
+  offlineReady?: boolean;
   recentlyDeletedCount?: number;
   failedChangeCount?: number;
   onClose: () => void;
@@ -62,6 +63,7 @@ export function SettingsDialog({
   tokensLoading,
   preferences,
   updateReady,
+  offlineReady = false,
   recentlyDeletedCount = 0,
   failedChangeCount = 0,
   onClose,
@@ -374,6 +376,19 @@ export function SettingsDialog({
             Advanced
           </h3>
         </header>
+        <div className={cn(STATUS_CARD, 'mb-2.5')}>
+          <span className="flex min-w-0 flex-col">
+            <strong className={CARD_STRONG}>Offline use</strong>
+            <small className={CARD_SMALL}>
+              {offlineReady
+                ? 'The app shell and downloaded journal are available without a connection.'
+                : 'Finishing setup while this page remains open.'}
+            </small>
+          </span>
+          <Badge variant={offlineReady ? 'connection' : 'status'}>
+            {offlineReady ? 'Ready' : 'Setting up'}
+          </Badge>
+        </div>
         <details className={cn(LIST_CARD, updateReady && 'mb-2.5')}>
           <summary className="flex min-h-10 cursor-pointer items-center px-[11px] text-sm font-medium">
             Protocol permissions and privacy

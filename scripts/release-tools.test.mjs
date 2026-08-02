@@ -2571,7 +2571,10 @@ test('device evidence distinguishes approved handoff from a concrete physical pa
     assert.equal(evidence.releaseStamp, '20260731T120000Z-abcdef123456-99');
     assert.match(evidence.manifestSha256, /^[a-f0-9]{64}$/);
     assert.match(evidence.archiveSha256, /^[a-f0-9]{64}$/);
-    assert.deepEqual(evidence.handoff, { assignee: 'Robert' });
+    assert.deepEqual(evidence.handoff, {
+      assignee: 'Robert',
+      targets: ['iPhone', 'iPad'],
+    });
     assert.equal(evidence.device, undefined);
     assert.doesNotThrow(() =>
       assertDeviceLedgerConsistency(

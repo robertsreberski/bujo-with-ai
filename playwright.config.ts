@@ -83,7 +83,7 @@ export default defineConfig({
     },
     {
       name: 'chromium-narrow',
-      testMatch: /(?:responsive|entry-sheet)\.spec\.ts/,
+      testMatch: /(?:responsive|entry-sheet|accessibility-mobile)\.spec\.ts/,
       use: {
         browserName: 'chromium',
         hasTouch: true,

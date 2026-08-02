@@ -58,11 +58,7 @@ test('all primary surfaces and an open dialog pass the WCAG 2.2 A/AA smoke', asy
   }
 });
 
-test('the capture suggestion panel and the entry sheet pass the same smoke', async ({
-  baseURL,
-  browser,
-  page,
-}) => {
+test('the capture suggestion panel passes the same smoke', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openJournal(page);
   // Seed the mirror so the panel has something to complete. Re-entering `#`
@@ -87,27 +83,39 @@ test('the capture suggestion panel and the entry sheet pass the same smoke', asy
   await expect(panel).toHaveCSS('opacity', '1');
   await settle(page, '.composer-suggestions');
   await expectNoAxeViolations(page, 'desktop capture suggestions with caption');
+});
 
-  const touchContext = await browser.newContext({
-    baseURL: baseURL!,
-    hasTouch: true,
-    isMobile: true,
-    viewport: { width: 375, height: 812 },
+test('forced colors preserves selection, focus, and screen-reader names', async ({ page }) => {
+  await page.emulateMedia({ forcedColors: 'active', reducedMotion: 'reduce' });
+  await openJournal(page);
+
+  const timeline = page.locator('.sidebar').getByRole('button', { name: /^Timeline/ });
+  await expect(timeline).toHaveAttribute('aria-current', 'page');
+  await expect(timeline).toHaveCSS('outline-style', 'solid');
+
+  const settings = page.locator('.sidebar').getByRole('button', { name: 'Settings', exact: true });
+  await settings.focus();
+  await expect(settings).toBeFocused();
+  await expect(settings).toHaveCSS('outline-style', 'solid');
+  await expect(timeline).toHaveAccessibleName(/^Timeline/);
+  await expect(settings).toHaveAccessibleName('Settings');
+});
+
+test('200 percent zoom reflows to a 320px reading width without horizontal loss', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 640, height: 900 });
+  await openJournal(page);
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = '2';
   });
-  const phone = await touchContext.newPage();
-  try {
-    await phone.emulateMedia({ reducedMotion: 'reduce' });
-    await openJournal(phone);
-    const text = uniqueText('Axe sheet entry');
-    await phone.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text}`);
-    await phone.getByRole('button', { name: 'Add entry' }).click();
-    await phone.locator('.entry-row__content').filter({ hasText: text }).click();
-    const sheet = phone.locator('.entry-sheet');
-    await expect(sheet).toBeVisible();
-    await expect(sheet).toHaveCSS('opacity', '1');
-    await settle(phone, '.entry-sheet');
-    await expectNoAxeViolations(phone, '375px entry sheet');
-  } finally {
-    await touchContext.close();
-  }
+
+  await expect(page.getByRole('heading', { level: 1, name: 'Timeline' })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Add an entry' })).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(0);
+  await expectNoAxeViolations(page, '200 percent zoom Timeline');
 });

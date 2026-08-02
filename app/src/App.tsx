@@ -32,6 +32,7 @@ import type {
 import { isTextEntryTarget, useViewportLayout } from './hooks/use-viewport-layout';
 import { useJournalRoute } from './routes/useJournalRoute';
 import { DEFAULT_LOG_VIEW } from './views/log-arrangement';
+import { claimJournalInstallGuidance, observeJournalInstallGuidance } from './pwa/install';
 import { createUlid } from './store/ids';
 import {
   journalActions,
@@ -211,10 +212,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const stopObservingInstall = observeJournalInstallGuidance();
     void journalActions
       .initialize()
       .catch((error: unknown) => say(messageFromError(error), 'error'));
-    return () => journalActions.shutdown();
+    return () => {
+      stopObservingInstall();
+      journalActions.shutdown();
+    };
   }, [say]);
 
   useEffect(() => {
@@ -380,10 +385,19 @@ export default function App() {
       const target = destinationRoute(resolved.destination, store.today);
       void perform(() => journalActions.createEntry({ id: createUlid(), ...plan.entry }))
         .then(() => {
+          const installGuidance = onScreen ? claimJournalInstallGuidance() : null;
+          if (installGuidance?.kind === 'ios') {
+            say(`Added to ${label} · For offline access, use Share then Add to Home Screen`);
+            return;
+          }
           say(
             `Added to ${label}`,
             'success',
-            onScreen ? undefined : { label: 'View', onAction: () => navigate(target) },
+            installGuidance?.kind === 'prompt'
+              ? { label: 'Install app', onAction: () => void installGuidance.install() }
+              : onScreen
+                ? undefined
+                : { label: 'View', onAction: () => navigate(target) },
           );
         })
         .catch(() => undefined);
@@ -736,6 +750,8 @@ export default function App() {
         today={store.today}
         counts={counts}
         journalStatus={journalStatus}
+        offlineReady={store.offlineReady}
+        updateReady={store.updateReady}
         title={routeTitle}
         subtitle={routeSubtitle}
         onNavigate={navigate}
@@ -744,6 +760,7 @@ export default function App() {
         onRetryConnection={() => void journalActions.reconnect()}
         onRetryLocalSave={() => run(() => journalActions.retryLocalSave(), 'Local journal saved')}
         onReload={() => window.location.reload()}
+        onActivateUpdate={journalActions.activateUpdate}
         onOpenRecovery={openRecovery}
         composer={
           <Composer
@@ -825,6 +842,7 @@ export default function App() {
           tokensLoading={store.tokensLoading}
           preferences={preferences}
           updateReady={store.updateReady}
+          offlineReady={store.offlineReady}
           recentlyDeletedCount={store.recentlyDeleted.length}
           failedChangeCount={store.deadLetters.length}
           onClose={() => setOverlay(null)}

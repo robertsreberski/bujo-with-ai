@@ -38,6 +38,7 @@ export function createDeviceEvidence({
   iosVersion,
   tailnetAccount,
   assignee,
+  deviceTargets = ['iPhone', 'iPad'],
   checklistReference,
   notes,
 }) {
@@ -56,7 +57,16 @@ export function createDeviceEvidence({
       },
     };
   } else {
-    statusDetails = { handoff: { assignee: requireText(assignee, 'assignee') } };
+    if (!Array.isArray(deviceTargets)) {
+      throw new Error('Device handoff targets must be an array.');
+    }
+    const targets = [
+      ...new Set(deviceTargets.map((target) => requireText(target, 'deviceTarget'))),
+    ];
+    if (targets.length === 0) throw new Error('Device handoff requires at least one target.');
+    statusDetails = {
+      handoff: { assignee: requireText(assignee, 'assignee'), targets },
+    };
   }
   const attestation = readJson(attestationPath);
   if (attestation.extractedTreeVerified !== true)
@@ -122,6 +132,10 @@ function runCli() {
     iosVersion: optionalValue(args, '--ios-version'),
     tailnetAccount: optionalValue(args, '--tailnet-account'),
     assignee: optionalValue(args, '--assignee'),
+    deviceTargets: (optionalValue(args, '--device-targets') ?? 'iPhone,iPad')
+      .split(',')
+      .map((target) => target.trim())
+      .filter(Boolean),
     checklistReference: value(args, '--checklist-reference'),
     notes: value(args, '--notes'),
   });

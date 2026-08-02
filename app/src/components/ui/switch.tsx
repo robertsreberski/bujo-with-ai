@@ -4,7 +4,7 @@ import { cn } from '../../lib/utils';
 
 /*
  * Re-plumbing of the legacy `.preference-toggle` recipe: a 40×24 track with an
- * 18px thumb travelling 16px. On coarse pointers the root grows to a 40×40 hit
+ * 18px thumb travelling 16px. On coarse pointers the root grows to a 44×44 hit
  * area around the unchanged track, the way the old absolutely-positioned
  * checkbox did.
  */
@@ -15,7 +15,7 @@ export function Switch({
   return (
     <SwitchPrimitive.Root
       className={cn(
-        'group grid h-6 w-10 flex-none place-items-center bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-hover touch:size-10 touch:min-h-10 touch:min-w-10',
+        'group grid h-6 w-10 flex-none place-items-center bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-hover touch:size-11 touch:min-h-11 touch:min-w-11',
         className,
       )}
       {...props}

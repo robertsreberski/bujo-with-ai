@@ -40,6 +40,13 @@ describe('SettingsDialog', () => {
     ).toEqual(['Display', 'Assistant access', 'Recovery', 'Advanced']);
     expect(screen.getByText('Protocol permissions and privacy')).toBeInTheDocument();
     expect(screen.getByLabelText('MCP tool permissions')).not.toBeVisible();
+    expect(screen.getByText('Setting up')).toBeInTheDocument();
+  });
+
+  it('reports offline availability only after the service worker is ready', () => {
+    renderSettings({ offlineReady: true });
+    expect(screen.getAllByText('Ready')).toHaveLength(2);
+    expect(screen.getByText(/app shell and downloaded journal are available/i)).toBeInTheDocument();
   });
 
   it('settles a failed token request after app-level feedback handles the error', async () => {

@@ -25,22 +25,22 @@ describe('useJournalRoute Timeline aliases', () => {
 
 describe('useJournalRoute Activity compatibility', () => {
   it('replaces the legacy Review URL while retaining an entry deep link', async () => {
-    window.history.replaceState(null, '', '/review?entry=01K1H0000000000000000011');
+    window.history.replaceState(null, '', '/review?entry=01K1H000000000000000000011');
     const { result } = renderHook(() => useJournalRoute());
 
     expect(result.current.route).toEqual({ name: 'activity' });
-    expect(result.current.entryId).toBe('01K1H0000000000000000011');
+    expect(result.current.entryId).toBe('01K1H000000000000000000011');
     await waitFor(() => expect(window.location.pathname).toBe('/activity'));
-    expect(window.location.search).toBe('?entry=01K1H0000000000000000011');
+    expect(window.location.search).toBe('?entry=01K1H000000000000000000011');
   });
 
   it('opens and closes an entry through a shareable Activity URL', () => {
     window.history.replaceState(null, '', '/activity');
     const { result } = renderHook(() => useJournalRoute());
 
-    act(() => result.current.openEntry('01K1H0000000000000000022'));
-    expect(window.location.href).toContain('/activity?entry=01K1H0000000000000000022');
-    expect(result.current.entryId).toBe('01K1H0000000000000000022');
+    act(() => result.current.openEntry('01K1H000000000000000000022'));
+    expect(window.location.href).toContain('/activity?entry=01K1H000000000000000000022');
+    expect(result.current.entryId).toBe('01K1H000000000000000000022');
 
     act(() => result.current.closeEntry());
     expect(window.location.pathname).toBe('/activity');
