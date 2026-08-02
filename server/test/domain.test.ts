@@ -1829,9 +1829,13 @@ describe('JournalDomain summaries and credentials', () => {
       source.agent,
     ).reflection;
     const exported = source.domain.exportJournal();
+    const legacyExport = structuredClone(exported);
+    const legacyRunning = legacyExport.derived.reflections.items[0];
+    if (legacyRunning === undefined) throw new Error('Expected exported running Reflection');
+    delete (legacyRunning as { claimedSourceEntries?: unknown }).claimedSourceEntries;
 
     const target = fixture();
-    target.domain.importJournal(exported);
+    target.domain.importJournal(legacyExport);
     const imported = target.domain.getReflection(running.id);
     expect(imported).toMatchObject({
       status: 'queued',
@@ -1841,7 +1845,7 @@ describe('JournalDomain summaries and credentials', () => {
       claimedSourceEntries: null,
       revision: running.revision + 1,
     });
-    expect(target.domain.importJournal(exported).skipped.reflections).toBe(1);
+    expect(target.domain.importJournal(legacyExport).skipped.reflections).toBe(1);
     expect(
       target.domain.claimReflection(slot.weekStart, queued.requestId, target.agent).reflection,
     ).toMatchObject({ status: 'running', claimedBy: { tokenId: target.agent.tokenId } });
