@@ -243,6 +243,22 @@ describe('App deferred dialogs', () => {
     expect(trigger).toHaveFocus();
     expect(window.location.pathname).toBe('/index');
   });
+
+  it('passes journal durability into the offline Settings status', async () => {
+    const user = userEvent.setup();
+    useJournalStore.setState({ offlineReady: true, persistenceStatus: 'unavailable' });
+    render(<App />);
+
+    await user.click(screen.getAllByRole('button', { name: 'Settings' })[0] as HTMLButtonElement);
+
+    expect(await screen.findByText('Not saved')).toBeInTheDocument();
+    expect(
+      screen.getByText(/app shell is available.*journal data is not being saved/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/app shell and downloaded journal are available/i),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe('App capture', () => {
