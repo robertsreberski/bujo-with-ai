@@ -191,6 +191,36 @@ describe('autonomous write contracts', () => {
     ).toBe(false);
   });
 
+  it('lets a collection entry carry the date it belongs to', () => {
+    const base = {
+      collection: 'month:2026-08',
+      text: 'Dentist appointment',
+      type: 'event',
+      source: 'From the August planning conversation.',
+    };
+    expect(McpAddToCollectionInputSchema.safeParse(base).success).toBe(true);
+    expect(
+      McpAddToCollectionInputSchema.safeParse({ ...base, date: '2026-08-26', time: '12:00' })
+        .success,
+    ).toBe(true);
+  });
+
+  it('keeps a dated month-log entry inside its own month', () => {
+    const base = { text: 'Rent due', type: 'task', source: 'From the August planning fixture.' };
+    expect(
+      McpAddToCollectionInputSchema.safeParse({
+        ...base,
+        collection: 'month:2026-08',
+        date: '2026-09-01',
+      }).success,
+    ).toBe(false);
+    // A flat collection has no month to contradict, so any date is fair game.
+    expect(
+      McpAddToCollectionInputSchema.safeParse({ ...base, collection: 'ideas', date: '2026-09-01' })
+        .success,
+    ).toBe(true);
+  });
+
   it('requires aligned before/after activity snapshots', () => {
     const before = { entity: 'entry' as const, id: ENTRY_ID, row: entry };
     const after = {

@@ -143,14 +143,30 @@ export const McpAddEntryOutputSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
-export const McpAddToCollectionInputSchema = z.strictObject({
-  collection: CollectionIdSchema.describe('Collection slug or month:YYYY-MM.'),
-  text: EntryTextSchema.describe('Single-line journal text.'),
-  type: EntryTypeSchema.default('task').describe('Entry type; defaults to task.'),
-  tags: TagsSchema.default([]).describe('Unique lowercase tags without #.'),
-  source: McpSourceSchema.describe('Required human-readable provenance.'),
-  ...OptionalIdempotencyField,
-});
+export const McpAddToCollectionInputSchema = z
+  .strictObject({
+    collection: CollectionIdSchema.describe('Collection slug or month:YYYY-MM.'),
+    text: EntryTextSchema.describe('Single-line journal text.'),
+    type: EntryTypeSchema.default('task').describe('Entry type; defaults to task.'),
+    date: CalendarDateSchema.optional().describe('Entry date; server today by default.'),
+    time: LocalTimeSchema.optional().describe('Optional 24-hour display time.'),
+    tags: TagsSchema.default([]).describe('Unique lowercase tags without #.'),
+    source: McpSourceSchema.describe('Required human-readable provenance.'),
+    ...OptionalIdempotencyField,
+  })
+  .superRefine((input, context) => {
+    // A month log addresses its own month; a stated date that lands outside it
+    // contradicts the collection. An omitted date still falls back to today,
+    // which is how the app files into a month it is merely browsing.
+    const month = /^month:(\d{4}-\d{2})$/.exec(input.collection)?.[1];
+    if (input.date !== undefined && month !== undefined && !input.date.startsWith(`${month}-`)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['date'],
+        message: `Date must fall within ${month} to belong to this month log.`,
+      });
+    }
+  });
 
 export const McpEntryWriteOutputSchema = z.strictObject({
   entry: AgentEntrySchema,

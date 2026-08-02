@@ -594,7 +594,7 @@ export class McpManager {
       {
         title: 'Add journal entry',
         description:
-          'Add an assistant-authored entry to a daily log immediately. Use add_to_collection for dateless lists or monthly logs.',
+          'Add an assistant-authored entry to a daily log immediately. Use add_to_collection for a standalone list or a monthly log.',
         inputSchema: McpAddEntryInputSchema,
         outputSchema: McpAddEntrySdkOutputSchema,
         annotations: {
@@ -621,7 +621,7 @@ export class McpManager {
       {
         title: 'Add to collection',
         description:
-          'Add an assistant-authored entry to a dateless collection or month:YYYY-MM log immediately.',
+          'Add an assistant-authored entry to a collection or month:YYYY-MM log immediately. Pass date and time for the day the entry belongs to rather than putting them in the text; a date given for a month log must fall inside that month. Omitting date files it under today.',
         inputSchema: McpAddToCollectionInputSchema,
         outputSchema: McpEntryWriteOutputSchema,
         annotations: {
