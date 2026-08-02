@@ -9,6 +9,8 @@ import {
 } from 'react';
 import { Icon } from './Icon';
 import { Badge } from './ui/badge';
+import { actionPhrase } from '../activity/presentation';
+import type { AgentTouch } from '../api/types';
 import { entryIcon } from './entry-icons';
 import { formatShortDate } from './dates';
 import { cn } from '../lib/utils';
@@ -30,6 +32,8 @@ interface EntryRowProps {
   textContent?: ReactNode;
   highlightedTag?: string;
   destinationLabel?: string | undefined;
+  /** Latest meaningful agent mutation only; raw history remains in Activity. */
+  agentTouch?: AgentTouch | undefined;
 }
 
 /*
@@ -72,6 +76,7 @@ export function EntryRow({
   textContent,
   highlightedTag,
   destinationLabel,
+  agentTouch,
 }: EntryRowProps) {
   const previewId = useId();
   const previewRef = useRef<HTMLSpanElement>(null);
@@ -99,7 +104,8 @@ export function EntryRow({
     showType ||
     showAi ||
     displayState !== null ||
-    entry.tags.length > 0;
+    entry.tags.length > 0 ||
+    agentTouch !== undefined;
   const toggleLabel = `${done ? 'Mark as not done' : 'Mark as done'}: ${entry.text}`;
 
   const measurePreview = useCallback(() => {
@@ -254,6 +260,19 @@ export function EntryRow({
               >
                 <Icon name="sparkle" size={10} />
               </Badge>
+            ) : null}
+            {agentTouch ? (
+              <span
+                className="entry-row__agent-touch flex min-w-0 max-w-full items-center gap-1 text-tag text-ai-fg"
+                title={agentTouch.reason ?? undefined}
+                aria-label={`Latest agent change: ${agentTouch.actor.label} ${actionPhrase(agentTouch.action)}${agentTouch.reason ? ` — ${agentTouch.reason}` : ''}`}
+              >
+                <Icon name="sparkle" size={10} />
+                <span className="overflow-hidden text-ellipsis whitespace-nowrap">
+                  {agentTouch.actor.label} {actionPhrase(agentTouch.action)}
+                  {agentTouch.reason ? ` · ${agentTouch.reason}` : ''}
+                </span>
+              </span>
             ) : null}
             {entry.tags.map((tag) =>
               tag === highlightedTag ? (

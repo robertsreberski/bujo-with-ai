@@ -3,6 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AgentTouch } from '../api/types';
 import { EntryRow } from './EntryRow';
 import type { JournalEntry } from './types';
 
@@ -215,5 +216,29 @@ describe('EntryRow', () => {
 
     expect(screen.getByText('Reply to Mira')).toBeInTheDocument();
     expect(screen.getByText('Projects')).toHaveClass('entry-row__destination');
+  });
+
+  it('shows only the compact latest meaningful agent touch', () => {
+    const agentTouch: AgentTouch = {
+      activityId: '01J00000000000000000000003',
+      entryId: entry.id,
+      at: '2026-07-31T10:00:00.000Z',
+      actor: { kind: 'agent', label: 'Mira', tool: 'update_entry' },
+      action: 'updated',
+      reason: 'Clarified the next action.',
+    };
+    render(
+      <EntryRow
+        entry={entry}
+        agentTouch={agentTouch}
+        preferences={{ density: 'comfortable', showTypeBadges: false, highlightAiEntries: false }}
+        onToggle={vi.fn()}
+        onOpen={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByLabelText('Latest agent change: Mira updated — Clarified the next action.'),
+    ).toHaveTextContent('Mira updated · Clarified the next action.');
   });
 });
