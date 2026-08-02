@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import type { TagUsage } from '@journal/server/contracts/app';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -136,6 +136,7 @@ const stubFieldMetrics = (scrollHeight: () => number) => {
 afterEach(cleanup);
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 beforeAll(() => {
@@ -186,12 +187,34 @@ describe('Composer', () => {
   });
 
   it('lets an outside click finish before collapsing the expanded composer', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockImplementation((query: string) => ({
+        matches: query === '(pointer: coarse)',
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    );
     const user = userEvent.setup();
     const onOutsideClick = vi.fn();
+    const expandedDuringClick: string[] = [];
     const { container } = render(
       <>
         <Harness />
-        <button type="button" onClick={onOutsideClick}>
+        <button
+          type="button"
+          onClick={() => {
+            expandedDuringClick.push(
+              container.querySelector('.composer-shell')?.getAttribute('data-expanded') ?? '',
+            );
+            onOutsideClick();
+          }}
+        >
           Open another surface
         </button>
       </>,
@@ -203,7 +226,10 @@ describe('Composer', () => {
     await user.click(screen.getByRole('button', { name: 'Open another surface' }));
 
     expect(onOutsideClick).toHaveBeenCalledTimes(1);
-    expect(container.querySelector('.composer-shell')).toHaveAttribute('data-expanded', 'false');
+    expect(expandedDuringClick).toEqual(['true']);
+    await waitFor(() =>
+      expect(container.querySelector('.composer-shell')).toHaveAttribute('data-expanded', 'false'),
+    );
   });
 
   it('previews inferred grammar from a restored draft before focus', () => {
