@@ -1695,6 +1695,10 @@ test('zsh helpers execute safe failure paths without special-parameter collision
       'no snapshot or runtime/config mutation may precede the initial apply marker',
     );
 
+    // Everything below executes extracted zsh functions or full zsh scripts.
+    // The source-contract assertions above remain portable and still run in CI.
+    if (process.platform !== 'darwin') return;
+
     const previousProgramHarness = `
 emulate -LR zsh
 setopt NO_UNSET PIPE_FAIL
@@ -1718,9 +1722,10 @@ for rejected in "\${extra}" "\${missing}" "\${duplicate}" "\${altered}"; do
 done
 print -- previous-program-shapes
 `;
-    const previousProgramResult = spawnSync('zsh', ['-c', previousProgramHarness], {
+    const previousProgramResult = spawnSync('/bin/zsh', ['-c', previousProgramHarness], {
       encoding: 'utf8',
     });
+    assert.ifError(previousProgramResult.error);
     assert.equal(previousProgramResult.status, 0, previousProgramResult.stderr);
     assert.match(previousProgramResult.stdout, /previous-program-shapes/);
 
@@ -1754,7 +1759,10 @@ assert_launchctl_job_absent 113 ''
 if assert_launchctl_job_absent 0 loaded; then exit 94; fi
 print -- fail-closed-predicates
 `;
-    const predicateResult = spawnSync('zsh', ['-c', predicateHarness], { encoding: 'utf8' });
+    const predicateResult = spawnSync('/bin/zsh', ['-c', predicateHarness], {
+      encoding: 'utf8',
+    });
+    assert.ifError(predicateResult.error);
     assert.equal(predicateResult.status, 0, predicateResult.stderr);
     assert.match(predicateResult.stdout, /fail-closed-predicates/);
 
@@ -1803,7 +1811,7 @@ exit 1
     ]) {
       writeFileSync(absenceCounter, '0\n');
       const startedAt = Date.now();
-      const result = spawnSync('zsh', ['-c', absenceHarness], {
+      const result = spawnSync('/bin/zsh', ['-c', absenceHarness], {
         encoding: 'utf8',
         env: {
           ...process.env,
@@ -1811,6 +1819,7 @@ exit 1
           TEST_ABSENCE_MODE: mode,
         },
       });
+      assert.ifError(result.error);
       // The flap path needs four probes across three external `sleep 0.1`
       // spawns; at 0.6s the budget sat on the edge of macOS process-spawn
       // latency and the suite coin-flipped on busy machines. 1.2s keeps the
@@ -1940,7 +1949,7 @@ exit 1
       ['owned', 'cwd-drift', false],
     ]) {
       writeFileSync(listenerCounter, '0\n');
-      const result = spawnSync('zsh', ['-c', listenerHarness], {
+      const result = spawnSync('/bin/zsh', ['-c', listenerHarness], {
         encoding: 'utf8',
         env: {
           ...listenerEnvironment,
@@ -1948,6 +1957,7 @@ exit 1
           TEST_LAUNCH_MODE: launchMode,
         },
       });
+      assert.ifError(result.error);
       assert.equal(
         result.status === 0,
         shouldPass,
@@ -1990,11 +2000,12 @@ exit 1
       ['release-lifecycle.zsh', [resolve(fixtureRoot, 'context.json')]],
     ]) {
       rmSync(sentinel, { force: true });
-      const result = spawnSync('zsh', [resolve(fixtureScripts, name), ...arguments_], {
+      const result = spawnSync('/bin/zsh', [resolve(fixtureScripts, name), ...arguments_], {
         cwd: fixtureRoot,
         encoding: 'utf8',
         env: injectedEnvironment,
       });
+      assert.ifError(result.error);
       assert.notEqual(result.status, 0, `${name} accepted an injected validation failure`);
       assert.equal(existsSync(sentinel), false, `${name} reached a mutation sentinel`);
     }
