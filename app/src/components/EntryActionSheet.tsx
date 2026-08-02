@@ -234,8 +234,9 @@ export function EntryActionSheet({
                     </Badge>
                   ) : null}
                   {entry.author === 'ai' ? (
-                    <Badge variant="ai" className="badge badge--ai" aria-label="Added by assistant">
+                    <Badge variant="ai" className="badge badge--ai">
                       <Icon name="sparkle" size={10} />
+                      <span className="sr-only">Added by assistant</span>
                     </Badge>
                   ) : null}
                 </>

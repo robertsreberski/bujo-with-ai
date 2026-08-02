@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import AxeBuilder from '@axe-core/playwright';
 import {
   expect,
   test,
@@ -998,16 +999,28 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
     await expect(composer).toHaveCSS('outline-width', '2px');
     await expect(composer).toHaveCSS('outline-offset', '2px');
     await expect(composer).toHaveCSS('font-size', '16px');
-    await expectTouchTargets(page.locator('#journal-content'), '375px Timeline');
 
     const aiText = uniqueText('Assistant design evidence');
     const aiEntryId = await createAssistantEntry(page, origin, aiText);
     const aiRow = page.locator(`[data-entry-id="${aiEntryId}"]`);
     await expect(aiRow.getByText(aiText, { exact: true })).toBeVisible();
+    await expectTouchTargets(page.locator('#journal-content'), '375px Timeline');
     await expect(aiRow).toHaveClass(/entry-row--ai/);
-    const aiBadge = aiRow.getByLabel('Added by assistant');
+    const aiBadge = aiRow.locator('.badge--ai');
+    await expect(aiBadge).toContainText('Added by assistant');
     await expect(aiBadge).toHaveCSS('color', 'rgb(240, 154, 112)');
     await expect(aiBadge.locator('path')).toHaveAttribute('d', SPARKLE_PATH);
+    const provenanceAccessibility = await new AxeBuilder({ page })
+      .include(`[data-entry-id="${aiEntryId}"]`)
+      .withRules(['aria-prohibited-attr'])
+      .analyze();
+    expect(
+      provenanceAccessibility.violations.map((violation) => ({
+        id: violation.id,
+        targets: violation.nodes.map((node) => node.target),
+      })),
+      'assistant provenance must use native text semantics',
+    ).toEqual([]);
 
     await page.getByRole('button', { name: /^Activity/ }).click();
     const activity = page.getByRole('article').filter({ hasText: aiText });
