@@ -459,7 +459,6 @@ function refineJournalExportData(
     'summaries',
     'weekStart',
   );
-
   const collectionIds = new Set(journal.collections.map((collection) => collection.id));
   journal.collections.forEach((collection, index) => {
     if (collection.id.startsWith('month:') && collection.archivedAt !== null) {
@@ -501,6 +500,52 @@ function refineJournalExportData(
 
 const JournalExportDataSchema = JournalExportDataObjectSchema.superRefine(refineJournalExportData);
 
+const ReflectionExportProjectionSchema = z
+  .strictObject({
+    version: z.literal(1),
+    items: z.array(ReflectionSchema),
+  })
+  .superRefine((projection, context) => {
+    const slotIds = new Set<string>();
+    const weekStarts = new Set<string>();
+    const versionIds = new Set<string>();
+    projection.items.forEach((reflection, reflectionIndex) => {
+      if (slotIds.has(reflection.id)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['items', reflectionIndex, 'id'],
+          message: 'Reflection ids must be unique across the projection.',
+        });
+      }
+      slotIds.add(reflection.id);
+      if (weekStarts.has(reflection.weekStart)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['items', reflectionIndex, 'weekStart'],
+          message: 'Reflection weeks must be unique across the projection.',
+        });
+      }
+      weekStarts.add(reflection.weekStart);
+      reflection.versions.forEach((version, versionIndex) => {
+        if (versionIds.has(version.id)) {
+          context.addIssue({
+            code: 'custom',
+            path: ['items', reflectionIndex, 'versions', versionIndex, 'id'],
+            message: 'Reflection version ids must be unique across the projection.',
+          });
+        }
+        versionIds.add(version.id);
+      });
+    });
+  });
+
+const JournalDerivedSchema = z
+  .object({
+    /** Added after v2 shipped; absence means an older portable document. */
+    reflections: ReflectionExportProjectionSchema.optional(),
+  })
+  .catchall(z.unknown());
+
 /** Historical flat export accepted indefinitely for restore portability. */
 export const JournalExportV1Schema = z
   .strictObject({
@@ -521,7 +566,7 @@ export const JournalExportV2Schema = z.strictObject({
   version: z.literal(2),
   exportedAt: IsoTimestampSchema,
   journal: JournalExportDataSchema,
-  derived: z.record(z.string(), z.unknown()).optional(),
+  derived: JournalDerivedSchema.optional(),
 });
 
 /** Import contract spanning every portable Journal export format. */
@@ -532,6 +577,7 @@ const ImportEntityCountsSchema = z.strictObject({
   collections: z.number().int().nonnegative(),
   activity: z.number().int().nonnegative(),
   summaries: z.number().int().nonnegative(),
+  reflections: z.number().int().nonnegative(),
   settings: z.number().int().min(0).max(1),
 });
 
