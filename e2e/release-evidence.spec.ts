@@ -1117,7 +1117,8 @@ test('normal motion stays within the approved bounds and reduced motion removes 
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await openJournal(page);
 
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const settingsButton = page.getByRole('button', { name: 'Settings', exact: true });
+  await settingsButton.click();
   const overlayMotion = await motionStyle(page.locator('.dialog-overlay'));
   const panelMotion = await motionStyle(page.locator('.dialog-panel'));
   expect(overlayMotion.animationName).toBe('overlay-in');
@@ -1130,9 +1131,12 @@ test('normal motion stays within the approved bounds and reduced motion removes 
   expect(cssTimeMilliseconds(panelMotion.animationDuration)).toBeLessThanOrEqual(160);
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0);
+  await expect(settingsButton).toBeFocused();
 
   const composer = page.getByRole('combobox', { name: 'Add an entry' });
-  await composer.click();
+  await composer.focus();
+  await expect(composer).toBeFocused();
+  await expect(page.locator('.composer-shell')).toHaveAttribute('data-expanded', 'true');
   await page.getByRole('button', { name: /^Entry type:/ }).click();
   const menuMotion = await motionStyle(page.locator('.type-menu'));
   expect(menuMotion.animationName).toBe('dialog-in');
@@ -1167,12 +1171,15 @@ test('normal motion stays within the approved bounds and reduced motion removes 
   expect(cssTimeMilliseconds((await motionStyle(row)).transitionDuration)).toBeLessThanOrEqual(
     0.01,
   );
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await settingsButton.click();
   expect((await motionStyle(page.locator('.dialog-overlay'))).animationName).toBe('none');
   expect((await motionStyle(page.locator('.dialog-panel'))).animationName).toBe('none');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0);
-  await composer.click();
+  await expect(settingsButton).toBeFocused();
+  await composer.focus();
+  await expect(composer).toBeFocused();
+  await expect(page.locator('.composer-shell')).toHaveAttribute('data-expanded', 'true');
   await page.getByRole('button', { name: /^Entry type:/ }).click();
   expect((await motionStyle(page.locator('.type-menu'))).animationName).toBe('none');
 
