@@ -16,7 +16,13 @@ other five — `add_entry`, `add_to_collection`, `update_entry`, `delete_entry`,
 and the legacy-named `propose_migration` — apply immediately. Agent additions
 carry source provenance; every mutation is attributed, rate-limited, captured
 with before/after images, and shown in Review with conflict-safe Revert. There
-is no proposal or approval queue.
+is no proposal or approval queue. Updates, deletes, and migration sources use
+required observed revisions so a stale agent cannot overwrite a newer change.
+
+Existing tokens retain `journal:full`. New integrations can instead request
+`timeline:read`, `entry:write`, `destructive`, or the reserved
+`preview:write` scope through `POST /api/tokens`; omitted scopes still default
+to `journal:full` for compatibility.
 
 Journal itself has no third-party egress. An MCP client authorized by the owner
 may send retrieved content to the AI provider configured in that client.

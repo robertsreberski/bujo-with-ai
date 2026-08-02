@@ -456,7 +456,7 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
       );
     },
     listTokens: () => ({ tokens: domain.listAgentTokens() }),
-    createToken: (label, owner) => domain.createAgentToken(label, ['journal:full'], owner),
+    createToken: (label, scopes, owner) => domain.createAgentToken(label, scopes, owner),
     revokeToken: (id, owner) => {
       domain.revokeAgentToken(id, owner);
       return { revoked: true, id };
@@ -540,10 +540,7 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
           patch,
           domainAgent(agent),
           mcpMutation(idempotencyKey, { id, patch, reason, expectedRevision }),
-          {
-            reason,
-            ...(expectedRevision === undefined ? {} : { expectedRevision }),
-          },
+          { reason, expectedRevision },
         ),
       );
       return { entry: agentEntry(result.entry), activityId: result.activityId };
@@ -555,10 +552,7 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
           id,
           domainAgent(agent),
           mcpMutation(idempotencyKey, { id, reason, expectedRevision }),
-          {
-            reason,
-            ...(expectedRevision === undefined ? {} : { expectedRevision }),
-          },
+          { reason, expectedRevision },
         ),
       );
       return { entry: agentEntry(result.entry), activityId: result.activityId };
@@ -571,7 +565,12 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
         domainAgent(agent),
         mcpMutation(idempotencyKey, input),
       );
-      return { entries: result.entries.map(agentEntry), activityId: result.activityId };
+      return {
+        status: 'applied',
+        message: 'Applied migration',
+        entries: result.entries.map(agentEntry),
+        activityId: result.activityId,
+      };
     },
 
     index: () => {

@@ -214,8 +214,8 @@ export const McpUpdateEntryInputSchema = z.strictObject({
   id: UlidSchema.describe('Entry id returned by list_day or search.'),
   patch: EntryPatchSchema.describe('Non-empty entry patch.'),
   reason: ReasonSchema,
-  expectedRevision: ExpectedRevisionSchema.optional().describe(
-    'Optional observed revision; a mismatch prevents the write.',
+  expectedRevision: ExpectedRevisionSchema.describe(
+    'Required observed revision; a mismatch prevents the write.',
   ),
   ...OptionalIdempotencyField,
 });
@@ -223,8 +223,8 @@ export const McpUpdateEntryInputSchema = z.strictObject({
 export const McpDeleteEntryInputSchema = z.strictObject({
   id: UlidSchema.describe('Entry id returned by list_day or search.'),
   reason: ReasonSchema,
-  expectedRevision: ExpectedRevisionSchema.optional().describe(
-    'Optional observed revision; a mismatch prevents the write.',
+  expectedRevision: ExpectedRevisionSchema.describe(
+    'Required observed revision; a mismatch prevents the write.',
   ),
   ...OptionalIdempotencyField,
 });
@@ -243,6 +243,8 @@ export const McpMigrationInputSchema = z.strictObject({
 });
 
 export const McpMigrationOutputSchema = z.strictObject({
+  status: z.literal('applied'),
+  message: z.literal('Applied migration'),
   entries: z.array(AgentEntrySchema),
   activityId: UlidSchema,
 });

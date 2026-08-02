@@ -67,6 +67,20 @@ function createdEntry(
 }
 
 describe('HTTP and MCP domain adapters', () => {
+  it('creates least-privilege tokens through the owner API adapter', async () => {
+    const { domain, owner, adapters } = fixture();
+    const issued = (await adapters.api.createToken(
+      'timeline reader',
+      ['timeline:read'],
+      owner,
+    )) as {
+      token: { scopes: string[] };
+      secret: string;
+    };
+    expect(issued.token.scopes).toEqual(['timeline:read']);
+    expect(domain.authenticateAgent(issued.secret)?.scopes).toEqual(['timeline:read']);
+  });
+
   it('selects summaries by month and mutates an explicitly selected older summary', async () => {
     const { domain, owner, adapters } = fixture();
     const agent = {
@@ -151,7 +165,13 @@ describe('HTTP and MCP domain adapters', () => {
         tags: [],
         source: 'From the adapter integration test.',
       },
-      { kind: 'agent', tokenId, tokenLabel: 'integration', tool: 'add_entry' },
+      {
+        kind: 'agent',
+        tokenId,
+        tokenLabel: 'integration',
+        scopes: ['journal:full'],
+        tool: 'add_entry',
+      },
       'mcp-persist-key',
     );
 
@@ -184,6 +204,7 @@ describe('HTTP and MCP domain adapters', () => {
       kind: 'agent' as const,
       tokenId: ulid(),
       tokenLabel: 'integration',
+      scopes: ['journal:full'] as const,
       tool: 'add_to_collection',
     };
     const dated = (await adapters.mcp.addToCollection(
@@ -358,7 +379,12 @@ describe('HTTP and MCP domain adapters', () => {
       tags: [],
       source: 'From the midnight retry integration test.',
     };
-    const actor = { kind: 'agent' as const, tokenId: ulid(), tokenLabel: 'integration' };
+    const actor = {
+      kind: 'agent' as const,
+      tokenId: ulid(),
+      tokenLabel: 'integration',
+      scopes: ['journal:full'] as const,
+    };
     const first = await adapters.mcp.addEntry(input, actor, 'midnight-safe-key');
     advance(86_400_000);
     expect(await adapters.mcp.addEntry(input, actor, 'midnight-safe-key')).toEqual(first);

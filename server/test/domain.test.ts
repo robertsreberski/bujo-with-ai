@@ -263,6 +263,56 @@ describe('JournalDomain entry commands', () => {
     expect(redated.entry).toMatchObject({ collection: 'books', date: '2026-07-31' });
   });
 
+  it('requires revisions for agent updates and deletes at the domain boundary', () => {
+    const { domain, owner, agent } = fixture();
+    const created = domain.createEntry(
+      { id: ulid(), text: 'Revision guarded', type: 'note' },
+      owner,
+    );
+    if (created.kind !== 'entry') throw new Error('Expected entry');
+    expect(() =>
+      domain.updateEntry(created.entry.id, { text: 'Blind update' }, agent, undefined, {
+        reason: 'Attempt an unguarded agent update.',
+      }),
+    ).toThrowError(/require expectedRevision/i);
+    expect(() =>
+      domain.deleteEntry(created.entry.id, agent, undefined, {
+        reason: 'Attempt an unguarded agent delete.',
+      }),
+    ).toThrowError(/require expectedRevision/i);
+    expect(domain.requireEntry(created.entry.id)).toMatchObject({
+      text: 'Revision guarded',
+      revision: 1,
+      deletedAt: null,
+    });
+  });
+
+  it('keeps guarded agent edits attributed, reasoned, and reversible', () => {
+    const { domain, owner, agent } = fixture();
+    const created = domain.createEntry(
+      { id: ulid(), text: 'Original owner wording', type: 'note' },
+      owner,
+    );
+    if (created.kind !== 'entry') throw new Error('Expected entry');
+    const updated = domain.updateEntry(
+      created.entry.id,
+      { text: 'Clarified owner wording' },
+      { ...agent, tool: 'update_entry' },
+      undefined,
+      {
+        expectedRevision: created.entry.revision,
+        reason: 'Clarify the wording requested by the owner.',
+      },
+    );
+    if (!updated.activityId) throw new Error('Expected an attributed activity');
+    expect(domain.getActivity(updated.activityId)).toMatchObject({
+      origin: { actor: 'mcp', tokenId: agent.tokenId, tool: 'update_entry' },
+      text: expect.stringContaining('Clarify the wording requested by the owner.'),
+    });
+    domain.revertActivity(updated.activityId, owner);
+    expect(domain.requireEntry(created.entry.id).text).toBe('Original owner wording');
+  });
+
   it('applies an agent migration atomically with revision checks', () => {
     const { domain, owner, agent } = fixture();
     const source = domain.createEntry(
@@ -317,7 +367,14 @@ describe('JournalDomain entry commands', () => {
         kind: 'retag',
         title: 'Rename the old tag',
         detail: 'Use the canonical replacement across all live entries.',
-        ops: [{ op: 'retag', from: 'old', to: 'new' }],
+        ops: [
+          {
+            op: 'retag',
+            from: 'old',
+            to: 'new',
+            sources: ids.map((id) => ({ id, expectedRevision: 1 })),
+          },
+        ],
       },
       agent,
     );
@@ -326,6 +383,73 @@ describe('JournalDomain entry commands', () => {
     expect(
       domain.getActivity(result.activityId)?.postImages.map((snapshot) => snapshot.id),
     ).toEqual(expected);
+    expect(domain.getActivity(result.activityId)?.text).toMatch(/^Applied migration:/);
+  });
+
+  it('rejects stale or incomplete retag source sets without changing any entry', () => {
+    const { domain, owner, agent } = fixture();
+    const first = domain.createEntry(
+      { id: ulid(), text: 'First retag source', type: 'note', tags: ['old'] },
+      owner,
+    );
+    const second = domain.createEntry(
+      { id: ulid(), text: 'Second retag source', type: 'note', tags: ['old'] },
+      owner,
+    );
+    if (first.kind !== 'entry' || second.kind !== 'entry') throw new Error('Expected entries');
+
+    expect(() =>
+      domain.applyAgentMigration(
+        {
+          kind: 'retag',
+          title: 'Rename the old tag',
+          detail: 'Reject a source set that was not observed completely.',
+          ops: [
+            {
+              op: 'retag',
+              from: 'old',
+              to: 'new',
+              sources: [{ id: first.entry.id, expectedRevision: first.entry.revision }],
+            },
+          ],
+        },
+        agent,
+      ),
+    ).toThrowError(/source set changed/i);
+    expect(domain.requireEntry(first.entry.id).tags).toEqual(['old']);
+    expect(domain.requireEntry(second.entry.id).tags).toEqual(['old']);
+
+    const changed = domain.updateEntry(second.entry.id, { text: 'Changed second source' }, owner);
+    try {
+      domain.applyAgentMigration(
+        {
+          kind: 'retag',
+          title: 'Rename the old tag',
+          detail: 'Reject a source whose observed revision became stale.',
+          ops: [
+            {
+              op: 'retag',
+              from: 'old',
+              to: 'new',
+              sources: [
+                { id: first.entry.id, expectedRevision: first.entry.revision },
+                { id: second.entry.id, expectedRevision: second.entry.revision },
+              ],
+            },
+          ],
+        },
+        agent,
+      );
+      throw new Error('Expected a revision conflict');
+    } catch (error) {
+      expect(error).toBeInstanceOf(DomainError);
+      expect((error as DomainError).details).toEqual({
+        expectedRevision: second.entry.revision,
+        actualRevision: changed.entry.revision,
+      });
+    }
+    expect(domain.requireEntry(first.entry.id).tags).toEqual(['old']);
+    expect(domain.requireEntry(second.entry.id).tags).toEqual(['old']);
   });
 
   it('batches created rows and auto-created month collections, then reverts both', () => {
@@ -531,6 +655,20 @@ describe('JournalDomain summaries and credentials', () => {
     const renewed = domain.renewDevice(device.secret);
     expect(renewed?.secret).not.toBe(device.secret);
     expect(domain.authenticateDevice(device.secret)).toBeNull();
+  });
+
+  it('persists narrow agent scopes and keeps journal:full tokens compatible', () => {
+    const { domain, owner } = fixture();
+    const reader = domain.createAgentToken('reader', ['timeline:read'], owner);
+    expect(reader.token.scopes).toEqual(['timeline:read']);
+    expect(domain.authenticateAgent(reader.secret)?.scopes).toEqual(['timeline:read']);
+
+    const legacy = domain.createAgentToken('legacy', undefined, owner);
+    expect(legacy.token.scopes).toEqual(['journal:full']);
+    expect(domain.authenticateAgent(legacy.secret)?.scopes).toEqual(['journal:full']);
+    expect(() => domain.createAgentToken('unknown', ['journal:everything'], owner)).toThrowError(
+      /unknown agent token scope/i,
+    );
   });
 
   it('keeps the anchored write window across a domain restart', () => {

@@ -69,7 +69,7 @@ fact is recorded here so contract enforcement cannot be inferred where it does n
 | 19  | `GET /api/settings`                | Read        | No body or query                                                                                                                  | `SettingsResponseSchema`: `{ settings, assistant: { endpoint, status, activeSessions } }`                                         |    200 |
 | 20  | `PATCH /api/settings`              | Online      | non-empty `SettingsPatchSchema`: `{ density?, showTypeBadges?, highlightAiEntries? }`                                             | `SettingsResponseSchema`: `{ settings, assistant: { endpoint, status, activeSessions } }`                                         |    200 |
 | 21  | `GET /api/tokens`                  | Read        | No body or query                                                                                                                  | `TokenListResponseSchema`: `{ tokens }`; token secrets are absent                                                                 |    200 |
-| 22  | `POST /api/tokens`                 | Online      | `TokenCreateRequestSchema`: `{ label }`                                                                                           | `TokenCreateResponseSchema`: `{ token, secret }`; secret is returned once                                                         |    201 |
+| 22  | `POST /api/tokens`                 | Online      | `TokenCreateRequestSchema`: `{ label, scopes? }`; scopes default to `journal:full`                                                | `TokenCreateResponseSchema`: `{ token, secret }`; secret is returned once                                                         |    201 |
 | 23  | `DELETE /api/tokens/:id`           | Online      | ULID path; no body                                                                                                                | `TokenRevokeResponseSchema`: `{ revoked: true, id }`                                                                              |    200 |
 | 24  | `GET /api/events`                  | Read        | Optional opaque `cursor` query; `Last-Event-ID` is the fallback when the query is absent                                          | `text/event-stream`: `change`/`reset`/`replay-ready` carry their canonical schemas; comment heartbeats carry no cursor            |    200 |
 
@@ -118,12 +118,19 @@ following marker cannot unblock the outbox; the replacement stream's marker must
   401 (bearer), 403 (Origin), 404 (session/path), 413/415 (body), 500, and 503 (shutdown).
 - Exactly seven MCP tools are registered: automatic writes `add_entry`, `add_to_collection`,
   `update_entry`, `delete_entry`, and `propose_migration`; read-only `list_day` and `search`.
-  `propose_migration` is an immediate atomic write despite its compatibility name. All tool inputs
-  and outputs use `server/src/contracts/mcp.ts`; all five writes accept an optional MCP
-  `idempotencyKey` and pass through the same transactional domain layer as REST.
+  `propose_migration` is an immediate atomic write despite its compatibility name and returns
+  `{ status: "applied", message: "Applied migration", ... }`. MCP update/delete revisions are
+  required; every existing migration source is revision-bound, including the complete source set
+  for a bulk retag. All five writes accept an optional MCP `idempotencyKey` and pass through the
+  same transactional domain layer as REST.
+- `journal:full` remains compatible with all seven tools. `timeline:read` authorizes both read tools
+  and journal-data resources, `entry:write` authorizes add/update tools, and `destructive`
+  authorizes delete/migration. `preview:write` is reserved for derived-preview work and currently
+  authorizes none of the seven MCP tools. Scope denials are structured MCP tool errors.
 - Six read-only resources are registered: `journal://today`, `journal://day/{date}`,
   `journal://index`, `journal://collection/{id}`, `journal://proposals`, and
-  `journal://summary/latest`. The proposals resource is fixed compatibility metadata
+  `journal://summary/latest` for `journal:full` or `timeline:read` tokens. The proposals resource
+  remains non-sensitive compatibility metadata for every authenticated token and is fixed at
   `{ mode: "automatic", proposals: [] }`; there is no proposal queue or approval endpoint.
 
 ## Explicit gap register

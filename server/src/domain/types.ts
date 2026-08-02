@@ -4,6 +4,7 @@ import type {
   ActivitySnapshot,
   ActivityView,
   AgentToken,
+  AgentTokenScope,
   Change,
   ChangeBatch,
   Collection,
@@ -29,6 +30,7 @@ export type {
   ActivitySnapshot,
   ActivityView,
   AgentToken,
+  AgentTokenScope,
   Change,
   ChangeBatch,
   Collection,
@@ -137,7 +139,7 @@ export interface IssuedAgentToken {
 export interface AuthenticatedAgent {
   readonly tokenId: string;
   readonly tokenLabel: string;
-  readonly scopes: readonly 'journal:full'[];
+  readonly scopes: readonly AgentTokenScope[];
 }
 
 export interface PairedDevice {
