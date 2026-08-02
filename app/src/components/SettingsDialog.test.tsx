@@ -18,6 +18,7 @@ const renderSettings = (overrides: Partial<ComponentProps<typeof SettingsDialog>
       tokensLoading={false}
       preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
       updateReady={false}
+      persistenceStatus="available"
       recentlyDeletedCount={0}
       failedChangeCount={0}
       onClose={vi.fn()}
@@ -43,10 +44,22 @@ describe('SettingsDialog', () => {
     expect(screen.getByText('Setting up')).toBeInTheDocument();
   });
 
-  it('reports offline availability only after the service worker is ready', () => {
+  it('reports durable offline availability when the shell and journal are saved', () => {
     renderSettings({ offlineReady: true });
     expect(screen.getAllByText('Ready')).toHaveLength(2);
     expect(screen.getByText(/app shell and downloaded journal are available/i)).toBeInTheDocument();
+  });
+
+  it('does not call a ready shell an offline-ready journal when persistence failed', () => {
+    renderSettings({ offlineReady: true, persistenceStatus: 'unavailable' });
+
+    expect(screen.getByText('Not saved')).toBeInTheDocument();
+    expect(
+      screen.getByText(/app shell is available.*journal data is not being saved/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/app shell and downloaded journal are available/i),
+    ).not.toBeInTheDocument();
   });
 
   it('settles a failed token request after app-level feedback handles the error', async () => {
@@ -61,6 +74,7 @@ describe('SettingsDialog', () => {
         tokensLoading={false}
         preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
         updateReady={false}
+        persistenceStatus="available"
         onClose={vi.fn()}
         onUpdatePreferences={vi.fn()}
         onRefreshTokens={vi.fn()}
@@ -88,6 +102,7 @@ describe('SettingsDialog', () => {
         tokensLoading={false}
         preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
         updateReady
+        persistenceStatus="available"
         onClose={vi.fn()}
         onUpdatePreferences={vi.fn()}
         onRefreshTokens={vi.fn()}
@@ -167,6 +182,7 @@ describe('SettingsDialog', () => {
         tokensLoading={false}
         preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: false }}
         updateReady={false}
+        persistenceStatus="available"
         onClose={vi.fn()}
         onUpdatePreferences={onUpdatePreferences}
         onRefreshTokens={vi.fn()}

@@ -8,6 +8,7 @@ import { NativeSelect } from './ui/native-select';
 import { Switch } from './ui/switch';
 import { AI_PANEL, AI_PANEL_COPY, AI_PANEL_HEADER } from './ui/dialog-classes';
 import { cn } from '../lib/utils';
+import type { JournalPersistenceState } from '../domain/contracts';
 import type { DisplayPreferences } from './types';
 
 const SECTION = 'mb-[18px] last:mb-0';
@@ -34,6 +35,7 @@ interface SettingsDialogProps {
   preferences: DisplayPreferences;
   updateReady: boolean;
   offlineReady?: boolean;
+  persistenceStatus: JournalPersistenceState;
   recentlyDeletedCount?: number;
   failedChangeCount?: number;
   onClose: () => void;
@@ -64,6 +66,7 @@ export function SettingsDialog({
   preferences,
   updateReady,
   offlineReady = false,
+  persistenceStatus,
   recentlyDeletedCount = 0,
   failedChangeCount = 0,
   onClose,
@@ -89,6 +92,15 @@ export function SettingsDialog({
       : assistantStatus === 'offline'
         ? 'Offline'
         : 'Ready';
+  const durableOfflineReady = offlineReady && persistenceStatus === 'available';
+  const offlineUseCopy =
+    persistenceStatus === 'unavailable'
+      ? offlineReady
+        ? 'The app shell is available without a connection, but journal data is not being saved on this device.'
+        : 'Journal data is not being saved on this device, so offline setup cannot finish.'
+      : durableOfflineReady
+        ? 'The app shell and downloaded journal are available without a connection.'
+        : 'Finishing setup while this page remains open.';
 
   useEffect(() => {
     onRefreshTokens();
@@ -379,14 +391,22 @@ export function SettingsDialog({
         <div className={cn(STATUS_CARD, 'mb-2.5')}>
           <span className="flex min-w-0 flex-col">
             <strong className={CARD_STRONG}>Offline use</strong>
-            <small className={CARD_SMALL}>
-              {offlineReady
-                ? 'The app shell and downloaded journal are available without a connection.'
-                : 'Finishing setup while this page remains open.'}
-            </small>
+            <small className={CARD_SMALL}>{offlineUseCopy}</small>
           </span>
-          <Badge variant={offlineReady ? 'connection' : 'status'}>
-            {offlineReady ? 'Ready' : 'Setting up'}
+          <Badge
+            variant={
+              persistenceStatus === 'unavailable'
+                ? 'statusError'
+                : durableOfflineReady
+                  ? 'connection'
+                  : 'status'
+            }
+          >
+            {persistenceStatus === 'unavailable'
+              ? 'Not saved'
+              : durableOfflineReady
+                ? 'Ready'
+                : 'Setting up'}
           </Badge>
         </div>
         <details className={cn(LIST_CARD, updateReady && 'mb-2.5')}>

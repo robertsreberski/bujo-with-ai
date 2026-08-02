@@ -978,6 +978,7 @@ export default function App() {
             preferences={preferences}
             updateReady={store.updateReady}
             offlineReady={store.offlineReady}
+            persistenceStatus={journalStatus.persistence}
             recentlyDeletedCount={store.recentlyDeleted.length}
             failedChangeCount={store.deadLetters.length}
             onClose={() => setOverlay(null)}
