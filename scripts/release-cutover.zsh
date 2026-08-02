@@ -245,16 +245,16 @@ function compare_private_files {
 
 function compare_upgrade_migrations {
   [[ ${mode} == upgrade ]] || return 0
-  # This reversible path intentionally rejects every runtime-visible schema change.
-  bounded_command 10 ${staged_node} ${transaction_helper} compare-migration-definitions \
-    --candidate ${release}/server/dist/db/migrations.js \
-    --previous ${previous_release}/server/dist/db/migrations.js
-  bounded_command 10 ${staged_node} ${transaction_helper} compare-migrations \
-    --candidate ${release}/server/dist/db/migrations \
-    --previous ${previous_release}/server/dist/db/migrations
-  bounded_command 10 ${staged_node} ${transaction_helper} compare-migrations \
-    --candidate ${release}/server/src/db/migrations \
-    --previous ${previous_release}/server/src/db/migrations
+  # Historical definitions and bytes remain immutable. A new suffix is allowed
+  # only after the rollback runtime has advertised compatibility with it, and
+  # only for migration SQL constrained to additive schema operations.
+  bounded_command 10 ${staged_node} ${transaction_helper} compare-migration-upgrade \
+    --candidate-definition ${release}/server/dist/db/migrations.js \
+    --previous-definition ${previous_release}/server/dist/db/migrations.js \
+    --candidate-dist ${release}/server/dist/db/migrations \
+    --previous-dist ${previous_release}/server/dist/db/migrations \
+    --candidate-source ${release}/server/src/db/migrations \
+    --previous-source ${previous_release}/server/src/db/migrations
 }
 
 function remove_owned_evidence_paths {

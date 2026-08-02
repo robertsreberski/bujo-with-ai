@@ -13,6 +13,8 @@ import type {
   EntryState,
   EntryType,
   JournalExport,
+  JournalExportV1,
+  JournalExportV2,
   MigrationKind,
   MigrationOperation,
   SearchInput,
@@ -36,6 +38,8 @@ export type {
   EntryState,
   EntryType,
   JournalExport,
+  JournalExportV1,
+  JournalExportV2,
   Settings,
   Summary,
   TagUsage,
@@ -147,8 +151,6 @@ export interface AuthenticatedDevice {
   readonly label: string;
   readonly expiresAt: string;
 }
-
-export type JournalExportV1 = JournalExport;
 
 export interface ImportReport {
   readonly inserted: Readonly<

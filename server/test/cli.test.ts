@@ -61,6 +61,54 @@ describe('journald CLI durability boundaries', () => {
     expect(run(root, ['help'])).toContain('journald backup [destination]');
   });
 
+  it('imports flat v1 and enveloped v2 files through the CLI', () => {
+    const sourceRoot = mkdtempSync(join(tmpdir(), 'journal-cli-export-source-'));
+    const v1Root = mkdtempSync(join(tmpdir(), 'journal-cli-import-v1-'));
+    const v2Root = mkdtempSync(join(tmpdir(), 'journal-cli-import-v2-'));
+    roots.push(sourceRoot, v1Root, v2Root);
+    const database = new JournalDatabase({ path: join(sourceRoot, 'journal.db') });
+    database.raw.exec(
+      `INSERT INTO entries(
+        id,date,type,text,state,time,tags,author,source,migrations,collection,
+        created_at,updated_at,deleted_at,revision
+      ) VALUES (
+        '01K1A2B3C4D5E6F7G8H9J0K1M2','2026-08-02','note','Portable CLI row','logged',
+        NULL,'[]','me',NULL,0,NULL,'2026-08-02T10:00:00.000Z',
+        '2026-08-02T10:00:00.000Z',NULL,1
+      )`,
+    );
+    database.close();
+
+    const v2Path = join(sourceRoot, 'journal-v2.json');
+    run(sourceRoot, ['export', v2Path]);
+    const v2 = JSON.parse(readFileSync(v2Path, 'utf8')) as {
+      version: 2;
+      exportedAt: string;
+      journal: Record<string, unknown> & { entries: unknown[] };
+      derived: Record<string, unknown>;
+    };
+    v2.derived = { futureProjection: [{ ignored: true }] };
+    writeFileSync(v2Path, `${JSON.stringify(v2)}\n`, { mode: 0o600 });
+    const v2Report = JSON.parse(run(v2Root, ['import', v2Path])) as {
+      inserted: { entries: number };
+    };
+    expect(v2Report.inserted.entries).toBe(1);
+
+    const v1Path = join(sourceRoot, 'journal-v1.json');
+    writeFileSync(
+      v1Path,
+      `${JSON.stringify({ version: 1, exportedAt: v2.exportedAt, ...v2.journal })}\n`,
+      { mode: 0o600 },
+    );
+    const v1Report = JSON.parse(run(v1Root, ['import', v1Path])) as {
+      inserted: { entries: number };
+    };
+    expect(v1Report.inserted.entries).toBe(1);
+    expect(JSON.parse(run(v1Root, ['export', '-'])).journal.entries).toEqual(
+      JSON.parse(run(v2Root, ['export', '-'])).journal.entries,
+    );
+  });
+
   it('refuses import and seed under a live writer but permits live-safe commands', async () => {
     const root = mkdtempSync(join(tmpdir(), 'journal-cli-lease-'));
     roots.push(root);
@@ -86,7 +134,7 @@ describe('journald CLI durability boundaries', () => {
       ]) {
         expect(() => run(root, args)).toThrow(/writer is already active/i);
       }
-      expect(run(root, ['export', '-'])).toContain('"version": 1');
+      expect(run(root, ['export', '-'])).toContain('"version": 2');
       expect(run(root, ['check'])).toBe('ok\n');
       const target = join(root, 'live-safe.db');
       expect(run(root, ['backup', target]).trim()).toBe(target);

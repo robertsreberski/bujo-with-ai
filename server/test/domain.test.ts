@@ -626,13 +626,13 @@ describe('JournalDomain summaries and credentials', () => {
 
     const target = fixture();
     const report = target.domain.importJournal(exported);
-    expect(report.inserted.entries).toBe(exported.entries.length);
+    expect(report.inserted.entries).toBe(exported.journal.entries.length);
     const roundTrip = target.domain.exportJournal();
-    expect(roundTrip.entries).toEqual(exported.entries);
-    expect(roundTrip.collections).toEqual(exported.collections);
-    expect(roundTrip.activity).toEqual(exported.activity);
-    expect(roundTrip.summaries).toEqual(exported.summaries);
-    expect(roundTrip.settings).toEqual(exported.settings);
+    expect(roundTrip.journal.entries).toEqual(exported.journal.entries);
+    expect(roundTrip.journal.collections).toEqual(exported.journal.collections);
+    expect(roundTrip.journal.activity).toEqual(exported.journal.activity);
+    expect(roundTrip.journal.summaries).toEqual(exported.journal.summaries);
+    expect(roundTrip.journal.settings).toEqual(exported.journal.settings);
 
     target.domain.updateEntry(created.entry.id, { text: 'Conflicting local row' }, target.owner);
     expect(() => target.domain.importJournal(exported)).toThrowError(/different content/i);
@@ -670,17 +670,41 @@ describe('JournalDomain summaries and credentials', () => {
     const exported = reader.exportJournal();
     expect(injected).toBe(true);
     expect(JournalExportSchema.parse(exported)).toEqual(exported);
-    expect(exported.entries).toHaveLength(0);
-    expect(exported.summaries).toHaveLength(0);
+    expect(exported.journal.entries).toHaveLength(0);
+    expect(exported.journal.summaries).toHaveLength(0);
     const target = fixture();
     target.domain.importJournal(exported);
     expect(target.domain.exportJournal()).toMatchObject({
-      entries: exported.entries,
-      collections: exported.collections,
-      activity: exported.activity,
-      summaries: exported.summaries,
-      settings: exported.settings,
+      journal: exported.journal,
     });
+  });
+
+  it('imports flat v1 and enveloped v2 exports while ignoring unknown derived projections', () => {
+    const source = fixture();
+    source.domain.createEntry(
+      { id: ulid(), text: 'Portable across export versions', type: 'note', date: '2026-07-31' },
+      source.owner,
+    );
+    const v2 = source.domain.exportJournal();
+    const v1 = {
+      version: 1 as const,
+      exportedAt: v2.exportedAt,
+      ...v2.journal,
+    };
+
+    const fromV1 = fixture();
+    expect(fromV1.domain.importJournal(v1).inserted.entries).toBe(1);
+    const fromV2 = fixture();
+    expect(
+      fromV2.domain.importJournal({
+        ...v2,
+        derived: {
+          'entry-titles': [{ entryId: ulid(), title: 'Ignored Future Projection' }],
+          unknownOptionalField: { nested: true },
+        },
+      }).inserted.entries,
+    ).toBe(1);
+    expect(fromV2.domain.exportJournal().journal).toEqual(fromV1.domain.exportJournal().journal);
   });
 
   it('rejects an export whose entry references a missing collection', () => {
@@ -693,7 +717,13 @@ describe('JournalDomain summaries and credentials', () => {
     const exported = source.domain.exportJournal();
     const invalid = {
       ...exported,
-      entries: exported.entries.map((entry) => ({ ...entry, collection: 'missing-collection' })),
+      journal: {
+        ...exported.journal,
+        entries: exported.journal.entries.map((entry) => ({
+          ...entry,
+          collection: 'missing-collection',
+        })),
+      },
     };
     const target = fixture();
     expect(() => target.domain.importJournal(invalid)).toThrowError(/missing collection/i);
@@ -726,20 +756,26 @@ describe('JournalDomain summaries and credentials', () => {
 
     const archivedMonth = {
       ...exported,
-      collections: exported.collections.map((collection) =>
-        collection.id === 'month:2026-08'
-          ? { ...collection, archivedAt: '2026-07-31T10:00:00.000Z' }
-          : collection,
-      ),
+      journal: {
+        ...exported.journal,
+        collections: exported.journal.collections.map((collection) =>
+          collection.id === 'month:2026-08'
+            ? { ...collection, archivedAt: '2026-07-31T10:00:00.000Z' }
+            : collection,
+        ),
+      },
     };
     expect(() => target.domain.importJournal(archivedMonth)).toThrowError(/cannot be archived/i);
 
-    const savedId = exported.summaries[0]?.savedEntryId;
+    const savedId = exported.journal.summaries[0]?.savedEntryId;
     const brokenReference = {
       ...exported,
-      entries: exported.entries.map((entry) =>
-        entry.id === savedId ? { ...entry, author: 'me' as const, source: null } : entry,
-      ),
+      journal: {
+        ...exported.journal,
+        entries: exported.journal.entries.map((entry) =>
+          entry.id === savedId ? { ...entry, author: 'me' as const, source: null } : entry,
+        ),
+      },
     };
     expect(() => target.domain.importJournal(brokenReference)).toThrowError(/AI-authored summary/i);
   });

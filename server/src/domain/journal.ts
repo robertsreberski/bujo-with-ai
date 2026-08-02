@@ -13,6 +13,7 @@ import {
   EntrySchema,
   IsoTimestampSchema,
   JournalExportSchema,
+  JournalExportV2Schema,
   SearchInputSchema,
   SettingsSchema,
   SummarySchema,
@@ -42,7 +43,9 @@ import type {
   EntryWriteResult,
   ImportReport,
   IssuedAgentToken,
+  JournalExport,
   JournalExportV1,
+  JournalExportV2,
   MutationContext,
   PairedDevice,
   RateLimitResult,
@@ -238,8 +241,9 @@ function validateActivity(activity: ActivityItem): void {
   ActivityItemSchema.parse(activity);
 }
 
-function validateExport(document: JournalExportV1): void {
-  JournalExportSchema.parse(document);
+function validateExport(document: JournalExport): JournalExportV1 | JournalExportV2['journal'] {
+  const parsed = JournalExportSchema.parse(document);
+  return parsed.version === 1 ? parsed : parsed.journal;
 }
 
 function validateSearch(input: SearchEntriesInput): void {
@@ -2123,38 +2127,43 @@ export class JournalDomain {
     });
   }
 
-  public exportJournal(): JournalExportV1 {
-    const snapshot = this.db.transaction((): JournalExportV1 => {
+  public exportJournal(): JournalExportV2 {
+    const snapshot = this.db.transaction((): JournalExportV2 => {
       const settings = this.getSettings();
-      return JournalExportSchema.parse({
-        version: 1,
+      return JournalExportV2Schema.parse({
+        version: 2,
         exportedAt: this.now().toISOString(),
-        entries: (
-          this.db
-            .prepare('SELECT * FROM entries WHERE deleted_at IS NULL ORDER BY created_at')
-            .all() as EntryRow[]
-        ).map(mapEntry),
-        collections: (
-          this.db.prepare('SELECT * FROM collections ORDER BY created_at').all() as CollectionRow[]
-        ).map(mapCollection),
-        activity: (
-          this.db.prepare('SELECT * FROM activity ORDER BY at').all() as ActivityRow[]
-        ).map(mapActivity),
-        summaries: (
-          this.db.prepare('SELECT * FROM summaries ORDER BY week_start').all() as SummaryRow[]
-        ).map(mapSummary),
-        settings,
+        journal: {
+          entries: (
+            this.db
+              .prepare('SELECT * FROM entries WHERE deleted_at IS NULL ORDER BY created_at')
+              .all() as EntryRow[]
+          ).map(mapEntry),
+          collections: (
+            this.db
+              .prepare('SELECT * FROM collections ORDER BY created_at')
+              .all() as CollectionRow[]
+          ).map(mapCollection),
+          activity: (
+            this.db.prepare('SELECT * FROM activity ORDER BY at').all() as ActivityRow[]
+          ).map(mapActivity),
+          summaries: (
+            this.db.prepare('SELECT * FROM summaries ORDER BY week_start').all() as SummaryRow[]
+          ).map(mapSummary),
+          settings,
+        },
+        derived: {},
       });
     });
     return snapshot();
   }
 
-  public importJournal(document: JournalExportV1): ImportReport {
-    validateExport(document);
+  public importJournal(document: JournalExport): ImportReport {
+    const journal = validateExport(document);
     const inserted = { entries: 0, collections: 0, activity: 0, summaries: 0, settings: 0 };
     const skipped = { entries: 0, collections: 0, activity: 0, summaries: 0, settings: 0 };
     const transaction = this.db.transaction(() => {
-      for (const collection of document.collections) {
+      for (const collection of journal.collections) {
         const existingRow = this.db
           .prepare('SELECT * FROM collections WHERE id = ?')
           .get(collection.id) as CollectionRow | undefined;
@@ -2172,7 +2181,7 @@ export class JournalDomain {
         if (result.changes === 0) skipped.collections++;
         else inserted.collections++;
       }
-      for (const entry of document.entries) {
+      for (const entry of journal.entries) {
         validateEntry(entry);
         const existingRow = this.db.prepare('SELECT * FROM entries WHERE id = ?').get(entry.id) as
           | EntryRow
@@ -2196,7 +2205,7 @@ export class JournalDomain {
         if (result.changes === 0) skipped.entries++;
         else inserted.entries++;
       }
-      for (const summary of document.summaries) {
+      for (const summary of journal.summaries) {
         validateSummary(summary);
         const existingRow = this.db
           .prepare('SELECT * FROM summaries WHERE id = ?')
@@ -2225,7 +2234,7 @@ export class JournalDomain {
         if (result.changes === 0) skipped.summaries++;
         else inserted.summaries++;
       }
-      for (const activity of document.activity) {
+      for (const activity of journal.activity) {
         validateActivity(activity);
         const existingRow = this.db
           .prepare('SELECT * FROM activity WHERE id = ?')
@@ -2255,7 +2264,7 @@ export class JournalDomain {
         this.db.prepare('SELECT count(*) AS count FROM settings').get() as { count: number }
       ).count;
       if (settingCount > 0) {
-        assertImportMatch('settings', 'singleton', this.getSettings(), document.settings);
+        assertImportMatch('settings', 'singleton', this.getSettings(), journal.settings);
         skipped.settings++;
         return;
       }
@@ -2265,9 +2274,9 @@ export class JournalDomain {
            VALUES (1,@density,@showTypeBadges,@highlightAiEntries,@updatedAt)`,
         )
         .run({
-          ...document.settings,
-          showTypeBadges: Number(document.settings.showTypeBadges),
-          highlightAiEntries: Number(document.settings.highlightAiEntries),
+          ...journal.settings,
+          showTypeBadges: Number(journal.settings.showTypeBadges),
+          highlightAiEntries: Number(journal.settings.highlightAiEntries),
         });
       inserted.settings++;
     });

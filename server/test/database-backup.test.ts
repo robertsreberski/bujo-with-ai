@@ -318,10 +318,106 @@ describe('JournalDatabase and backups', () => {
       )
       .run(new Date().toISOString());
     raw.close();
-    expect(() => new JournalDatabase({ path })).toThrow(/unknown migration version.*999/i);
+    expect(() => new JournalDatabase({ path })).toThrow(/not a contiguous prefix/i);
     expect(() => new JournalDatabase({ path, applyMigrations: false })).toThrow(
-      /unknown migration version.*999/i,
+      /not a contiguous prefix/i,
     );
+  });
+
+  it('opens a contiguous suffix of future additive migrations but preserves known integrity', () => {
+    const root = mkdtempSync(join(tmpdir(), 'journal-future-migration-test-'));
+    roots.push(root);
+    const path = join(root, 'journal.db');
+    const initial = new JournalDatabase({ path });
+    initial.close();
+
+    const additive = new Database(path);
+    additive.exec(
+      'CREATE TABLE optional_future_projection (entry_id TEXT PRIMARY KEY, value TEXT)',
+    );
+    additive
+      .prepare('INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (4,?,?,?)')
+      .run('optional-future-projection', 'a'.repeat(64), '2026-08-02T10:00:00.000Z');
+    additive.close();
+
+    const rollbackRuntime = new JournalDatabase({ path });
+    expect(
+      rollbackRuntime.raw
+        .prepare("SELECT type FROM sqlite_master WHERE name = 'optional_future_projection'")
+        .pluck()
+        .get(),
+    ).toBe('table');
+    rollbackRuntime.close();
+    const readonlyRollback = new JournalDatabase({ path, applyMigrations: false, readonly: true });
+    readonlyRollback.close();
+
+    const tampered = new Database(path);
+    tampered
+      .prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 2')
+      .run('b'.repeat(64));
+    tampered.close();
+    expect(() => new JournalDatabase({ path })).toThrow(/migration 2.*changed/i);
+  });
+
+  it('rejects malformed metadata in a future migration suffix', () => {
+    const root = mkdtempSync(join(tmpdir(), 'journal-future-metadata-test-'));
+    roots.push(root);
+    const path = join(root, 'journal.db');
+    const initial = new JournalDatabase({ path });
+    initial.close();
+    const raw = new Database(path);
+    raw
+      .prepare('INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (4,?,?,?)')
+      .run('future', 'not-a-checksum', '2026-08-02T10:00:00.000Z');
+    raw.close();
+    expect(() => new JournalDatabase({ path })).toThrow(/invalid integrity metadata/i);
+  });
+
+  it('survives compatibility to additive to rollback to upgrade with backup restore', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'journal-additive-rollback-test-'));
+    roots.push(root);
+    const path = join(root, 'journal.db');
+    const compatibility = new JournalDatabase({ path });
+    compatibility.raw.exec(
+      "INSERT INTO entries(id,date,type,text,state,time,tags,author,source,migrations,collection,created_at,updated_at,deleted_at,revision) VALUES ('01K1A2B3C4D5E6F7G8H9J0K1M2','2026-08-02','note','Before additive release','logged',NULL,'[]','me',NULL,0,NULL,'2026-08-02T10:00:00.000Z','2026-08-02T10:00:00.000Z',NULL,1)",
+    );
+    compatibility.close();
+
+    const additive = new Database(path);
+    additive.exec(
+      "CREATE TABLE optional_future_projection (entry_id TEXT PRIMARY KEY, value TEXT); INSERT INTO optional_future_projection VALUES ('01K1A2B3C4D5E6F7G8H9J0K1M2','derived')",
+    );
+    additive
+      .prepare('INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (4,?,?,?)')
+      .run('optional-future-projection', 'c'.repeat(64), '2026-08-02T10:05:00.000Z');
+    additive.close();
+
+    const rollback = new JournalDatabase({ path, backupDir: join(root, 'backups') });
+    expect(rollback.raw.prepare('SELECT text FROM entries').pluck().get()).toBe(
+      'Before additive release',
+    );
+    const manager = new BackupManager({
+      database: rollback,
+      backupDir: join(root, 'backups'),
+      timezone: 'UTC',
+    });
+    const backup = await manager.createFresh();
+    rollback.close();
+
+    const restoredPath = join(root, 'restored.db');
+    const backupBytes = readFileSync(backup);
+    writeFileSync(restoredPath, backupBytes, { mode: 0o600 });
+    const upgradedAgain = new JournalDatabase({ path: restoredPath });
+    expect(
+      upgradedAgain.raw.prepare('SELECT value FROM optional_future_projection').pluck().get(),
+    ).toBe('derived');
+    expect(
+      upgradedAgain.raw
+        .prepare('SELECT version FROM schema_migrations ORDER BY version')
+        .pluck()
+        .all(),
+    ).toEqual([1, 2, 3, 4]);
+    upgradedAgain.close();
   });
 
   it('starts the compiled CLI with only its copied migration assets', () => {

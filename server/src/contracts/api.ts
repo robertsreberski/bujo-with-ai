@@ -290,98 +290,132 @@ export const SseReplayReadySchema = z.strictObject({
   cursor: CursorSchema,
 });
 
-export const JournalExportSchema = z
+const JournalExportDataObjectSchema = z.strictObject({
+  entries: z.array(EntrySchema),
+  collections: z.array(CollectionSchema),
+  activity: z.array(ActivityItemSchema),
+  summaries: z.array(SummarySchema),
+  settings: SettingsSchema,
+});
+
+type JournalExportData = z.infer<typeof JournalExportDataObjectSchema>;
+type JournalExportRefinementContext = Parameters<
+  Parameters<typeof JournalExportDataObjectSchema.superRefine>[0]
+>[1];
+
+function refineJournalExportData(
+  journal: JournalExportData,
+  context: JournalExportRefinementContext,
+): void {
+  const requireUnique = (
+    values: readonly string[],
+    path: 'entries' | 'collections' | 'activity' | 'summaries',
+    label: string,
+  ): void => {
+    const seen = new Set<string>();
+    values.forEach((value, index) => {
+      if (seen.has(value)) {
+        context.addIssue({
+          code: 'custom',
+          path: [path, index, label],
+          message: `Duplicate ${label} in journal export.`,
+        });
+      }
+      seen.add(value);
+    });
+  };
+  requireUnique(
+    journal.entries.map((entry) => entry.id),
+    'entries',
+    'id',
+  );
+  requireUnique(
+    journal.collections.map((collection) => collection.id),
+    'collections',
+    'id',
+  );
+  requireUnique(
+    journal.activity.map((activity) => activity.id),
+    'activity',
+    'id',
+  );
+  requireUnique(
+    journal.summaries.map((summary) => summary.id),
+    'summaries',
+    'id',
+  );
+  requireUnique(
+    journal.summaries.map((summary) => summary.weekStart),
+    'summaries',
+    'weekStart',
+  );
+
+  const collectionIds = new Set(journal.collections.map((collection) => collection.id));
+  journal.collections.forEach((collection, index) => {
+    if (collection.id.startsWith('month:') && collection.archivedAt !== null) {
+      context.addIssue({
+        code: 'custom',
+        path: ['collections', index, 'archivedAt'],
+        message: 'Month collections cannot be archived.',
+      });
+    }
+  });
+  const entriesById = new Map(journal.entries.map((entry) => [entry.id, entry]));
+  journal.entries.forEach((entry, index) => {
+    if (entry.collection !== null && !collectionIds.has(entry.collection)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['entries', index, 'collection'],
+        message: `Entry references missing collection ${entry.collection}.`,
+      });
+    }
+  });
+  journal.summaries.forEach((summary, index) => {
+    if (summary.savedEntryId === null) return;
+    const entry = entriesById.get(summary.savedEntryId);
+    if (
+      entry === undefined ||
+      entry.deletedAt !== null ||
+      entry.author !== 'ai' ||
+      entry.type !== 'note' ||
+      !entry.tags.includes('summary')
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['summaries', index, 'savedEntryId'],
+        message: 'Saved summary must reference a live AI-authored summary note.',
+      });
+    }
+  });
+}
+
+const JournalExportDataSchema = JournalExportDataObjectSchema.superRefine(refineJournalExportData);
+
+/** Historical flat export accepted indefinitely for restore portability. */
+export const JournalExportV1Schema = z
   .strictObject({
     version: z.literal(1),
     exportedAt: IsoTimestampSchema,
-    entries: z.array(EntrySchema),
-    collections: z.array(CollectionSchema),
-    activity: z.array(ActivityItemSchema),
-    summaries: z.array(SummarySchema),
-    settings: SettingsSchema,
+    ...JournalExportDataObjectSchema.shape,
   })
   .superRefine((journal, context) => {
-    const requireUnique = (
-      values: readonly string[],
-      path: 'entries' | 'collections' | 'activity' | 'summaries',
-      label: string,
-    ): void => {
-      const seen = new Set<string>();
-      values.forEach((value, index) => {
-        if (seen.has(value)) {
-          context.addIssue({
-            code: 'custom',
-            path: [path, index, label],
-            message: `Duplicate ${label} in journal export.`,
-          });
-        }
-        seen.add(value);
-      });
-    };
-    requireUnique(
-      journal.entries.map((entry) => entry.id),
-      'entries',
-      'id',
-    );
-    requireUnique(
-      journal.collections.map((collection) => collection.id),
-      'collections',
-      'id',
-    );
-    requireUnique(
-      journal.activity.map((activity) => activity.id),
-      'activity',
-      'id',
-    );
-    requireUnique(
-      journal.summaries.map((summary) => summary.id),
-      'summaries',
-      'id',
-    );
-    requireUnique(
-      journal.summaries.map((summary) => summary.weekStart),
-      'summaries',
-      'weekStart',
-    );
-
-    const collectionIds = new Set(journal.collections.map((collection) => collection.id));
-    journal.collections.forEach((collection, index) => {
-      if (collection.id.startsWith('month:') && collection.archivedAt !== null) {
-        context.addIssue({
-          code: 'custom',
-          path: ['collections', index, 'archivedAt'],
-          message: 'Month collections cannot be archived.',
-        });
-      }
-    });
-    const entriesById = new Map(journal.entries.map((entry) => [entry.id, entry]));
-    journal.entries.forEach((entry, index) => {
-      if (entry.collection !== null && !collectionIds.has(entry.collection)) {
-        context.addIssue({
-          code: 'custom',
-          path: ['entries', index, 'collection'],
-          message: `Entry references missing collection ${entry.collection}.`,
-        });
-      }
-    });
-    journal.summaries.forEach((summary, index) => {
-      if (summary.savedEntryId === null) return;
-      const entry = entriesById.get(summary.savedEntryId);
-      if (
-        entry === undefined ||
-        entry.deletedAt !== null ||
-        entry.author !== 'ai' ||
-        entry.type !== 'note' ||
-        !entry.tags.includes('summary')
-      ) {
-        context.addIssue({
-          code: 'custom',
-          path: ['summaries', index, 'savedEntryId'],
-          message: 'Saved summary must reference a live AI-authored summary note.',
-        });
-      }
-    });
+    refineJournalExportData(journal, context);
   });
+
+/**
+ * Current export envelope. Derived projections are deliberately opaque to this
+ * compatibility runtime: future releases may preserve them while old runtimes
+ * safely import only the canonical journal payload.
+ */
+export const JournalExportV2Schema = z.strictObject({
+  version: z.literal(2),
+  exportedAt: IsoTimestampSchema,
+  journal: JournalExportDataSchema,
+  derived: z.record(z.string(), z.unknown()).optional(),
+});
+
+/** Import contract spanning every portable Journal export format. */
+export const JournalExportSchema = z.union([JournalExportV1Schema, JournalExportV2Schema]);
 
 const ImportEntityCountsSchema = z.strictObject({
   entries: z.number().int().nonnegative(),
@@ -420,4 +454,6 @@ export type ChangeOrigin = z.infer<typeof ChangeOriginSchema>;
 export type Change = z.infer<typeof ChangeSchema>;
 export type ChangeBatch = z.infer<typeof ChangeBatchSchema>;
 export type JournalExport = z.infer<typeof JournalExportSchema>;
+export type JournalExportV1 = z.infer<typeof JournalExportV1Schema>;
+export type JournalExportV2 = z.infer<typeof JournalExportV2Schema>;
 export type ImportReport = z.infer<typeof ImportReportSchema>;
