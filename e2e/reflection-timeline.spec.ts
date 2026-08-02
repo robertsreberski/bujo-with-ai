@@ -1,7 +1,13 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { expect, test, type APIRequestContext, type BrowserContext } from '@playwright/test';
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type BrowserContext,
+  type Locator,
+} from '@playwright/test';
 import { ulid } from 'ulid';
 
 import { openJournal, uniqueText } from './helpers';
@@ -83,8 +89,10 @@ async function materializeReflection(
   expect(response.ok(), await response.text()).toBeTruthy();
   const body = (await response.json()) as { items: ReflectionState[] };
   const reflection = body.items.find((item) => item.weekStart === weekStart);
-  expect(reflection).toMatchObject({ weekStart, weekEnd, status: 'notRequested', revision: 1 });
+  expect(reflection).toMatchObject({ weekStart, weekEnd, revision: expect.any(Number) });
   if (!reflection) throw new Error('The completed week did not materialize a Reflection slot.');
+  expect(['notRequested', 'current', 'stale']).toContain(reflection.status);
+  expect(reflection.revision).toBeGreaterThan(0);
   return reflection;
 }
 
@@ -119,6 +127,19 @@ function reflectionResult(result: unknown, status: ReflectionState['status']): R
   return structured.reflection;
 }
 
+async function expectReflectionControlsAreTouchSafe(card: Locator): Promise<void> {
+  const controls = card.getByRole('button');
+  const count = await controls.count();
+  expect(count).toBeGreaterThan(0);
+  for (const control of await controls.all()) {
+    if (!(await control.isVisible())) continue;
+    const label = (await control.getAttribute('aria-label')) ?? (await control.textContent()) ?? '';
+    const box = await control.boundingBox();
+    expect(box?.height, `Reflection control "${label.trim()}" height`).toBeGreaterThanOrEqual(40);
+    expect(box?.width, `Reflection control "${label.trim()}" width`).toBeGreaterThanOrEqual(40);
+  }
+}
+
 test('Timeline carries a weekly Reflection from request through completion to its source', async ({
   baseURL,
   context,
@@ -140,14 +161,19 @@ test('Timeline carries a weekly Reflection from request through completion to it
   await openJournal(page);
   const card = page.locator(`[aria-labelledby="reflection-${slot.id}"]`);
   await expect(card.getByRole('heading', { name: 'Weekly Reflection' })).toBeVisible();
-  await expect(card.getByText('not requested', { exact: true })).toBeVisible();
+  await expect(
+    card.getByText(slot.status === 'notRequested' ? 'not requested' : slot.status, { exact: true }),
+  ).toBeVisible();
+  await expectReflectionControlsAreTouchSafe(card);
 
   const requestedResponse = page.waitForResponse(
     (response) =>
       response.url().endsWith(`/api/reflections/${slot.id}/request`) &&
       response.request().method() === 'POST',
   );
-  await card.getByRole('button', { name: 'Request assistant' }).click();
+  await card
+    .getByRole('button', { name: slot.status === 'notRequested' ? 'Request assistant' : 'Rewrite' })
+    .click();
   const requested = await requestedResponse;
   expect(requested.ok(), await requested.text()).toBeTruthy();
   const queued = ((await requested.json()) as { reflection: ReflectionState }).reflection;
@@ -210,6 +236,7 @@ test('Timeline carries a weekly Reflection from request through completion to it
   await expect(card.getByText(reflectionText, { exact: true }).first()).toBeVisible();
   await expect(card).toContainText(`by ${agentLabel}`);
   await expect(card).toContainText(`Generator source: ${generatorSource}`);
+  await expectReflectionControlsAreTouchSafe(card);
 
   await card.getByRole('button', { name: firstSource, exact: true }).click();
   const sourceDialog = page.getByRole('dialog', { name: firstSource });

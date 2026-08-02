@@ -192,12 +192,23 @@ test('the sheet names the month it would file into on the month spread', async (
   await page.getByRole('combobox', { name: 'Add an entry' }).focus();
   await expect(page.getByRole('button', { name: /^Destination:/ })).toBeVisible();
   const row = await captureEntry(page, `. ${text}`, text);
+  const content = page.locator('#journal-content');
+  const initialScrollTop = await content.evaluate((element) => element.scrollTop);
+  const contentBox = await content.boundingBox();
+  const rowBox = await row.boundingBox();
+  expect(contentBox).not.toBeNull();
+  expect(rowBox).not.toBeNull();
+  expect(
+    rowBox?.y ?? 0,
+    'the target starts below the visible content pane so tap must auto-scroll it',
+  ).toBeGreaterThan((contentBox?.y ?? 0) + (contentBox?.height ?? 0));
 
   // The success toast intentionally covers the new bottom row. Wait for that
   // live feedback to clear before exercising the row's own pointer action
   // instead of asking Playwright to click through it.
   await expect(page.locator('.toast')).toHaveCount(0);
   await row.tap();
+  expect(await content.evaluate((element) => element.scrollTop)).toBeGreaterThan(initialScrollTop);
   const sheet = page.locator('.entry-sheet');
   await expect(sheet).toBeVisible();
   await expect(sheet.getByRole('button', { name: scheduleName })).toBeVisible();
