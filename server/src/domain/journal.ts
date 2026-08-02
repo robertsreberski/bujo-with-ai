@@ -26,7 +26,11 @@ import {
 } from '../contracts/index.js';
 import type { JournalDatabase } from '../db/database.js';
 import { DomainError } from './errors.js';
-import { journalSearchNeedles } from './search-query.js';
+import {
+  JournalSearchParseError,
+  journalSearchNeedles,
+  parseJournalSearch,
+} from './search-query.js';
 import type {
   ActivityAction,
   ActivityActorSummary,
@@ -311,6 +315,19 @@ function validateActivity(activity: ActivityItem): void {
 function validateExport(document: JournalExport): JournalExportV1 | JournalExportV2['journal'] {
   const parsed = JournalExportSchema.parse(document);
   return parsed.version === 1 ? parsed : parsed.journal;
+}
+
+function validateSavedViewQueries(views: NonNullable<Settings['savedViews']> | undefined): void {
+  for (const view of views ?? []) {
+    try {
+      parseJournalSearch(view.query);
+    } catch (error) {
+      if (error instanceof JournalSearchParseError) {
+        invalid(`Saved view ${view.id} has an invalid query: ${error.message}`);
+      }
+      throw error;
+    }
+  }
 }
 
 function validateSearch(input: SearchEntriesInput): void {
@@ -2957,6 +2974,7 @@ export class JournalDomain {
     if (patch.highlightAiEntries !== undefined && typeof patch.highlightAiEntries !== 'boolean') {
       invalid('highlightAiEntries must be boolean');
     }
+    validateSavedViewQueries(patch.savedViews);
     return this.write('set-settings', patch, actor, mutation, (context) => {
       const settings = SettingsSchema.parse({
         ...this.getSettings(),
@@ -3017,6 +3035,9 @@ export class JournalDomain {
 
   public importJournal(document: JournalExport): ImportReport {
     const journal = validateExport(document);
+    // Imports are a write boundary too. Parsing before the transaction keeps an
+    // invalid saved query from partially importing otherwise valid rows.
+    validateSavedViewQueries(journal.settings.savedViews);
     const inserted = { entries: 0, collections: 0, activity: 0, summaries: 0, settings: 0 };
     const skipped = { entries: 0, collections: 0, activity: 0, summaries: 0, settings: 0 };
     const transaction = this.db.transaction(() => {

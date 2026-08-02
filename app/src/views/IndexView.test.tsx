@@ -33,15 +33,28 @@ const model = (patch: Partial<IndexResponse> = {}): IndexResponse => ({
   ...patch,
 });
 
-const renderIndex = (index: IndexResponse) => {
+const renderIndex = (
+  index: IndexResponse | null,
+  state: Partial<{
+    status: 'idle' | 'loading' | 'ready' | 'error';
+    source: 'none' | 'cached' | 'journal';
+    online: boolean;
+    error: string | null;
+  }> = {},
+) => {
   const callbacks = {
+    status: 'ready' as const,
+    source: 'journal' as const,
+    online: true,
+    error: null,
+    onRetry: vi.fn(),
     onOpenCollection: vi.fn(),
     onOpenMonth: vi.fn(),
     onOpenSearch: vi.fn(),
     onCreateCollection: vi.fn(),
     onUpdateCollection: vi.fn(),
   };
-  render(<IndexView index={index} {...callbacks} />);
+  render(<IndexView index={index} {...callbacks} {...state} />);
   return callbacks;
 };
 
@@ -85,5 +98,46 @@ describe('IndexView aggregate model', () => {
     await user.click(screen.getByRole('button', { name: 'Restore Focus /focus-b' }));
     expect(callbacks.onUpdateCollection).toHaveBeenCalledWith('focus-b', { archived: false });
     expect(callbacks.onUpdateCollection).not.toHaveBeenCalledWith('focus-a', expect.anything());
+  });
+
+  it('ends the first offline load explicitly instead of leaving a spinner', () => {
+    renderIndex(null, { status: 'idle', source: 'none', online: false });
+
+    expect(screen.getByText('Journal index isn’t on this device yet.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Journal index')).toHaveAttribute('aria-busy', 'false');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
+    expect(screen.queryByText('Loading journal index…')).not.toBeInTheDocument();
+  });
+
+  it('labels cached counts as stale and allows an explicit failed-refresh retry', async () => {
+    const user = userEvent.setup();
+    const callbacks = renderIndex(
+      model({ collections: [collection('saved', 'Saved collection', 23)] }),
+      {
+        status: 'error',
+        source: 'cached',
+        online: true,
+        error: 'Journal is unreachable.',
+      },
+    );
+
+    expect(screen.getByText('23 items')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'showing saved counts that may be out of date',
+    );
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(callbacks.onRetry).toHaveBeenCalledOnce();
+  });
+
+  it('never presents a previously fresh snapshot as current while offline', () => {
+    renderIndex(model({ months: [{ month: '2026-07', count: 9 }] }), {
+      status: 'ready',
+      source: 'journal',
+      online: false,
+    });
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Offline — counts are from the last sync and may be out of date.',
+    );
   });
 });

@@ -13,7 +13,6 @@ const EMPTY = `${EMPTY_PANEL} min-h-[150px]`;
 const EMPTY_TITLE = 'text-md text-fg-body';
 
 interface SearchDialogProps {
-  entries: JournalEntry[];
   preferences: DisplayPreferences;
   initialQuery?: string;
   onSearch: (query: string, cursor?: string) => Promise<JournalSearchPage>;
@@ -52,7 +51,6 @@ function messageFromError(error: unknown): string {
 }
 
 export function SearchDialog({
-  entries,
   preferences,
   initialQuery = '',
   onSearch,
@@ -62,9 +60,7 @@ export function SearchDialog({
 }: SearchDialogProps) {
   const [query, setQuery] = useState(initialQuery);
   const [result, setResult] = useState<{ query: string; page: JournalSearchPage } | null>(null);
-  const [loading, setLoading] = useState<'initial' | 'more' | null>(
-    initialQuery.trim() ? 'initial' : null,
-  );
+  const [loading, setLoading] = useState<'initial' | 'more' | null>('initial');
   const [error, setError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -74,12 +70,11 @@ export function SearchDialog({
     setQuery(value);
     setResult(null);
     setError(null);
-    setLoading(value.trim() ? 'initial' : null);
+    setLoading('initial');
   };
 
   useEffect(() => {
     const normalized = query.trim();
-    if (!normalized) return;
     let active = true;
     const timer = window.setTimeout(() => {
       void onSearch(normalized)
@@ -107,20 +102,7 @@ export function SearchDialog({
       return {};
     }
   }, [normalizedQuery]);
-  const recentEntries = useMemo(
-    () =>
-      [...entries]
-        .filter((entry) => entry.deletedAt === null)
-        .sort(
-          (left, right) =>
-            right.date.localeCompare(left.date) ||
-            right.createdAt.localeCompare(left.createdAt) ||
-            right.id.localeCompare(left.id),
-        )
-        .slice(0, 50),
-    [entries],
-  );
-  const results = normalizedQuery ? (activeResult?.items ?? []) : recentEntries;
+  const results = activeResult?.items ?? [];
   const searching = loading === 'initial';
 
   const retry = () => {
@@ -201,18 +183,25 @@ export function SearchDialog({
         aria-label="Search results"
         aria-busy={loading !== null}
       >
-        {!normalizedQuery ? (
-          <p className={RESULTS_NOTE}>Showing your 50 most recent entries</p>
+        {!normalizedQuery && searching ? (
+          <p className={RESULTS_NOTE}>Loading recent entries from Journal…</p>
+        ) : null}
+        {!normalizedQuery && activeResult?.source === 'journal' && !searching ? (
+          <p className={RESULTS_NOTE}>Showing recent entries from Journal</p>
         ) : null}
         {normalizedQuery && searching ? (
           <p className={RESULTS_NOTE}>Searching the full journal…</p>
         ) : null}
-        {normalizedQuery && activeResult?.source === 'downloaded' && !searching ? (
+        {activeResult?.source === 'downloaded' && !searching ? (
           <div
             className="flex items-center justify-between gap-3 border-b border-bg-line bg-danger-bg px-2.5 py-2 text-tag text-warning"
             role="status"
           >
-            <span>Searching downloaded history — results may be incomplete.</span>
+            <span>
+              {normalizedQuery
+                ? 'Searching downloaded history — results may be incomplete.'
+                : 'Showing downloaded recent entries — history may be incomplete.'}
+            </span>
             <button className="shrink-0 underline underline-offset-2" type="button" onClick={retry}>
               Retry
             </button>
@@ -268,7 +257,11 @@ export function SearchDialog({
         ) : activeResult?.source === 'downloaded' ? (
           <div className={EMPTY}>
             <Icon name="wifiOff" size={18} />
-            <p className={EMPTY_TITLE}>No downloaded entries match “{normalizedQuery}”.</p>
+            <p className={EMPTY_TITLE}>
+              {normalizedQuery
+                ? `No downloaded entries match “${normalizedQuery}”.`
+                : 'No downloaded recent entries are available.'}
+            </p>
             <span className="text-xs">
               {activeResult.reason === 'offline'
                 ? 'Reconnect to search the full journal.'
