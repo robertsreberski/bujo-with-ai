@@ -183,10 +183,16 @@ export interface AuthenticatedDevice {
 
 export interface ImportReport {
   readonly inserted: Readonly<
-    Record<'entries' | 'collections' | 'activity' | 'summaries' | 'settings', number>
+    Record<
+      'entries' | 'collections' | 'activity' | 'summaries' | 'reflections' | 'settings',
+      number
+    >
   >;
   readonly skipped: Readonly<
-    Record<'entries' | 'collections' | 'activity' | 'summaries' | 'settings', number>
+    Record<
+      'entries' | 'collections' | 'activity' | 'summaries' | 'reflections' | 'settings',
+      number
+    >
   >;
 }
 

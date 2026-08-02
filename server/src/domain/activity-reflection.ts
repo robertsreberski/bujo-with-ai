@@ -1,5 +1,10 @@
 import type Database from 'better-sqlite3';
-import { ActivityItemSchema, ActivityViewSchema, IsoTimestampSchema } from '../contracts/index.js';
+import {
+  ActivityItemSchema,
+  ActivityViewSchema,
+  IsoTimestampSchema,
+  ReflectionSchema,
+} from '../contracts/index.js';
 import { DomainError } from './errors.js';
 import {
   activityChange,
@@ -165,6 +170,133 @@ export class ActivityReflection {
     return row === undefined ? null : this.mapReflectionRow(row);
   }
 
+  public listStoredReflections(): readonly Reflection[] {
+    const rows = this.db
+      .prepare('SELECT * FROM reflection_slots ORDER BY week_start, id')
+      .all() as ReflectionSlotRow[];
+    return rows.map((row) => this.mapReflectionRow(row));
+  }
+
+  /** Merge one portable Reflection inside the caller's import transaction. */
+  public importReflection(input: Reflection, context: WriteContext): 'inserted' | 'skipped' {
+    const parsed = ReflectionSchema.parse({
+      ...input,
+      claimedSourceEntries: input.claimedSourceEntries ?? null,
+    });
+    // Agent credentials are intentionally not portable. Preserve the durable
+    // request, but make a running claim reclaimable on the destination.
+    const reflection: Reflection =
+      parsed.status === 'running'
+        ? ReflectionSchema.parse({
+            ...parsed,
+            status: 'queued',
+            claimedAt: null,
+            claimedBy: null,
+            claimedSourceEntries: null,
+            revision: parsed.revision + 1,
+          })
+        : parsed;
+    const byId = this.getReflection(reflection.id);
+    const sameWeekRow = this.db
+      .prepare('SELECT * FROM reflection_slots WHERE week_start = ?')
+      .get(reflection.weekStart) as ReflectionSlotRow | undefined;
+    const sameWeek = sameWeekRow === undefined ? null : this.mapReflectionRow(sameWeekRow);
+    if (byId !== null && byId.weekStart !== reflection.weekStart) {
+      throw new DomainError(
+        'CONFLICT',
+        `Reflection ${reflection.id} already belongs to week ${byId.weekStart}`,
+      );
+    }
+    if (sameWeek !== null && sameWeek.id !== reflection.id) {
+      if (!replaceableReflectionPlaceholder(sameWeek)) {
+        throw new DomainError(
+          'CONFLICT',
+          `Reflection week ${reflection.weekStart} already exists with different content`,
+        );
+      }
+      this.db.prepare('DELETE FROM reflection_slots WHERE id = ?').run(sameWeek.id);
+    }
+    if (byId !== null) {
+      if (stableJson(byId) === stableJson(reflection)) return 'skipped';
+      if (!replaceableReflectionPlaceholder(byId)) {
+        throw new DomainError(
+          'CONFLICT',
+          `Reflection ${reflection.id} already exists with different content`,
+        );
+      }
+      this.db.prepare('DELETE FROM reflection_slots WHERE id = ?').run(byId.id);
+    }
+
+    for (const version of reflection.versions) {
+      const collision = this.db
+        .prepare('SELECT reflection_id FROM reflection_versions WHERE id = ?')
+        .pluck()
+        .get(version.id) as string | undefined;
+      if (collision !== undefined) {
+        throw new DomainError(
+          'CONFLICT',
+          `Reflection version ${version.id} already belongs to a different Reflection`,
+        );
+      }
+    }
+
+    this.db
+      .prepare(
+        `INSERT INTO reflection_slots(
+          id,week_start,week_end,status,request_id,requested_at,claimed_at,claimed_token_id,
+          claimed_label,claimed_tool,claimed_source_entries,failure,current_version_id,
+          created_at,updated_at,revision
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        reflection.id,
+        reflection.weekStart,
+        reflection.weekEnd,
+        reflection.status,
+        reflection.requestId,
+        reflection.requestedAt,
+        reflection.claimedAt,
+        reflection.claimedBy?.tokenId ?? null,
+        reflection.claimedBy?.label ?? null,
+        reflection.claimedBy?.tool ?? null,
+        reflection.claimedSourceEntries === undefined || reflection.claimedSourceEntries === null
+          ? null
+          : JSON.stringify(reflection.claimedSourceEntries),
+        reflection.failure,
+        reflection.currentVersionId,
+        reflection.createdAt,
+        reflection.updatedAt,
+        reflection.revision,
+      );
+    const insertVersion = this.db.prepare(
+      `INSERT INTO reflection_versions(
+        id,reflection_id,version_number,text,source_from,source_to,generator_token_id,
+        generator_label,generator_tool,source,generated_at,source_entries
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    for (const version of [...reflection.versions].sort(
+      (left, right) => left.number - right.number,
+    )) {
+      insertVersion.run(
+        version.id,
+        reflection.id,
+        version.number,
+        version.text,
+        version.sourceFrom,
+        version.sourceTo,
+        version.generator.tokenId,
+        version.generator.label,
+        version.generator.tool ?? null,
+        version.generator.source,
+        version.generatedAt,
+        JSON.stringify(version.sourceEntries),
+      );
+    }
+    const stored = this.requireReflection(reflection.id);
+    context.changes.push(reflectionChange(stored));
+    return 'inserted';
+  }
+
   public listPendingReflections(): readonly Reflection[] {
     const rows = this.db
       .prepare(
@@ -215,11 +347,12 @@ export class ActivityReflection {
         if (before.status !== 'queued' || before.requestId !== requestId) {
           throw new DomainError('CONFLICT', 'Reflection request is no longer queued');
         }
+        const claimedSourceEntries = this.reflectionSourceEntries(before.weekStart, before.weekEnd);
         this.db
           .prepare(
             `UPDATE reflection_slots SET
               status='running', claimed_at=?, claimed_token_id=?, claimed_label=?, claimed_tool=?,
-              failure=NULL, updated_at=?, revision=revision+1
+              claimed_source_entries=?, failure=NULL, updated_at=?, revision=revision+1
              WHERE id=?`,
           )
           .run(
@@ -227,6 +360,7 @@ export class ActivityReflection {
             actor.tokenId,
             actor.tokenLabel,
             actor.tool ?? null,
+            JSON.stringify(claimedSourceEntries),
             context.now,
             before.id,
           );
@@ -273,7 +407,19 @@ export class ActivityReflection {
       ) {
         throw new DomainError('CONFLICT', 'Reflection request is not claimed by this assistant');
       }
-      const sourceEntries = this.reflectionSourceEntries(before.weekStart, before.weekEnd);
+      const sourceEntries = before.claimedSourceEntries;
+      if (sourceEntries === undefined || sourceEntries === null) {
+        throw new DomainError(
+          'CONFLICT',
+          'Reflection claim has no source binding and must be reclaimed',
+        );
+      }
+      if (
+        stableJson(sourceEntries) !==
+        stableJson(this.reflectionSourceEntries(before.weekStart, before.weekEnd))
+      ) {
+        throw new DomainError('CONFLICT', 'Reflection sources changed after this claim');
+      }
       const versionId = this.idFactory();
       const versionNumber = (before.versions[0]?.number ?? 0) + 1;
       this.db
@@ -302,7 +448,7 @@ export class ActivityReflection {
           `UPDATE reflection_slots SET
             status='current', request_id=NULL, requested_at=NULL, claimed_at=NULL,
             claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
-            current_version_id=?, updated_at=?, revision=revision+1
+            claimed_source_entries=NULL, current_version_id=?, updated_at=?, revision=revision+1
            WHERE id=?`,
         )
         .run(versionId, context.now, before.id);
@@ -351,7 +497,7 @@ export class ActivityReflection {
         .prepare(
           `UPDATE reflection_slots SET
             status='failed', claimed_at=NULL, claimed_token_id=NULL, claimed_label=NULL,
-            claimed_tool=NULL, failure=?, updated_at=?, revision=revision+1
+            claimed_tool=NULL, claimed_source_entries=NULL, failure=?, updated_at=?, revision=revision+1
            WHERE id=?`,
         )
         .run(reason, context.now, before.id);
@@ -396,7 +542,7 @@ export class ActivityReflection {
             `UPDATE reflection_slots SET
               status=?, request_id=NULL, requested_at=NULL, claimed_at=NULL,
               claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
-              current_version_id=?, updated_at=?, revision=revision+1
+              claimed_source_entries=NULL, current_version_id=?, updated_at=?, revision=revision+1
              WHERE id=?`,
           )
           .run(current ? 'current' : 'stale', version.id, context.now, before.id);
@@ -426,7 +572,38 @@ export class ActivityReflection {
 
   /** Runs from Journal's transaction runner before SQLite commits the command. */
   public beforeCommit(context: WriteContext): void {
-    if (!context.changes.some((change) => change.kind.startsWith('entry.'))) return;
+    const entryChanged = context.changes.some((change) => change.kind.startsWith('entry.'));
+    const reflectionChanged = context.changes.some(
+      (change) => change.kind === 'reflection.changed',
+    );
+    if (!entryChanged && !reflectionChanged) return;
+
+    const runningRows = this.db
+      .prepare("SELECT * FROM reflection_slots WHERE status = 'running'")
+      .all() as ReflectionSlotRow[];
+    for (const row of runningRows) {
+      const running = this.requireReflection(row.id);
+      if (
+        running.claimedSourceEntries !== undefined &&
+        running.claimedSourceEntries !== null &&
+        stableJson(running.claimedSourceEntries) ===
+          stableJson(this.reflectionSourceEntries(running.weekStart, running.weekEnd))
+      ) {
+        continue;
+      }
+      this.db
+        .prepare(
+          `UPDATE reflection_slots SET
+            status='queued', claimed_at=NULL, claimed_token_id=NULL, claimed_label=NULL,
+            claimed_tool=NULL, claimed_source_entries=NULL, updated_at=?, revision=revision+1
+           WHERE id=?`,
+        )
+        .run(context.now, row.id);
+      const reflection = this.requireReflection(row.id);
+      context.changes.push(reflectionChange(reflection));
+      this.markCurrentSummaryStale(row.week_start, context);
+    }
+
     const rows = this.db
       .prepare("SELECT * FROM reflection_slots WHERE status = 'current'")
       .all() as ReflectionSlotRow[];
@@ -447,16 +624,35 @@ export class ActivityReflection {
         .run(context.now, row.id);
       const reflection = this.requireReflection(row.id);
       context.changes.push(reflectionChange(reflection));
-      const summary = this.getSummaryForWeek(row.week_start);
-      if (summary?.status === 'current') {
-        const stale: Summary = {
-          ...summary,
-          status: 'stale',
+      this.markCurrentSummaryStale(row.week_start, context);
+    }
+
+    if (entryChanged) {
+      const invalidSaved = this.db
+        .prepare(
+          `SELECT summary.*, reflection.status AS reflection_status
+           FROM summaries AS summary
+           LEFT JOIN entries AS saved ON saved.id = summary.saved_entry_id
+           LEFT JOIN reflection_slots AS reflection ON reflection.week_start = summary.week_start
+           WHERE summary.status = 'saved'
+             AND (
+               saved.id IS NULL OR saved.deleted_at IS NOT NULL OR saved.author != 'ai' OR
+               saved.type != 'note' OR NOT EXISTS (
+                 SELECT 1 FROM json_each(saved.tags) WHERE value = 'summary'
+               )
+             )`,
+        )
+        .all() as Array<SummaryRow & { reflection_status: Reflection['status'] | null }>;
+      for (const row of invalidSaved) {
+        const summary: Summary = {
+          ...mapSummary(row),
+          status: row.reflection_status === 'current' ? 'current' : 'stale',
+          savedEntryId: null,
           updatedAt: context.now,
-          revision: summary.revision + 1,
+          revision: row.revision + 1,
         };
-        this.updateSummaryRow(stale);
-        context.changes.push(upsertChange('summary', stale));
+        this.updateSummaryRow(summary);
+        context.changes.push(upsertChange('summary', summary));
       }
     }
   }
@@ -476,8 +672,9 @@ export class ActivityReflection {
         .prepare(
           `INSERT INTO reflection_slots(
             id,week_start,week_end,status,request_id,requested_at,claimed_at,claimed_token_id,
-            claimed_label,claimed_tool,failure,current_version_id,created_at,updated_at,revision
-           ) VALUES (?, ?, ?, 'notRequested', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 1)`,
+            claimed_label,claimed_tool,claimed_source_entries,failure,current_version_id,
+            created_at,updated_at,revision
+           ) VALUES (?, ?, ?, 'notRequested', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 1)`,
         )
         .run(reflectionId, summary.weekStart, weekEnd, context.now, context.now);
     }
@@ -515,7 +712,7 @@ export class ActivityReflection {
         `UPDATE reflection_slots SET
           status='current', request_id=NULL, requested_at=NULL, claimed_at=NULL,
           claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
-          current_version_id=?, updated_at=?, revision=revision+1
+          claimed_source_entries=NULL, current_version_id=?, updated_at=?, revision=revision+1
          WHERE id=?`,
       )
       .run(versionId, context.now, reflectionId);
@@ -741,8 +938,9 @@ export class ActivityReflection {
     const insert = this.db.prepare(
       `INSERT OR IGNORE INTO reflection_slots(
         id,week_start,week_end,status,request_id,requested_at,claimed_at,claimed_token_id,
-        claimed_label,claimed_tool,failure,current_version_id,created_at,updated_at,revision
-       ) VALUES (?, ?, ?, 'notRequested', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 1)`,
+        claimed_label,claimed_tool,claimed_source_entries,failure,current_version_id,
+        created_at,updated_at,revision
+       ) VALUES (?, ?, ?, 'notRequested', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 1)`,
     );
     const hasSourceEntries = this.db.prepare(
       `SELECT 1 FROM entries
@@ -824,7 +1022,7 @@ export class ActivityReflection {
             `UPDATE reflection_slots SET
               status='queued', request_id=?, requested_at=?, claimed_at=NULL,
               claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
-              updated_at=?, revision=revision+1
+              claimed_source_entries=NULL, updated_at=?, revision=revision+1
              WHERE id=?`,
           )
           .run(requestId, context.now, context.now, before.id);
@@ -873,6 +1071,19 @@ export class ActivityReflection {
     return row === undefined ? null : mapSummary(row);
   }
 
+  private markCurrentSummaryStale(weekStart: string, context: WriteContext): void {
+    const summary = this.getSummaryForWeek(weekStart);
+    if (summary?.status !== 'current') return;
+    const stale: Summary = {
+      ...summary,
+      status: 'stale',
+      updatedAt: context.now,
+      revision: summary.revision + 1,
+    };
+    this.updateSummaryRow(stale);
+    context.changes.push(upsertChange('summary', stale));
+  }
+
   private updateSummaryRow(summary: Summary): void {
     this.db
       .prepare(
@@ -881,6 +1092,15 @@ export class ActivityReflection {
       )
       .run(summary);
   }
+}
+
+function replaceableReflectionPlaceholder(reflection: Reflection): boolean {
+  return (
+    reflection.status === 'notRequested' &&
+    reflection.requestId === null &&
+    reflection.currentVersionId === null &&
+    reflection.versions.length === 0
+  );
 }
 
 function activityOrigin(actor: ActorContext): ActivityItem['origin'] {

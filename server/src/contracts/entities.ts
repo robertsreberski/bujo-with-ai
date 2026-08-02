@@ -12,6 +12,12 @@ import {
   WeekStartSchema,
 } from './primitives.js';
 
+function addUtcCalendarDays(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 export const EntryTypeSchema = z
   .enum(['task', 'event', 'note', 'idea', 'question', 'habit', 'mood'])
   .describe('Bullet-journal entry type.');
@@ -178,6 +184,8 @@ export const ReflectionSchema = z
     requestedAt: IsoTimestampSchema.nullable(),
     claimedAt: IsoTimestampSchema.nullable(),
     claimedBy: ReflectionGeneratorSchema.omit({ source: true }).nullable(),
+    /** Source revisions pinned by the active claim. Optional for older clients. */
+    claimedSourceEntries: z.array(ReflectionSourceEntrySchema).nullable().optional(),
     failure: z.string().trim().min(1).max(500).nullable(),
     currentVersionId: UlidSchema.nullable(),
     currentVersion: ReflectionVersionSchema.nullable(),
@@ -186,11 +194,18 @@ export const ReflectionSchema = z
     updatedAt: IsoTimestampSchema,
   })
   .superRefine((reflection, context) => {
-    if (reflection.weekEnd <= reflection.weekStart) {
+    if (reflection.weekEnd !== addUtcCalendarDays(reflection.weekStart, 6)) {
       context.addIssue({
         code: 'custom',
         path: ['weekEnd'],
-        message: 'weekEnd must follow weekStart.',
+        message: 'weekEnd must be exactly six days after weekStart.',
+      });
+    }
+    if (Date.parse(reflection.updatedAt) < Date.parse(reflection.createdAt)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['updatedAt'],
+        message: 'updatedAt cannot precede createdAt.',
       });
     }
     const requested = reflection.requestId !== null && reflection.requestedAt !== null;
@@ -215,6 +230,65 @@ export const ReflectionSchema = z
         message: 'Only a running reflection may identify its claimant.',
       });
     }
+    if (
+      reflection.claimedSourceEntries !== undefined &&
+      (reflection.status === 'running') !== (reflection.claimedSourceEntries !== null)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['claimedSourceEntries'],
+        message: 'Only a running reflection may retain claimed source revisions.',
+      });
+    }
+    const claimedSourceIds = new Set<string>();
+    for (const [index, sourceEntry] of (reflection.claimedSourceEntries ?? []).entries()) {
+      if (claimedSourceIds.has(sourceEntry.id)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['claimedSourceEntries', index, 'id'],
+          message: 'Claimed source entry ids must be unique.',
+        });
+      }
+      claimedSourceIds.add(sourceEntry.id);
+    }
+    const versionIds = new Set<string>();
+    const versionNumbers = new Set<number>();
+    reflection.versions.forEach((version, index) => {
+      if (versionIds.has(version.id)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['versions', index, 'id'],
+          message: 'Reflection version ids must be unique.',
+        });
+      }
+      versionIds.add(version.id);
+      if (versionNumbers.has(version.number)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['versions', index, 'number'],
+          message: 'Reflection version numbers must be unique.',
+        });
+      }
+      versionNumbers.add(version.number);
+      if (version.sourceFrom !== reflection.weekStart || version.sourceTo !== reflection.weekEnd) {
+        context.addIssue({
+          code: 'custom',
+          path: ['versions', index, 'sourceFrom'],
+          message: 'Reflection versions must use their Reflection week range.',
+        });
+      }
+      const sourceIds = new Set<string>();
+      version.sourceEntries.forEach((sourceEntry, sourceIndex) => {
+        if (sourceIds.has(sourceEntry.id)) {
+          context.addIssue({
+            code: 'custom',
+            path: ['versions', index, 'sourceEntries', sourceIndex, 'id'],
+            message: 'Reflection version source entry ids must be unique.',
+          });
+        }
+        sourceIds.add(sourceEntry.id);
+      });
+    });
     if ((reflection.status === 'failed') !== (reflection.failure !== null)) {
       context.addIssue({
         code: 'custom',
@@ -249,6 +323,21 @@ export const ReflectionSchema = z
         path: ['versions'],
         message: 'The selected reflection version must be retained in version history.',
       });
+    }
+    if (reflection.currentVersion !== null) {
+      const selected = reflection.versions.find(
+        (version) => version.id === reflection.currentVersionId,
+      );
+      if (
+        selected !== undefined &&
+        JSON.stringify(selected) !== JSON.stringify(reflection.currentVersion)
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['currentVersion'],
+          message: 'currentVersion must equal the selected retained version.',
+        });
+      }
     }
   });
 

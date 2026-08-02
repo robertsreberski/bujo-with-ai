@@ -9,6 +9,7 @@ import {
   DateIntentSchema,
   EntryPatchSchema,
   EntrySchema,
+  JournalExportV2Schema,
   McpAddEntryInputSchema,
   McpAddToCollectionInputSchema,
   McpDeleteEntryInputSchema,
@@ -28,6 +29,10 @@ import {
 const ENTRY_ID = '01K1A2B3C4D5E6F7G8H9J0K1M2';
 const TOKEN_ID = '01K1A2B3C4D5E6F7G8H9J0K1M3';
 const ACTIVITY_ID = '01K1A2B3C4D5E6F7G8H9J0K1M4';
+const REFLECTION_ID = '01K1A2B3C4D5E6F7G8H9J0K1M5';
+const REFLECTION_VERSION_ID = '01K1A2B3C4D5E6F7G8H9J0K1M6';
+const SECOND_REFLECTION_ID = '01K1A2B3C4D5E6F7G8H9J0K1M7';
+const SECOND_REFLECTION_VERSION_ID = '01K1A2B3C4D5E6F7G8H9J0K1M8';
 
 function findUndescribedProperties(value: unknown, path = 'input'): readonly string[] {
   if (value === null || typeof value !== 'object') return [];
@@ -70,6 +75,69 @@ const entry = {
   revision: 1,
   deletedAt: null,
 };
+
+function reflection(
+  id = REFLECTION_ID,
+  versionId = REFLECTION_VERSION_ID,
+  weekStart = '2026-07-27',
+  weekEnd = '2026-08-02',
+) {
+  const version = {
+    id: versionId,
+    number: 1,
+    text: 'A durable Reflection over the retained source revisions.',
+    sourceFrom: weekStart,
+    sourceTo: weekEnd,
+    generator: {
+      tokenId: TOKEN_ID,
+      label: 'Reflection worker',
+      tool: 'add_entry',
+      source: 'Weekly journal Reflection requested by the owner.',
+    },
+    generatedAt: '2026-08-03T09:00:00.000Z',
+    sourceEntries: [{ id: ENTRY_ID, revision: 1 }],
+  };
+  return {
+    id,
+    weekStart,
+    weekEnd,
+    status: 'current' as const,
+    revision: 4,
+    requestId: null,
+    requestedAt: null,
+    claimedAt: null,
+    claimedBy: null,
+    claimedSourceEntries: null,
+    failure: null,
+    currentVersionId: versionId,
+    currentVersion: version,
+    versions: [version],
+    createdAt: '2026-08-03T08:00:00.000Z',
+    updatedAt: '2026-08-03T09:00:00.000Z',
+  };
+}
+
+function v2Export(reflections?: readonly ReturnType<typeof reflection>[]) {
+  return {
+    version: 2 as const,
+    exportedAt: '2026-08-03T10:00:00.000Z',
+    journal: {
+      entries: [],
+      collections: [],
+      activity: [],
+      summaries: [],
+      settings: {
+        density: 'comfortable' as const,
+        showTypeBadges: true,
+        highlightAiEntries: true,
+        updatedAt: '2026-08-03T10:00:00.000Z',
+      },
+    },
+    ...(reflections === undefined
+      ? {}
+      : { derived: { reflections: { version: 1 as const, items: reflections } } }),
+  };
+}
 
 describe('journal entity contracts', () => {
   it('accepts a canonical entry and rejects unknown properties', () => {
@@ -301,6 +369,130 @@ describe('autonomous write contracts', () => {
 });
 
 describe('sync contracts', () => {
+  it('accepts old V2 exports without Reflections and new V2 exports with full aggregates', () => {
+    expect(JournalExportV2Schema.safeParse(v2Export()).success).toBe(true);
+    expect(JournalExportV2Schema.safeParse(v2Export([reflection()])).success).toBe(true);
+  });
+
+  it('rejects duplicate Reflection slot ids and week starts', () => {
+    const second = reflection(
+      SECOND_REFLECTION_ID,
+      SECOND_REFLECTION_VERSION_ID,
+      '2026-07-20',
+      '2026-07-26',
+    );
+    expect(
+      JournalExportV2Schema.safeParse(v2Export([{ ...second, id: REFLECTION_ID }, reflection()]))
+        .success,
+    ).toBe(false);
+    expect(
+      JournalExportV2Schema.safeParse(
+        v2Export([
+          {
+            ...second,
+            weekStart: '2026-07-27',
+            weekEnd: '2026-08-02',
+            currentVersion: {
+              ...second.currentVersion,
+              sourceFrom: '2026-07-27',
+              sourceTo: '2026-08-02',
+            },
+            versions: [
+              {
+                ...second.versions[0],
+                sourceFrom: '2026-07-27',
+                sourceTo: '2026-08-02',
+              },
+            ],
+          },
+          reflection(),
+        ]),
+      ).success,
+    ).toBe(false);
+  });
+
+  it('rejects Reflection version ids reused across different slots', () => {
+    const second = reflection(
+      SECOND_REFLECTION_ID,
+      REFLECTION_VERSION_ID,
+      '2026-07-20',
+      '2026-07-26',
+    );
+    expect(JournalExportV2Schema.safeParse(v2Export([reflection(), second])).success).toBe(false);
+  });
+
+  it('rejects a selected currentVersion that differs from its retained version', () => {
+    const aggregate = reflection();
+    const mismatched = {
+      ...aggregate,
+      currentVersion: {
+        ...aggregate.currentVersion,
+        text: 'A different body with the same selected version id.',
+      },
+    };
+    expect(JournalExportV2Schema.safeParse(v2Export([mismatched])).success).toBe(false);
+  });
+
+  it('rejects malformed Reflection ranges, timestamps, and duplicate source bindings', () => {
+    const aggregate = reflection();
+    const wrongRangeVersion = {
+      ...aggregate.versions[0],
+      sourceTo: '2026-08-03',
+    };
+    expect(
+      JournalExportV2Schema.safeParse(
+        v2Export([
+          {
+            ...aggregate,
+            weekEnd: '2026-08-03',
+            currentVersion: wrongRangeVersion,
+            versions: [wrongRangeVersion],
+          },
+        ]),
+      ).success,
+    ).toBe(false);
+    expect(
+      JournalExportV2Schema.safeParse(
+        v2Export([{ ...aggregate, updatedAt: '2026-08-03T07:59:59.000Z' }]),
+      ).success,
+    ).toBe(false);
+
+    const duplicateSources = [
+      { id: ENTRY_ID, revision: 1 },
+      { id: ENTRY_ID, revision: 2 },
+    ];
+    const duplicateSourceVersion = {
+      ...aggregate.versions[0],
+      sourceEntries: duplicateSources,
+    };
+    expect(
+      JournalExportV2Schema.safeParse(
+        v2Export([
+          {
+            ...aggregate,
+            currentVersion: duplicateSourceVersion,
+            versions: [duplicateSourceVersion],
+          },
+        ]),
+      ).success,
+    ).toBe(false);
+    expect(
+      JournalExportV2Schema.safeParse(
+        v2Export([
+          {
+            ...aggregate,
+            status: 'running',
+            requestId: ACTIVITY_ID,
+            requestedAt: '2026-08-03T09:10:00.000Z',
+            claimedAt: '2026-08-03T09:15:00.000Z',
+            claimedBy: { tokenId: TOKEN_ID, label: 'Reflection worker' },
+            claimedSourceEntries: duplicateSources,
+          },
+        ]),
+      ).success,
+    ).toBe(false);
+  });
+
   it('bounds the extensible Timeline page and its cursor query', () => {
     expect(TimelineQuerySchema.parse({})).toEqual({ limit: 100 });
     expect(TimelineQuerySchema.safeParse({ limit: 101 }).success).toBe(false);

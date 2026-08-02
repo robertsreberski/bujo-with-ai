@@ -83,6 +83,7 @@ export interface ReflectionSlotRow {
   readonly claimed_token_id: string | null;
   readonly claimed_label: string | null;
   readonly claimed_tool: string | null;
+  readonly claimed_source_entries: string | null;
   readonly failure: string | null;
   readonly current_version_id: string | null;
   readonly created_at: string;
@@ -293,6 +294,10 @@ export function mapReflection(
             label: row.claimed_label,
             ...(row.claimed_tool === null ? {} : { tool: row.claimed_tool }),
           },
+    claimedSourceEntries:
+      row.claimed_source_entries === null
+        ? null
+        : (JSON.parse(row.claimed_source_entries) as unknown),
     failure: row.failure,
     currentVersionId: row.current_version_id,
     currentVersion,

@@ -26,6 +26,7 @@ import {
   collectionChange,
   entryChange,
   entryCreatedChange,
+  expiredActivityLabel,
   invalid,
   insertEntry as insertStoredEntry,
   isMonday,
@@ -124,9 +125,17 @@ function validateActivity(activity: ActivityItem): void {
   ActivityItemSchema.parse(activity);
 }
 
-function validateExport(document: JournalExport): JournalExportV1 | JournalExportV2['journal'] {
+function validateExport(document: JournalExport): {
+  readonly journal: JournalExportV1 | JournalExportV2['journal'];
+  readonly reflections: readonly Reflection[];
+} {
   const parsed = JournalExportSchema.parse(document);
-  return parsed.version === 1 ? parsed : parsed.journal;
+  return parsed.version === 1
+    ? { journal: parsed, reflections: [] }
+    : {
+        journal: parsed.journal,
+        reflections: parsed.derived?.reflections?.items ?? [],
+      };
 }
 
 function validateSavedViewQueries(views: NonNullable<Settings['savedViews']> | undefined): void {
@@ -232,6 +241,31 @@ function assertImportMatch(entity: string, id: string, existing: unknown, incomi
   if (stableJson(existing) !== stableJson(incoming)) {
     throw new DomainError('CONFLICT', `${entity} ${id} already exists with different content`);
   }
+}
+
+function portableActivity(
+  activityInput: ActivityItem,
+  liveEntryIds: ReadonlySet<string>,
+): ActivityItem {
+  const activity = ActivityItemSchema.parse(activityInput);
+  const referenced = new Set([
+    ...activity.refs.entryIds,
+    ...[...activity.preImages, ...activity.postImages]
+      .filter((snapshot) => snapshot.entity === 'entry')
+      .map((snapshot) => snapshot.id),
+  ]);
+  const unavailable = new Set([...referenced].filter((id) => !liveEntryIds.has(id)));
+  if (unavailable.size === 0) return activity;
+  const redact = (snapshot: Snapshot): Snapshot =>
+    snapshot.entity === 'entry' && unavailable.has(snapshot.id)
+      ? { ...snapshot, row: null }
+      : snapshot;
+  return ActivityItemSchema.parse({
+    ...activity,
+    text: expiredActivityLabel(activity.kind),
+    preImages: activity.preImages.map(redact),
+    postImages: activity.postImages.map(redact),
+  });
 }
 
 interface AgentTokenRow {
@@ -941,7 +975,7 @@ export class JournalDomain {
             `UPDATE reflection_slots SET
               status='queued', request_id=?, requested_at=?, claimed_at=NULL,
               claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
-              updated_at=?, revision=revision+1
+              claimed_source_entries=NULL, updated_at=?, revision=revision+1
              WHERE id=?`,
           )
           .run(this.idFactory(), context.now, context.now, reflectionRow.id);
@@ -1318,41 +1352,65 @@ export class JournalDomain {
   public exportJournal(): JournalExportV2 {
     const snapshot = this.db.transaction((): JournalExportV2 => {
       const settings = this.getSettings();
+      const entries = (
+        this.db
+          .prepare('SELECT * FROM entries WHERE deleted_at IS NULL ORDER BY created_at')
+          .all() as EntryRow[]
+      ).map(mapEntry);
+      const liveEntryIds = new Set(entries.map((entry) => entry.id));
       return JournalExportV2Schema.parse({
         version: 2,
         exportedAt: this.now().toISOString(),
         journal: {
-          entries: (
-            this.db
-              .prepare('SELECT * FROM entries WHERE deleted_at IS NULL ORDER BY created_at')
-              .all() as EntryRow[]
-          ).map(mapEntry),
+          entries,
           collections: (
             this.db
               .prepare('SELECT * FROM collections ORDER BY created_at')
               .all() as CollectionRow[]
           ).map(mapCollection),
-          activity: (
-            this.db.prepare('SELECT * FROM activity ORDER BY at').all() as ActivityRow[]
-          ).map(mapActivity),
+          activity: (this.db.prepare('SELECT * FROM activity ORDER BY at').all() as ActivityRow[])
+            .map(mapActivity)
+            .map((activity) => portableActivity(activity, liveEntryIds)),
           summaries: (
             this.db.prepare('SELECT * FROM summaries ORDER BY week_start').all() as SummaryRow[]
           ).map(mapSummary),
           settings,
         },
-        derived: {},
+        derived: {
+          reflections: {
+            version: 1,
+            items: this.activityReflection.listStoredReflections(),
+          },
+        },
       });
     });
     return snapshot();
   }
 
   public importJournal(document: JournalExport): ImportReport {
-    const journal = validateExport(document);
+    const { journal, reflections } = validateExport(document);
     // Imports are a write boundary too. Parsing before the transaction keeps an
     // invalid saved query from partially importing otherwise valid rows.
     validateSavedViewQueries(journal.settings.savedViews);
-    const inserted = { entries: 0, collections: 0, activity: 0, summaries: 0, settings: 0 };
-    const skipped = { entries: 0, collections: 0, activity: 0, summaries: 0, settings: 0 };
+    const inserted = {
+      entries: 0,
+      collections: 0,
+      activity: 0,
+      summaries: 0,
+      reflections: 0,
+      settings: 0,
+    };
+    const skipped = {
+      entries: 0,
+      collections: 0,
+      activity: 0,
+      summaries: 0,
+      reflections: 0,
+      settings: 0,
+    };
+    const importedLiveEntryIds = new Set(
+      journal.entries.filter((entry) => entry.deletedAt === null).map((entry) => entry.id),
+    );
     const transaction = this.db.transaction(() => {
       const context: WriteContext = {
         now: this.now().toISOString(),
@@ -1433,13 +1491,24 @@ export class JournalDomain {
         if (result.changes === 0) skipped.summaries++;
         else inserted.summaries++;
       }
-      for (const activity of journal.activity) {
+      for (const reflection of reflections) {
+        const outcome = this.activityReflection.importReflection(reflection, context);
+        if (outcome === 'inserted') inserted.reflections++;
+        else skipped.reflections++;
+      }
+      for (const activityInput of journal.activity) {
+        const activity = portableActivity(activityInput, importedLiveEntryIds);
         validateActivity(activity);
         const existingRow = this.db
           .prepare('SELECT * FROM activity WHERE id = ?')
           .get(activity.id) as ActivityRow | undefined;
         if (existingRow !== undefined) {
-          assertImportMatch('activity', activity.id, mapActivity(existingRow), activity);
+          assertImportMatch(
+            'activity',
+            activity.id,
+            portableActivity(mapActivity(existingRow), importedLiveEntryIds),
+            activity,
+          );
           skipped.activity++;
           continue;
         }

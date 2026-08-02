@@ -982,6 +982,72 @@ describe('JournalDomain weekly Reflections', () => {
     if (ownerReflection.kind === 'entry') expect(ownerReflection.entry.author).toBe('me');
   });
 
+  it('binds a claim to exact source revisions and requires a fresh claim after an edit', () => {
+    const { domain, owner, agent } = fixture();
+    const source = domain.createEntry(
+      {
+        id: ulid(),
+        date: '2026-07-22',
+        type: 'note',
+        text: 'Initial Reflection source text.',
+      },
+      owner,
+    );
+    if (source.kind !== 'entry') throw new Error('Expected Reflection source entry');
+    const slot = domain.listReflections('2026-07-20', '2026-07-26')[0];
+    if (slot === undefined) throw new Error('Expected completed-week Reflection slot');
+    const queued = domain.requestReflection(slot.id, owner, {
+      expectedRevision: slot.revision,
+    }).reflection;
+    if (queued.requestId === null) throw new Error('Expected Reflection request id');
+    const claimed = domain.claimReflection(slot.weekStart, queued.requestId, agent).reflection;
+    expect(claimed).toMatchObject({
+      status: 'running',
+      claimedSourceEntries: [{ id: source.entry.id, revision: source.entry.revision }],
+    });
+
+    const edited = domain.updateEntry(
+      source.entry.id,
+      { text: 'Edited after the first claim.' },
+      owner,
+      undefined,
+      { expectedRevision: source.entry.revision },
+    ).entry;
+    expect(domain.getReflection(slot.id)).toMatchObject({
+      status: 'queued',
+      requestId: queued.requestId,
+      claimedAt: null,
+      claimedBy: null,
+      claimedSourceEntries: null,
+    });
+    expect(() =>
+      domain.completeReflection(
+        {
+          weekStart: slot.weekStart,
+          requestId: queued.requestId!,
+          text: 'This completion was synthesized before the edit.',
+          source: 'Stale claim-time source binding fixture.',
+        },
+        agent,
+      ),
+    ).toThrowError(/not claimed|sources changed/i);
+
+    domain.claimReflection(slot.weekStart, queued.requestId, agent);
+    const completed = domain.completeReflection(
+      {
+        weekStart: slot.weekStart,
+        requestId: queued.requestId,
+        text: 'This completion uses the edited source.',
+        source: 'Fresh claim-time source binding fixture.',
+      },
+      agent,
+    ).reflection;
+    expect(completed).toMatchObject({ status: 'current', claimedSourceEntries: null });
+    expect(completed.currentVersion?.sourceEntries).toEqual([
+      { id: source.entry.id, revision: edited.revision },
+    ]);
+  });
+
   it.each([
     {
       label: 'date edit',
@@ -1114,7 +1180,7 @@ describe('JournalDomain summaries and credentials', () => {
     expect(saved.entry).toMatchObject({ type: 'note', tags: ['summary'], author: 'ai' });
   });
 
-  it('relinks a saved summary when its saved note was soft-deleted', () => {
+  it('detaches a saved summary when its note is deleted and saves a replacement from the repaired revision', () => {
     const { domain, agent, owner } = fixture();
     const filed = domain.fileSummary(
       {
@@ -1125,22 +1191,56 @@ describe('JournalDomain summaries and credentials', () => {
       agent,
     );
     const first = domain.saveSummaryToToday(filed.summary.id, owner);
+    const changes: ChangeBatch[] = [];
+    const unsubscribe = domain.subscribe((change) => changes.push(change));
     domain.deleteEntry(first.entry.id, owner, undefined, {
       expectedRevision: first.entry.revision,
     });
-    const changes: ChangeBatch[] = [];
-    const unsubscribe = domain.subscribe((change) => changes.push(change));
-    const replacement = domain.saveSummaryToToday(first.summary.id, owner, undefined, {
-      expectedRevision: first.summary.revision,
-    });
     unsubscribe();
+
+    const repaired = domain.getSummary(first.summary.id);
+    expect(repaired).toMatchObject({
+      status: 'stale',
+      savedEntryId: null,
+      revision: first.summary.revision + 1,
+    });
+    expect(() => JournalExportSchema.parse(domain.exportJournal())).not.toThrow();
+    expect(changes.flatMap((batch) => batch.changes.map((change) => change.kind))).toEqual(
+      expect.arrayContaining(['entry.deleted', 'summary.changed']),
+    );
+    if (repaired === null) throw new Error('Expected repaired summary');
+
+    const replacement = domain.saveSummaryToToday(first.summary.id, owner, undefined, {
+      expectedRevision: repaired.revision,
+    });
 
     expect(replacement.entry.id).not.toBe(first.entry.id);
     expect(replacement.entry.deletedAt).toBeNull();
     expect(replacement.summary.savedEntryId).toBe(replacement.entry.id);
-    expect(changes.flatMap((batch) => batch.changes.map((change) => change.kind))).toEqual(
-      expect.arrayContaining(['entry.created', 'summary.changed', 'activity.appended']),
+  });
+
+  it('detaches a saved summary when its note loses the summary tag', () => {
+    const { domain, agent, owner } = fixture();
+    const filed = domain.fileSummary(
+      {
+        weekStart: '2026-07-27',
+        text: 'A tagged summary note.',
+        source: 'Weekly synthesis for the saved-note mutation test.',
+      },
+      agent,
     );
+    const saved = domain.saveSummaryToToday(filed.summary.id, owner);
+
+    domain.updateEntry(saved.entry.id, { tags: [] }, owner, undefined, {
+      expectedRevision: saved.entry.revision,
+    });
+
+    expect(domain.getSummary(saved.summary.id)).toMatchObject({
+      status: 'stale',
+      savedEntryId: null,
+      revision: saved.summary.revision + 1,
+    });
+    expect(() => JournalExportSchema.parse(domain.exportJournal())).not.toThrow();
   });
 
   it('returns the greatest weekly summary within an explicitly validated month', () => {
@@ -1399,6 +1499,51 @@ describe('JournalDomain summaries and credentials', () => {
     expect(() => domain.revertActivity(deleted.activityId!, agent)).toThrowError(/expired/i);
   });
 
+  it('redacts Activity for omitted entries across export and legacy raw import replays', () => {
+    const source = fixture();
+    const sentinel = 'Portable audit content must expire outside its entry tombstone';
+    const created = source.domain.createEntry(
+      {
+        id: ulid(),
+        text: sentinel,
+        type: 'note',
+        date: '2026-07-31',
+        source: 'Portable retention fixture.',
+      },
+      source.agent,
+    );
+    if (created.kind !== 'entry') throw new Error('Expected agent entry');
+    const legacyRaw = source.domain.exportJournal();
+    source.domain.deleteEntry(created.entry.id, source.owner, undefined, {
+      expectedRevision: created.entry.revision,
+    });
+
+    const portable = source.domain.exportJournal();
+    expect(portable.journal.entries).toEqual([]);
+    expect(JSON.stringify(portable)).not.toContain(sentinel);
+    expect(source.domain.importJournal(portable).skipped.activity).toBe(
+      portable.journal.activity.length,
+    );
+
+    const legacyOrphan = {
+      ...legacyRaw,
+      journal: { ...legacyRaw.journal, entries: [] },
+    };
+    const target = fixture();
+    expect(target.domain.importJournal(legacyOrphan).inserted.activity).toBe(
+      legacyOrphan.journal.activity.length,
+    );
+    expect(target.domain.importJournal(legacyOrphan).skipped.activity).toBe(
+      legacyOrphan.journal.activity.length,
+    );
+    const reexported = target.domain.exportJournal();
+    expect(JSON.stringify(reexported)).not.toContain(sentinel);
+    expect(reexported.journal.activity).toEqual(portable.journal.activity.slice(0, 1));
+    target.advance(31 * 86_400_000);
+    expect(target.domain.purgeExpired().entries).toBe(0);
+    expect(JSON.stringify(target.domain.exportJournal())).not.toContain(sentinel);
+  });
+
   it('scrubs expired content from durable idempotency responses without re-executing', () => {
     const { domain, database, owner, advance } = fixture();
     const sentinel = 'Private content must not survive in replay storage';
@@ -1639,16 +1784,60 @@ describe('JournalDomain summaries and credentials', () => {
     const target = fixture();
     const report = target.domain.importJournal(exported);
     expect(report.inserted.entries).toBe(exported.journal.entries.length);
+    expect(report.inserted.reflections).toBe(exported.derived.reflections.items.length);
     const roundTrip = target.domain.exportJournal();
     expect(roundTrip.journal.entries).toEqual(exported.journal.entries);
     expect(roundTrip.journal.collections).toEqual(exported.journal.collections);
     expect(roundTrip.journal.activity).toEqual(exported.journal.activity);
     expect(roundTrip.journal.summaries).toEqual(exported.journal.summaries);
     expect(roundTrip.journal.settings).toEqual(exported.journal.settings);
+    expect(roundTrip.derived.reflections).toEqual(exported.derived.reflections);
+    const importedReflection = exported.derived.reflections.items[0];
+    if (importedReflection === undefined) throw new Error('Expected portable Reflection');
+    expect(target.domain.getReflection(importedReflection.id)).toEqual(importedReflection);
+    expect(target.domain.importJournal(exported).skipped.reflections).toBe(
+      exported.derived.reflections.items.length,
+    );
 
     target.domain.updateEntry(created.entry.id, { text: 'Conflicting local row' }, target.owner);
     expect(() => target.domain.importJournal(exported)).toThrowError(/different content/i);
     expect(target.domain.requireEntry(created.entry.id).text).toBe('Conflicting local row');
+  });
+
+  it('requeues an imported running Reflection without portable agent credentials', () => {
+    const source = fixture();
+    source.domain.createEntry(
+      { id: ulid(), text: 'Claimed portable source', type: 'note', date: '2026-07-22' },
+      source.owner,
+    );
+    const slot = source.domain.listReflections('2026-07-20', '2026-07-26')[0];
+    if (slot === undefined) throw new Error('Expected Reflection slot');
+    const queued = source.domain.requestReflection(slot.id, source.owner, {
+      expectedRevision: slot.revision,
+    }).reflection;
+    if (queued.requestId === null) throw new Error('Expected Reflection request');
+    const running = source.domain.claimReflection(
+      slot.weekStart,
+      queued.requestId,
+      source.agent,
+    ).reflection;
+    const exported = source.domain.exportJournal();
+
+    const target = fixture();
+    target.domain.importJournal(exported);
+    const imported = target.domain.getReflection(running.id);
+    expect(imported).toMatchObject({
+      status: 'queued',
+      requestId: queued.requestId,
+      claimedAt: null,
+      claimedBy: null,
+      claimedSourceEntries: null,
+      revision: running.revision + 1,
+    });
+    expect(target.domain.importJournal(exported).skipped.reflections).toBe(1);
+    expect(
+      target.domain.claimReflection(slot.weekStart, queued.requestId, target.agent).reflection,
+    ).toMatchObject({ status: 'running', claimedBy: { tokenId: target.agent.tokenId } });
   });
 
   it('exports one validated SQLite snapshot while a writer commits between table reads', () => {

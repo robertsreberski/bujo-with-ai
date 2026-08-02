@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -84,6 +85,190 @@ describe('JournalDatabase and backups', () => {
     } finally {
       backup.close();
     }
+  });
+
+  it('repairs legacy Reflection claims, saved-summary links, and orphan Activity in migration 006', () => {
+    const root = mkdtempSync(join(tmpdir(), 'journal-reflection-binding-migration-test-'));
+    roots.push(root);
+    const path = join(root, 'journal.db');
+    const legacy = new Database(path);
+    legacy.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      )
+    `);
+    const recordMigration = legacy.prepare(
+      'INSERT INTO schema_migrations(version, name, checksum, applied_at) VALUES (?, ?, ?, ?)',
+    );
+    for (const migration of migrations.filter(({ version }) => version <= 4)) {
+      legacy.exec(migration.sql);
+      recordMigration.run(
+        migration.version,
+        migration.name,
+        createHash('sha256')
+          .update(`${migration.version}\0${migration.name}\0${migration.sql}`)
+          .digest('hex'),
+        '2026-08-03T08:00:00.000Z',
+      );
+    }
+    legacy
+      .prepare(
+        `INSERT INTO entries(
+           id, date, type, text, state, time, tags, author, source, migrations,
+           collection, created_at, updated_at, deleted_at, revision
+         ) VALUES (?, ?, 'note', ?, 'logged', NULL, ?, 'ai', ?, 0, NULL, ?, ?, ?, 2)`,
+      )
+      .run(
+        '01K1A2B3C4D5E6F7G8H9J0K1M2',
+        '2026-07-27',
+        'Deleted legacy summary note',
+        JSON.stringify(['summary']),
+        'Legacy summary fixture.',
+        '2026-08-03T08:00:00.000Z',
+        '2026-08-03T08:05:00.000Z',
+        '2026-08-03T08:05:00.000Z',
+      );
+    legacy
+      .prepare(
+        `INSERT INTO summaries(
+           id, week_start, text, status, source, token_id, created_at,
+           updated_at, saved_entry_id, revision
+         ) VALUES (?, ?, ?, 'saved', ?, ?, ?, ?, ?, 7)`,
+      )
+      .run(
+        '01K1A2B3C4D5E6F7G8H9J0K1M5',
+        '2026-07-27',
+        'Legacy retained Reflection text',
+        'Legacy weekly summary fixture.',
+        '01K1A2B3C4D5E6F7G8H9J0K1M3',
+        '2026-08-03T08:00:00.000Z',
+        '2026-08-03T08:05:00.000Z',
+        '01K1A2B3C4D5E6F7G8H9J0K1M2',
+      );
+    const orphanId = '01K1A2B3C4D5E6F7G8H9J0K1MC';
+    const orphanActivityId = '01K1A2B3C4D5E6F7G8H9J0K1MD';
+    const orphanSnapshot = {
+      entity: 'entry',
+      id: orphanId,
+      row: {
+        id: orphanId,
+        date: '2026-07-21',
+        type: 'note',
+        text: 'Legacy orphan content must not survive migration.',
+        state: 'logged',
+        time: null,
+        tags: [],
+        author: 'me',
+        source: null,
+        migrations: 0,
+        collection: null,
+        createdAt: '2026-07-21T08:00:00.000Z',
+        updatedAt: '2026-07-21T08:00:00.000Z',
+        revision: 1,
+        deletedAt: null,
+      },
+    };
+    legacy
+      .prepare(
+        `INSERT INTO activity(
+           id, at, kind, text, origin, refs, pre_images, post_images,
+           reverted_at, reverted_by_activity_id
+         ) VALUES (?, ?, 'agent-add', ?, ?, ?, ?, ?, NULL, NULL)`,
+      )
+      .run(
+        orphanActivityId,
+        '2026-07-21T08:00:00.000Z',
+        'Added Legacy orphan content must not survive migration.',
+        JSON.stringify({ actor: 'mcp', tokenId: '01K1A2B3C4D5E6F7G8H9J0K1ME' }),
+        JSON.stringify({ entryIds: [orphanId] }),
+        JSON.stringify([{ entity: 'entry', id: orphanId, row: null }]),
+        JSON.stringify([orphanSnapshot]),
+      );
+    const reflectionMigration = migrations.find(({ version }) => version === 5);
+    if (reflectionMigration === undefined) throw new Error('Expected migration 005');
+    legacy.exec(reflectionMigration.sql);
+    recordMigration.run(
+      reflectionMigration.version,
+      reflectionMigration.name,
+      createHash('sha256')
+        .update(
+          `${reflectionMigration.version}\0${reflectionMigration.name}\0${reflectionMigration.sql}`,
+        )
+        .digest('hex'),
+      '2026-08-03T08:10:00.000Z',
+    );
+    legacy
+      .prepare(
+        `INSERT INTO reflection_slots(
+           id, week_start, week_end, status, request_id, requested_at,
+           claimed_at, claimed_token_id, claimed_label, claimed_tool, failure,
+           current_version_id, created_at, updated_at, revision
+         ) VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, 2)`,
+      )
+      .run(
+        '01K1A2B3C4D5E6F7G8H9J0K1M9',
+        '2026-07-20',
+        '2026-07-26',
+        '01K1A2B3C4D5E6F7G8H9J0K1MA',
+        '2026-08-03T08:15:00.000Z',
+        '2026-08-03T08:20:00.000Z',
+        '01K1A2B3C4D5E6F7G8H9J0K1MB',
+        'Legacy worker',
+        'add_entry',
+        '2026-08-03T08:15:00.000Z',
+        '2026-08-03T08:20:00.000Z',
+      );
+    legacy.close();
+    chmodSync(path, 0o600);
+
+    const migrated = new JournalDatabase({
+      path,
+      now: () => new Date('2026-08-03T09:00:00.000Z'),
+    });
+    expect(
+      migrated.raw
+        .prepare('SELECT status, saved_entry_id, revision FROM summaries WHERE id = ?')
+        .get('01K1A2B3C4D5E6F7G8H9J0K1M5'),
+    ).toEqual({ status: 'current', saved_entry_id: null, revision: 8 });
+    expect(
+      migrated.raw
+        .prepare(
+          `SELECT status, claimed_at, claimed_token_id, claimed_label,
+                  claimed_tool, claimed_source_entries, revision
+           FROM reflection_slots WHERE id = ?`,
+        )
+        .get('01K1A2B3C4D5E6F7G8H9J0K1M9'),
+    ).toEqual({
+      status: 'queued',
+      claimed_at: null,
+      claimed_token_id: null,
+      claimed_label: null,
+      claimed_tool: null,
+      claimed_source_entries: null,
+      revision: 3,
+    });
+    const repairedActivity = migrated.raw
+      .prepare('SELECT text, pre_images, post_images FROM activity WHERE id = ?')
+      .get(orphanActivityId) as {
+      text: string;
+      pre_images: string;
+      post_images: string;
+    };
+    expect(repairedActivity.text).toBe('Added an entry (content expired)');
+    expect(JSON.parse(repairedActivity.pre_images)).toEqual([
+      { entity: 'entry', id: orphanId, row: null },
+    ]);
+    expect(JSON.parse(repairedActivity.post_images)).toEqual([
+      { entity: 'entry', id: orphanId, row: null },
+    ]);
+    expect(JSON.stringify(repairedActivity)).not.toContain('Legacy orphan content');
+    expect(migrated.raw.prepare('SELECT max(version) FROM schema_migrations').pluck().get()).toBe(
+      6,
+    );
+    migrated.close();
   });
 
   it('verifies an existing named snapshot before reusing it', async () => {
