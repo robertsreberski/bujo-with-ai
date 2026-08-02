@@ -469,7 +469,14 @@ export class CollectionRecovery {
   }
 
   private resolveRetentionDays(retentionDays?: number): number {
-    return validateRetentionDays(retentionDays ?? this.retentionDays);
+    if (retentionDays === undefined) return this.retentionDays;
+    const requested = validateRetentionDays(retentionDays);
+    if (requested !== this.retentionDays) {
+      invalid(
+        `retentionDays is configured as ${this.retentionDays}; per-operation overrides are not allowed`,
+      );
+    }
+    return requested;
   }
 }
 
