@@ -35,7 +35,7 @@ describe('ArrangeMenu', () => {
     openMenu();
     expect(screen.getAllByRole('menuitemradio')).toHaveLength(7);
     expect(screen.getAllByRole('menuitemcheckbox')).toHaveLength(7);
-    expect(screen.getByRole('menuitemradio', { name: 'Newest first' })).toBeChecked();
+    expect(screen.getByRole('menuitemradio', { name: 'Oldest first' })).toBeChecked();
     expect(screen.getByRole('menuitemradio', { name: 'None' })).toBeChecked();
     expect(screen.getByRole('menuitemradio', { name: 'Open' })).toBeChecked();
     for (const box of screen.getAllByRole('menuitemcheckbox')) expect(box).toBeChecked();
@@ -44,8 +44,8 @@ describe('ArrangeMenu', () => {
   it('emits the next config and keeps the menu open when a radio row is picked', () => {
     const onChange = renderMenu();
     openMenu();
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Oldest first' }));
-    expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_LOG_VIEW, sort: 'oldest' });
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Newest first' }));
+    expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_LOG_VIEW, sort: 'newest' });
     expect(screen.getByRole('menu', { name: 'Arrange monthly log' })).toBeInTheDocument();
   });
 
@@ -74,7 +74,7 @@ describe('ArrangeMenu', () => {
     expect(screen.queryByRole('menuitem', { name: 'Reset to defaults' })).not.toBeInTheDocument();
 
     cleanup();
-    const onChange = renderMenu({ ...DEFAULT_LOG_VIEW, sort: 'oldest' });
+    const onChange = renderMenu({ ...DEFAULT_LOG_VIEW, sort: 'newest' });
     openMenu();
     fireEvent.click(screen.getByRole('menuitem', { name: 'Reset to defaults' }));
     expect(onChange).toHaveBeenCalledWith(DEFAULT_LOG_VIEW);

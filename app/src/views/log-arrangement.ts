@@ -1,5 +1,6 @@
 import { ENTRY_TYPES, type EntryType, type JournalEntry } from '../components/types';
 
+/** Ordered by the date an entry belongs to, not the moment it was captured. */
 export type LogSort = 'newest' | 'oldest';
 export type LogGroup = 'none' | 'type';
 export type LogStateFilter = 'open' | 'all' | 'closed';
@@ -12,7 +13,20 @@ export interface LogViewConfig {
   types: EntryType[];
 }
 
+/** Day 1 up, the way a paper monthly log reads. */
 export const DEFAULT_LOG_VIEW: LogViewConfig = Object.freeze({
+  sort: 'oldest',
+  group: 'none',
+  stateFilter: 'open',
+  types: [],
+});
+
+/**
+ * The default from before the log sorted by entry date. A saved copy of it
+ * means the arrangement was never really customized — only reset — so it
+ * yields to the current default instead of pinning the old sort forever.
+ */
+const LEGACY_DEFAULT_LOG_VIEW: LogViewConfig = Object.freeze({
   sort: 'newest',
   group: 'none',
   stateFilter: 'open',
@@ -40,7 +54,7 @@ export const normalizeLogView = (value: unknown): LogViewConfig => {
   const rawTypes = Array.isArray(raw.types) ? raw.types : [];
   const types = ENTRY_TYPES.filter((type) => rawTypes.includes(type));
   return {
-    sort: raw.sort === 'oldest' ? 'oldest' : 'newest',
+    sort: raw.sort === 'newest' ? 'newest' : 'oldest',
     group: raw.group === 'type' ? 'type' : 'none',
     stateFilter:
       raw.stateFilter === 'all' || raw.stateFilter === 'closed' ? raw.stateFilter : 'open',
@@ -48,14 +62,25 @@ export const normalizeLogView = (value: unknown): LogViewConfig => {
   };
 };
 
-export const isDefaultLogView = (config: LogViewConfig): boolean => {
-  const normalized = normalizeLogView(config);
-  return (
-    normalized.sort === 'newest' &&
-    normalized.group === 'none' &&
-    normalized.stateFilter === 'open' &&
-    normalized.types.length === 0
-  );
+const matchesLogView = (config: LogViewConfig, other: LogViewConfig): boolean =>
+  config.sort === other.sort &&
+  config.group === other.group &&
+  config.stateFilter === other.stateFilter &&
+  config.types.length === other.types.length &&
+  config.types.every((type) => other.types.includes(type));
+
+export const isDefaultLogView = (config: LogViewConfig): boolean =>
+  matchesLogView(normalizeLogView(config), DEFAULT_LOG_VIEW);
+
+/**
+ * Reads a persisted arrangement back. Null means "no opinion, use the
+ * default", so a stored copy of a superseded default collapses to null rather
+ * than outranking the one that replaced it.
+ */
+export const hydrateLogView = (value: unknown): LogViewConfig | null => {
+  if (value === null || value === undefined) return null;
+  const normalized = normalizeLogView(value);
+  return matchesLogView(normalized, LEGACY_DEFAULT_LOG_VIEW) ? null : normalized;
 };
 
 export interface LogSection {
@@ -86,11 +111,18 @@ const TYPE_PLURALS: Record<EntryType, string> = {
   mood: 'Moods',
 };
 
+/**
+ * Orders by the date the row actually shows, so a log reads the way it looks —
+ * capture time only breaks ties within a day. Matches the server's own
+ * `ORDER BY date, created_at, id`.
+ */
 const compareBy =
   (sort: LogSort) =>
   (left: JournalEntry, right: JournalEntry): number => {
     const ascending =
-      left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+      left.date.localeCompare(right.date) ||
+      left.createdAt.localeCompare(right.createdAt) ||
+      left.id.localeCompare(right.id);
     return sort === 'newest' ? -ascending : ascending;
   };
 

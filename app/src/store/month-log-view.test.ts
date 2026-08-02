@@ -181,4 +181,21 @@ describe('month log view hydration', () => {
     await journalActions.initialize();
     expect(useJournalStore.getState().monthLogView).toBeNull();
   });
+
+  it('lets a saved copy of the superseded default yield to the current one', async () => {
+    // A device that ever tapped "Reset to defaults" has the old default
+    // written out; it must not pin newest-first forever.
+    const legacyDefault: LogViewConfig = {
+      sort: 'newest',
+      group: 'none',
+      stateFilter: 'open',
+      types: [],
+    };
+    persistenceMocks.load.mockResolvedValue(
+      savedRecord({ monthLogView: legacyDefault, collectionLogView: legacyDefault }),
+    );
+    await journalActions.initialize();
+    expect(useJournalStore.getState().monthLogView).toBeNull();
+    expect(useJournalStore.getState().collectionLogView).toBeNull();
+  });
 });

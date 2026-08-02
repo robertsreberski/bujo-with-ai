@@ -29,7 +29,7 @@ import {
   subscribePwaRegistration,
 } from '../pwa/registration';
 import type { Destination } from '../components/destination';
-import type { LogViewConfig } from '../views/log-arrangement';
+import { hydrateLogView, type LogViewConfig } from '../views/log-arrangement';
 import { createUlid } from './ids';
 import type {
   ConnectionStatus,
@@ -1919,8 +1919,8 @@ async function initializeJournal(): Promise<void> {
         deadLetters: saved.deadLetters,
         agentTokens: saved.agentTokens ?? [],
         lastReviewSeenAt: saved.lastReviewSeenAt ?? null,
-        monthLogView: saved.monthLogView ?? null,
-        collectionLogView: saved.collectionLogView ?? null,
+        monthLogView: hydrateLogView(saved.monthLogView),
+        collectionLogView: hydrateLogView(saved.collectionLogView),
         activityHasMore: saved.mirror.activityOrder.length >= 50,
         activityNextCursor:
           saved.mirror.activityById[saved.mirror.activityOrder.at(-1) ?? '']?.at ?? null,
