@@ -43,7 +43,12 @@ vi.mock('../pwa/registration', () => ({
   subscribePwaRegistration: pwaMocks.subscribe,
 }));
 
-import { journalActions, reconcileAfterReset, useJournalStore } from './journal-store';
+import {
+  journalActions,
+  reconcileAfterReset,
+  selectJournalStatus,
+  useJournalStore,
+} from './journal-store';
 
 const settings: Settings = {
   density: 'comfortable',
@@ -105,9 +110,12 @@ beforeEach(() => {
   useJournalStore.setState({
     hydrated: false,
     loading: true,
+    resourceStatus: 'loading',
     online: false,
     networkOnline: false,
     connectionStatus: 'offline',
+    authenticationRequired: false,
+    persistenceStatus: 'available',
     syncing: false,
     draft: '',
     notices: [],
@@ -285,6 +293,7 @@ describe('journal lifecycle persistence', () => {
 
     expect(useJournalStore.getState()).toMatchObject({
       hydrated: true,
+      resourceStatus: 'ready',
       today: '2026-07-31',
       serverToday: '2026-07-31',
       timezone: 'America/Los_Angeles',
@@ -304,6 +313,65 @@ describe('journal lifecycle persistence', () => {
         }),
       }),
     );
+  });
+
+  it('marks an uncached startup unavailable instead of rendering it as an empty journal', async () => {
+    networkOnline = true;
+    persistenceMocks.load.mockResolvedValue(undefined);
+    vi.spyOn(journalApi, 'getSettings').mockResolvedValue({
+      settings,
+      assistant: {
+        endpoint: 'https://journal.test/mcp',
+        status: 'ready',
+        activeSessions: 0,
+      },
+    });
+    vi.spyOn(journalApi, 'bootstrap').mockRejectedValue(
+      new ApiError(503, 'unavailable', 'Journal server stopped.'),
+    );
+
+    await journalActions.initialize();
+
+    expect(useJournalStore.getState()).toMatchObject({
+      resourceStatus: 'error',
+      connectionStatus: 'error',
+      authenticationRequired: false,
+      online: false,
+    });
+    expect(selectJournalStatus(useJournalStore.getState())).toMatchObject({
+      resource: 'error',
+      connection: 'serverUnavailable',
+    });
+  });
+
+  it('marks a failed outbox write as tab-only until a durable retry succeeds', async () => {
+    await journalActions.initialize();
+    persistenceMocks.save.mockRejectedValueOnce(new Error('IndexedDB transaction aborted.'));
+
+    await expect(
+      journalActions.createEntry({
+        text: 'Keep this tab open',
+        type: 'note',
+        date: '2026-07-31',
+      }),
+    ).rejects.toThrow('IndexedDB transaction aborted.');
+
+    expect(useJournalStore.getState()).toMatchObject({
+      persistenceStatus: 'unavailable',
+      outboxCount: 1,
+    });
+    expect(selectJournalStatus(useJournalStore.getState())).toMatchObject({
+      synchronization: 'attention',
+      persistence: 'unavailable',
+      pendingChanges: 1,
+    });
+
+    await journalActions.retryLocalSave();
+
+    expect(useJournalStore.getState()).toMatchObject({
+      persistenceStatus: 'available',
+      outboxCount: 1,
+    });
   });
 
   it('flushes a pending draft immediately when the document becomes hidden', async () => {
@@ -694,6 +762,8 @@ describe('journal lifecycle persistence', () => {
     expect(useJournalStore.getState()).toMatchObject({
       connectionStatus: 'error',
       online: false,
+      authenticationRequired: true,
+      resourceStatus: 'ready',
     });
     expect(
       useJournalStore
@@ -765,6 +835,11 @@ describe('journal lifecycle persistence', () => {
 
     const initialization = journalActions.initialize();
     await vi.waitFor(() => expect(journalApi.bootstrap).toHaveBeenCalledTimes(1));
+    expect(useJournalStore.getState()).toMatchObject({
+      hydrated: true,
+      loading: true,
+      resourceStatus: 'loading',
+    });
     visibility = 'hidden';
     document.dispatchEvent(new Event('visibilitychange'));
     resolveBootstrap({
@@ -784,6 +859,7 @@ describe('journal lifecycle persistence', () => {
     expect(useJournalStore.getState()).toMatchObject({
       connectionStatus: 'offline',
       online: false,
+      resourceStatus: 'ready',
     });
 
     visibility = 'visible';
