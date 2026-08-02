@@ -1766,6 +1766,80 @@ describe('JournalDomain summaries and credentials', () => {
     });
   });
 
+  it('skips an identical merged import after its current Summary and Reflection auto-stale', () => {
+    const source = fixture();
+    source.advance(10 * 86_400_000);
+    const sourceEntry = source.domain.createEntry(
+      {
+        id: ulid(),
+        text: 'Portable source for an auto-staled Reflection',
+        type: 'note',
+        date: '2026-07-23',
+      },
+      source.owner,
+    );
+    if (sourceEntry.kind !== 'entry') throw new Error('Expected source entry');
+    const filed = source.domain.fileSummary(
+      {
+        weekStart: '2026-07-20',
+        text: 'Current on the source before merge.',
+        source: 'Identical merge retry fixture.',
+      },
+      source.agent,
+    );
+    const exported = source.domain.exportJournal();
+    const incomingReflection = exported.derived.reflections.items[0];
+    if (incomingReflection === undefined) throw new Error('Expected exported Reflection');
+
+    const target = fixture();
+    target.domain.createEntry(
+      {
+        id: ulid(),
+        text: 'Destination-only source in the same week',
+        type: 'note',
+        date: '2026-07-24',
+      },
+      target.owner,
+    );
+
+    const first = target.domain.importJournal(exported);
+    expect(first.inserted).toMatchObject({ summaries: 1, reflections: 1 });
+    const staleSummary = target.domain.getSummary(filed.summary.id);
+    const staleReflection = target.domain.getReflection(incomingReflection.id);
+    expect(staleSummary).toMatchObject({
+      status: 'stale',
+      revision: filed.summary.revision + 1,
+    });
+    expect(staleReflection).toMatchObject({
+      status: 'stale',
+      revision: incomingReflection.revision + 1,
+    });
+    expect(staleSummary!.updatedAt >= filed.summary.updatedAt).toBe(true);
+    expect(staleReflection!.updatedAt >= incomingReflection.updatedAt).toBe(true);
+
+    const second = target.domain.importJournal(exported);
+    expect(second.skipped).toMatchObject({ summaries: 1, reflections: 1 });
+    expect(target.domain.getSummary(filed.summary.id)).toEqual(staleSummary);
+    expect(target.domain.getReflection(incomingReflection.id)).toEqual(staleReflection);
+
+    const changed = structuredClone(exported);
+    changed.journal.summaries = [];
+    const changedReflection = changed.derived.reflections.items[0];
+    if (changedReflection === undefined || changedReflection.currentVersion === null) {
+      throw new Error('Expected selected portable Reflection version');
+    }
+    const changedVersion = {
+      ...changedReflection.currentVersion,
+      text: 'A non-automatic aggregate change must still conflict.',
+    };
+    changedReflection.currentVersion = changedVersion;
+    changedReflection.versions = changedReflection.versions.map((version) =>
+      version.id === changedVersion.id ? changedVersion : version,
+    );
+    expect(() => target.domain.importJournal(changed)).toThrowError(/different content/i);
+    expect(target.domain.getReflection(incomingReflection.id)).toEqual(staleReflection);
+  });
+
   it('round-trips a clean export and rejects id collisions with different payloads', () => {
     const source = fixture();
     const created = source.domain.createEntry(
@@ -1849,6 +1923,31 @@ describe('JournalDomain summaries and credentials', () => {
     expect(
       target.domain.claimReflection(slot.weekStart, queued.requestId, target.agent).reflection,
     ).toMatchObject({ status: 'running', claimedBy: { tokenId: target.agent.tokenId } });
+  });
+
+  it('canonicalizes an omitted legacy claim binding before retrying a current Reflection import', () => {
+    const source = fixture();
+    source.domain.createEntry(
+      { id: ulid(), text: 'Current legacy source', type: 'note', date: '2026-07-22' },
+      source.owner,
+    );
+    source.domain.fileSummary(
+      {
+        weekStart: '2026-07-20',
+        text: 'Current Reflection with an omitted optional claim binding.',
+        source: 'Legacy current Reflection import fixture.',
+      },
+      source.agent,
+    );
+    const exported = source.domain.exportJournal();
+    const legacyCurrent = exported.derived.reflections.items[0];
+    if (legacyCurrent === undefined) throw new Error('Expected current Reflection');
+    delete (legacyCurrent as { claimedSourceEntries?: unknown }).claimedSourceEntries;
+
+    const target = fixture();
+    expect(target.domain.importJournal(exported).inserted.reflections).toBe(1);
+    expect(target.domain.importJournal(exported).skipped.reflections).toBe(1);
+    expect(target.domain.getReflection(legacyCurrent.id)?.claimedSourceEntries).toBeNull();
   });
 
   it('exports one validated SQLite snapshot while a writer commits between table reads', () => {

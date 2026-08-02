@@ -18,7 +18,9 @@ import {
   mapEntry,
   mapReflection,
   mapSummary,
+  matchesAutomaticStaleDelta,
   mondayOf,
+  monotonicTimestamp,
   normalizeSource,
   normalizeText,
   reflectionChange,
@@ -195,7 +197,10 @@ export class ActivityReflection {
             claimedSourceEntries: null,
             revision: parsed.revision + 1,
           })
-        : parsed;
+        : ReflectionSchema.parse({
+            ...parsed,
+            claimedSourceEntries: parsed.claimedSourceEntries ?? null,
+          });
     const byId = this.getReflection(reflection.id);
     const sameWeekRow = this.db
       .prepare('SELECT * FROM reflection_slots WHERE week_start = ?')
@@ -217,7 +222,12 @@ export class ActivityReflection {
       this.db.prepare('DELETE FROM reflection_slots WHERE id = ?').run(sameWeek.id);
     }
     if (byId !== null) {
-      if (stableJson(byId) === stableJson(reflection)) return 'skipped';
+      if (
+        stableJson(byId) === stableJson(reflection) ||
+        matchesAutomaticStaleDelta(byId, reflection)
+      ) {
+        return 'skipped';
+      }
       if (!replaceableReflectionPlaceholder(byId)) {
         throw new DomainError(
           'CONFLICT',
@@ -598,7 +608,7 @@ export class ActivityReflection {
             claimed_tool=NULL, claimed_source_entries=NULL, updated_at=?, revision=revision+1
            WHERE id=?`,
         )
-        .run(context.now, row.id);
+        .run(monotonicTimestamp(running.updatedAt, context.now), row.id);
       const reflection = this.requireReflection(row.id);
       context.changes.push(reflectionChange(reflection));
       this.markCurrentSummaryStale(row.week_start, context);
@@ -621,7 +631,7 @@ export class ActivityReflection {
            SET status='stale', updated_at=?, revision=revision+1
            WHERE id=?`,
         )
-        .run(context.now, row.id);
+        .run(monotonicTimestamp(current.updatedAt, context.now), row.id);
       const reflection = this.requireReflection(row.id);
       context.changes.push(reflectionChange(reflection));
       this.markCurrentSummaryStale(row.week_start, context);
@@ -648,7 +658,7 @@ export class ActivityReflection {
           ...mapSummary(row),
           status: row.reflection_status === 'current' ? 'current' : 'stale',
           savedEntryId: null,
-          updatedAt: context.now,
+          updatedAt: monotonicTimestamp(mapSummary(row).updatedAt, context.now),
           revision: row.revision + 1,
         };
         this.updateSummaryRow(summary);
@@ -1077,7 +1087,7 @@ export class ActivityReflection {
     const stale: Summary = {
       ...summary,
       status: 'stale',
-      updatedAt: context.now,
+      updatedAt: monotonicTimestamp(summary.updatedAt, context.now),
       revision: summary.revision + 1,
     };
     this.updateSummaryRow(stale);
