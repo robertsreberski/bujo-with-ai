@@ -48,7 +48,7 @@ const STAMP_PATTERN = /^[0-9]{8}T[0-9]{6}Z-[a-f0-9]{7,40}-[0-9]+$/;
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const ROTATED_LOG_PATTERN = /^[0-9]{8}-[0-9]{4}-[0-9]{2}-journald\.log\.gz$/;
 const LOG_SECRET_PATTERN =
-  /(?:authorization|bearer\s+|set-cookie|cookie|jrn_[A-Za-z0-9_-]{8,}|api[-_]?key|client[-_]?secret)/i;
+  /(?:authorization["']?\s*[:=]|bearer\s+|set-cookie|cookie|jrn_[A-Za-z0-9_-]{8,}|api[-_]?key|client[-_]?secret)/i;
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
