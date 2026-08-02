@@ -184,14 +184,22 @@ function entryPredicate(input: SearchEntriesInput): { predicate: string; params:
   if (input.collection === 'daily') where.push('e.collection IS NULL');
   else if (input.collection !== undefined)
     addWhere(where, params, 'e.collection = ?', input.collection);
-  const exactTag =
-    input.tag ?? (input.query?.trim().startsWith('#') ? input.query.trim().slice(1) : undefined);
+  const query = input.query?.trim();
+  const queryTag =
+    input.tag === undefined && query !== undefined && /^#[^\s]+$/u.test(query)
+      ? query.slice(1)
+      : undefined;
+  const exactTag = input.tag ?? queryTag;
   if (exactTag !== undefined && exactTag !== '') {
     const tag = normalizeTag(exactTag);
     where.push('EXISTS (SELECT 1 FROM json_each(e.tags) WHERE value = ?)');
     params.push(tag);
-  } else if (input.query !== undefined && input.query.trim() !== '') {
-    const needles = journalSearchNeedles(input.query);
+  }
+  // A structured tag filter narrows the result set; it must not consume the
+  // independent free-text query. The only text-free shorthand is a query that
+  // consists solely of one #tag.
+  if (query !== undefined && query !== '' && queryTag === undefined) {
+    const needles = journalSearchNeedles(query);
     for (const needle of needles) {
       where.push(
         `(e.rowid IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?)

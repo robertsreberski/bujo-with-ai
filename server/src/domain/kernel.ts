@@ -151,6 +151,10 @@ export interface CollectionDestinationPort {
   ensure(id: string, now: string, context: WriteContext): Collection;
 }
 
+export interface RecoveryPolicyPort {
+  assertRestorable(deletedAt: string, retentionDays?: number): void;
+}
+
 export interface ActivityAuditInput {
   readonly id?: string;
   readonly kind: ActivityKind;
@@ -180,10 +184,6 @@ export interface ActivityAuditPort {
     postImages: readonly Snapshot[],
     context: WriteContext,
   ): ActivityItem | null;
-}
-
-export interface BeforeCommitPort {
-  beforeCommit(context: WriteContext): void;
 }
 
 const EXPIRED_ACTIVITY_LABELS: Readonly<Record<ActivityKind, string>> = {

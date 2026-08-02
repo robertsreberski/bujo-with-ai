@@ -1,10 +1,5 @@
 import type Database from 'better-sqlite3';
-import {
-  ActivityItemSchema,
-  ActivityViewSchema,
-  EntrySchema,
-  IsoTimestampSchema,
-} from '../contracts/index.js';
+import { ActivityItemSchema, ActivityViewSchema, IsoTimestampSchema } from '../contracts/index.js';
 import { DomainError } from './errors.js';
 import {
   activityChange,
@@ -431,19 +426,18 @@ export class ActivityReflection {
 
   /** Runs from Journal's transaction runner before SQLite commits the command. */
   public beforeCommit(context: WriteContext): void {
-    const dates = new Set(
-      context.changes.flatMap((change) => {
-        if (!change.kind.startsWith('entry.')) return [];
-        const parsed = EntrySchema.safeParse(change.payload);
-        return parsed.success ? [parsed.data.date] : [];
-      }),
-    );
-    if (dates.size === 0) return;
+    if (!context.changes.some((change) => change.kind.startsWith('entry.'))) return;
     const rows = this.db
       .prepare("SELECT * FROM reflection_slots WHERE status = 'current'")
       .all() as ReflectionSlotRow[];
     for (const row of rows) {
-      if (![...dates].some((date) => date >= row.week_start && date <= row.week_end)) continue;
+      const current = this.requireReflection(row.id);
+      if (
+        current.currentVersion !== null &&
+        this.reflectionVersionIsCurrent(current.currentVersion)
+      ) {
+        continue;
+      }
       this.db
         .prepare(
           `UPDATE reflection_slots

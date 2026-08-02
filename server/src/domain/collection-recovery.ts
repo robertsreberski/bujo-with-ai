@@ -43,6 +43,13 @@ interface TypeCountRow {
   readonly count: number;
 }
 
+interface MutationResultRow {
+  readonly actor_type: string;
+  readonly actor_id: string;
+  readonly mutation_id: string;
+  readonly result: string;
+}
+
 export interface JournalIndexAggregates {
   readonly collections: ReadonlyArray<Collection & { readonly count: number }>;
   readonly months: ReadonlyArray<{ readonly month: string; readonly count: number }>;
@@ -53,6 +60,7 @@ export interface CollectionRecoveryOptions {
   readonly db: Database.Database;
   readonly now: () => Date;
   readonly write: JournalWritePort;
+  readonly retentionDays?: number;
 }
 
 /** Collection destinations plus the complete soft-delete recovery lifecycle. */
@@ -60,16 +68,17 @@ export class CollectionRecovery {
   private readonly db: Database.Database;
   private readonly now: () => Date;
   private readonly write: JournalWritePort;
+  private readonly retentionDays: number;
 
   public constructor(options: CollectionRecoveryOptions) {
     this.db = options.db;
     this.now = options.now;
     this.write = options.write;
+    this.retentionDays = validateRetentionDays(options.retentionDays ?? 30);
   }
 
-  public listRecentlyDeleted(retentionDays = 30): readonly RecentlyDeletedEntry[] {
-    if (!Number.isInteger(retentionDays) || retentionDays < 1)
-      invalid('retentionDays must be a positive integer');
+  public listRecentlyDeleted(retentionDays?: number): readonly RecentlyDeletedEntry[] {
+    retentionDays = this.resolveRetentionDays(retentionDays);
     const cutoff = new Date(this.now().getTime() - retentionDays * 86_400_000).toISOString();
     const rows = this.db
       .prepare(
@@ -346,28 +355,68 @@ export class CollectionRecovery {
     return collection;
   }
 
+  public assertRestorable(deletedAt: string, retentionDays?: number): void {
+    const days = this.resolveRetentionDays(retentionDays);
+    const cutoff = this.now().getTime() - days * 86_400_000;
+    if (Date.parse(deletedAt) < cutoff) {
+      throw new DomainError(
+        'CONFLICT',
+        `The ${days}-day recovery window for this entry has expired`,
+      );
+    }
+  }
+
   /**
-   * Purge and audit redaction intentionally share one SQLite transaction. If
-   * either step fails, neither the entry deletion nor its content redaction is
-   * committed.
+   * Purge, audit redaction, and idempotency-response scrubbing intentionally
+   * share one SQLite transaction. A failure commits none of them.
    */
-  public purgeExpired(retentionDays = 30): {
+  public purgeExpired(retentionDays?: number): {
     readonly entries: number;
     readonly mutations: number;
     readonly devices: number;
   } {
-    if (!Number.isInteger(retentionDays) || retentionDays < 1)
-      invalid('retentionDays must be a positive integer');
+    retentionDays = this.resolveRetentionDays(retentionDays);
     const cutoff = new Date(this.now().getTime() - retentionDays * 86_400_000).toISOString();
     const now = this.now().toISOString();
     const transaction = this.db.transaction(() => {
-      const expiredIds = (
-        this.db
-          .prepare('SELECT id FROM entries WHERE deleted_at IS NOT NULL AND deleted_at < ?')
-          .all(cutoff) as Array<{ id: string }>
-      ).map(({ id }) => id);
+      const expiredEntries = this.db
+        .prepare(
+          'SELECT id, deleted_at FROM entries WHERE deleted_at IS NOT NULL AND deleted_at < ?',
+        )
+        .all(cutoff) as Array<{ id: string; deleted_at: string }>;
+      const expiredIds = expiredEntries.map(({ id }) => id);
+      let scrubbedMutations = 0;
       if (expiredIds.length > 0) {
-        const expired = new Set(expiredIds);
+        const expired = new Map(expiredEntries.map((entry) => [entry.id, entry.deleted_at]));
+        const mutationRows = this.db
+          .prepare(
+            `SELECT actor_type, actor_id, mutation_id, result
+             FROM processed_mutations
+             WHERE EXISTS (
+               SELECT 1 FROM json_tree(processed_mutations.result) AS node
+               WHERE node.key = 'id'
+                 AND node.value IN (SELECT value FROM json_each(?))
+             )`,
+          )
+          .all(JSON.stringify(expiredIds)) as MutationResultRow[];
+        const updateMutation = this.db.prepare(
+          `UPDATE processed_mutations SET result = ?
+           WHERE actor_type = ? AND actor_id = ? AND mutation_id = ?`,
+        );
+        for (const row of mutationRows) {
+          const scrubbed = JSON.stringify(
+            scrubExpiredMutationResult(JSON.parse(row.result), expired),
+          );
+          if (scrubbed === row.result) continue;
+          scrubbedMutations += updateMutation.run(
+            scrubbed,
+            row.actor_type,
+            row.actor_id,
+            row.mutation_id,
+          ).changes;
+        }
+
+        const expiredSet = new Set(expiredIds);
         const rows = this.db
           .prepare(
             `SELECT id, kind, pre_images, post_images FROM activity
@@ -386,7 +435,7 @@ export class CollectionRecovery {
           const snapshots = JSON.parse(json) as Snapshot[];
           return JSON.stringify(
             snapshots.map((snapshot) =>
-              snapshot.entity === 'entry' && expired.has(snapshot.id)
+              snapshot.entity === 'entry' && expiredSet.has(snapshot.id)
                 ? { ...snapshot, row: null }
                 : snapshot,
             ),
@@ -408,8 +457,9 @@ export class CollectionRecovery {
         entries: this.db
           .prepare('DELETE FROM entries WHERE deleted_at IS NOT NULL AND deleted_at < ?')
           .run(cutoff).changes,
-        // Idempotency records are durable and never silently expire.
-        mutations: 0,
+        // Request hashes remain durable; only expired journal content is
+        // replaced in cached response bodies.
+        mutations: scrubbedMutations,
         devices: this.db
           .prepare('DELETE FROM device_tokens WHERE expires_at < ? OR revoked_at < ?')
           .run(now, cutoff).changes,
@@ -417,6 +467,42 @@ export class CollectionRecovery {
     });
     return transaction();
   }
+
+  private resolveRetentionDays(retentionDays?: number): number {
+    return validateRetentionDays(retentionDays ?? this.retentionDays);
+  }
+}
+
+function scrubExpiredMutationResult(value: unknown, expired: ReadonlyMap<string, string>): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => scrubExpiredMutationResult(item, expired));
+  }
+  if (value === null || typeof value !== 'object') return value;
+
+  const record = Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, scrubExpiredMutationResult(item, expired)]),
+  );
+  const id = typeof record.id === 'string' ? record.id : undefined;
+  if (
+    id === undefined ||
+    !expired.has(id) ||
+    typeof record.date !== 'string' ||
+    typeof record.text !== 'string' ||
+    !Array.isArray(record.tags) ||
+    (record.author !== 'me' && record.author !== 'ai') ||
+    typeof record.revision !== 'number'
+  ) {
+    return record;
+  }
+  return {
+    ...record,
+    text: 'Content expired',
+    time: null,
+    tags: [],
+    source: record.author === 'ai' ? 'Content expired after recovery retention.' : null,
+    collection: null,
+    deletedAt: expired.get(id),
+  };
 }
 
 function normalizeCollectionInput(input: {
@@ -434,4 +520,9 @@ function normalizeCollectionInput(input: {
 
 function validateCollectionName(value: string): string {
   return normalizeText(value, 120, 'collection name');
+}
+
+function validateRetentionDays(value: number): number {
+  if (!Number.isInteger(value) || value < 1) invalid('retentionDays must be a positive integer');
+  return value;
 }

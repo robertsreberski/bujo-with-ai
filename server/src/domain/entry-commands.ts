@@ -22,6 +22,7 @@ import {
   type CollectionDestinationPort,
   type EntryPersistencePort,
   type JournalWritePort,
+  type RecoveryPolicyPort,
 } from './kernel.js';
 import type {
   AgentMigrationResult,
@@ -41,31 +42,31 @@ export type NewEntry = Omit<Entry, 'createdAt' | 'updatedAt' | 'deletedAt' | 're
 
 export interface EntryCommandOptions {
   readonly today: () => string;
-  readonly now: () => Date;
   readonly idFactory: () => string;
   readonly write: JournalWritePort;
   readonly entries: EntryPersistencePort;
   readonly collections: CollectionDestinationPort;
+  readonly recovery: RecoveryPolicyPort;
   readonly audit: ActivityAuditPort;
 }
 
 /** Entry mutation use-cases; persistence collaborators arrive through neutral ports. */
 export class EntryCommands {
   private readonly today: () => string;
-  private readonly now: () => Date;
   private readonly idFactory: () => string;
   private readonly write: JournalWritePort;
   private readonly entries: EntryPersistencePort;
   private readonly collections: CollectionDestinationPort;
+  private readonly recovery: RecoveryPolicyPort;
   private readonly audit: ActivityAuditPort;
 
   public constructor(options: EntryCommandOptions) {
     this.today = options.today;
-    this.now = options.now;
     this.idFactory = options.idFactory;
     this.write = options.write;
     this.entries = options.entries;
     this.collections = options.collections;
+    this.recovery = options.recovery;
     this.audit = options.audit;
   }
 
@@ -530,7 +531,7 @@ export class EntryCommands {
     id: string,
     actor: ActorContext,
     mutation?: MutationContext,
-    options: { readonly expectedRevision?: number } = {},
+    options: { readonly expectedRevision?: number; readonly retentionDays?: number } = {},
   ): {
     readonly entry: Entry;
     readonly activityId?: string;
@@ -542,10 +543,7 @@ export class EntryCommands {
       if (before === null || before.deletedAt === null) {
         throw new DomainError('NOT_FOUND', `Deleted entry ${id} was not found`);
       }
-      const recoveryCutoff = this.now().getTime() - 30 * 86_400_000;
-      if (Date.parse(before.deletedAt) < recoveryCutoff) {
-        throw new DomainError('CONFLICT', 'The 30-day recovery window for this entry has expired');
-      }
+      this.recovery.assertRestorable(before.deletedAt, options.retentionDays);
       assertExpectedRevision(before, options.expectedRevision);
       let collection = before.collection;
       let fallbackFromCollection: string | undefined;

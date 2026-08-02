@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ulid } from 'ulid';
 import { JournalDatabase } from '../src/db/database.js';
-import { JournalExportSchema, type ChangeBatch } from '../src/contracts/index.js';
+import { EntrySchema, JournalExportSchema, type ChangeBatch } from '../src/contracts/index.js';
 import { DomainError } from '../src/domain/errors.js';
 import { JournalDomain } from '../src/domain/journal.js';
 import type { ActorContext } from '../src/domain/types.js';
@@ -17,7 +17,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function fixture() {
+function fixture(options: { readonly recoveryRetentionDays?: number } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'journal-domain-test-'));
   roots.push(root);
   let instant = new Date('2026-07-31T10:00:00.000Z');
@@ -26,6 +26,9 @@ function fixture() {
     database,
     config: { timezone: 'UTC', dayBoundaryOffsetMin: 0, deviceCredentialTtlDays: 365 },
     now: () => instant,
+    ...(options.recoveryRetentionDays === undefined
+      ? {}
+      : { recoveryRetentionDays: options.recoveryRetentionDays }),
   });
   open.push(domain);
   const owner: ActorContext = { kind: 'owner', deviceId: ulid() };
@@ -607,6 +610,45 @@ describe('JournalDomain entry commands', () => {
     expect(domain.searchEntries({ query: '#travel', limit: 25 }).total).toBe(1);
   });
 
+  it('applies exact-tag and free-text search predicates together', () => {
+    const { domain, owner } = fixture();
+    const match = domain.createEntry(
+      {
+        id: ulid(),
+        text: 'Plan the Lisbon rail connection',
+        type: 'note',
+        tags: ['travel'],
+        date: '2026-07-31',
+      },
+      owner,
+    );
+    domain.createEntry(
+      {
+        id: ulid(),
+        text: 'Plan the Kyoto rail connection',
+        type: 'note',
+        tags: ['travel'],
+        date: '2026-07-31',
+      },
+      owner,
+    );
+    domain.createEntry(
+      {
+        id: ulid(),
+        text: 'Plan the Lisbon rail connection',
+        type: 'note',
+        tags: ['work'],
+        date: '2026-07-31',
+      },
+      owner,
+    );
+    if (match.kind !== 'entry') throw new Error('Expected matching entry');
+
+    const result = domain.searchEntries({ query: 'Lisbon', tag: 'travel', limit: 25 });
+    expect(result).toMatchObject({ total: 1 });
+    expect(result.entries.map((entry) => entry.id)).toEqual([match.entry.id]);
+  });
+
   it('matches Unicode case-insensitive substrings', () => {
     const { domain, owner } = fixture();
     domain.createEntry(
@@ -934,6 +976,64 @@ describe('JournalDomain weekly Reflections', () => {
     if (ownerReflection.kind === 'entry') expect(ownerReflection.entry.author).toBe('me');
   });
 
+  it.each([
+    {
+      label: 'date edit',
+      move: (domain: JournalDomain, id: string, owner: ActorContext) =>
+        domain.updateEntry(id, { date: '2026-07-23' }, owner),
+    },
+    {
+      label: 'collection filing',
+      move: (domain: JournalDomain, id: string, owner: ActorContext) =>
+        domain.fileEntry(id, 'moved-notes', owner, undefined, { filingDate: '2026-07-23' }),
+    },
+  ])('invalidates source and destination Reflections after a cross-week $label', ({ move }) => {
+    const { domain, owner, agent } = fixture();
+    domain.createCollection({ id: 'moved-notes', name: 'Moved notes' }, owner);
+    const source = domain.createEntry(
+      { id: ulid(), date: '2026-07-14', type: 'note', text: 'Source week entry' },
+      owner,
+    );
+    domain.createEntry(
+      { id: ulid(), date: '2026-07-22', type: 'note', text: 'Destination week entry' },
+      owner,
+    );
+    if (source.kind !== 'entry') throw new Error('Expected source entry');
+    for (const weekStart of ['2026-07-13', '2026-07-20']) {
+      domain.fileSummary(
+        {
+          weekStart,
+          text: `Current Reflection for ${weekStart}.`,
+          source: 'Cross-week invalidation fixture.',
+        },
+        agent,
+      );
+    }
+    expect(
+      domain
+        .listReflections('2026-07-13', '2026-07-26')
+        .map((reflection) => [reflection.weekStart, reflection.status]),
+    ).toEqual([
+      ['2026-07-20', 'current'],
+      ['2026-07-13', 'current'],
+    ]);
+
+    move(domain, source.entry.id, owner);
+
+    expect(
+      domain
+        .listReflections('2026-07-13', '2026-07-26')
+        .map((reflection) => [reflection.weekStart, reflection.status]),
+    ).toEqual([
+      ['2026-07-20', 'stale'],
+      ['2026-07-13', 'stale'],
+    ]);
+    expect(domain.listSummaries().map((summary) => [summary.weekStart, summary.status])).toEqual([
+      ['2026-07-20', 'stale'],
+      ['2026-07-13', 'stale'],
+    ]);
+  });
+
   it('uses the configured journal timezone before completing a week boundary', () => {
     const root = mkdtempSync(join(tmpdir(), 'journal-reflection-timezone-test-'));
     roots.push(root);
@@ -1164,6 +1264,29 @@ describe('JournalDomain summaries and credentials', () => {
     expect(domain.getEntry(created.entry.id, { includeDeleted: true })).toBeNull();
   });
 
+  it('uses one configured retention policy for listing, restore, and purge', () => {
+    const { domain, owner, advance } = fixture({ recoveryRetentionDays: 45 });
+    const created = domain.createEntry(
+      { id: ulid(), text: 'Extended recovery row', type: 'note', date: '2026-07-31' },
+      owner,
+    );
+    if (created.kind !== 'entry') throw new Error('Expected entry');
+    const deleted = domain.deleteEntry(created.entry.id, owner);
+
+    advance(31 * 86_400_000);
+    expect(domain.listRecentlyDeleted()).toHaveLength(1);
+    expect(domain.purgeExpired().entries).toBe(0);
+    domain.restoreEntry(created.entry.id, owner, undefined, {
+      expectedRevision: deleted.entry.revision,
+    });
+
+    domain.deleteEntry(created.entry.id, owner);
+    advance(45 * 86_400_000 + 1);
+    expect(domain.listRecentlyDeleted()).toEqual([]);
+    expect(() => domain.restoreEntry(created.entry.id, owner)).toThrowError(/45-day recovery/i);
+    expect(domain.purgeExpired().entries).toBe(1);
+  });
+
   it('describes recovery destinations, reopens archives, and falls back from missing collections', () => {
     const { domain, database, owner } = fixture();
     domain.createCollection({ id: 'archive-me', name: 'Archive me' }, owner);
@@ -1248,6 +1371,87 @@ describe('JournalDomain summaries and credentials', () => {
       ).toBe(true);
     }
     expect(() => domain.revertActivity(deleted.activityId!, agent)).toThrowError(/expired/i);
+  });
+
+  it('scrubs expired content from durable idempotency responses without re-executing', () => {
+    const { domain, database, owner, advance } = fixture();
+    const sentinel = 'Private content must not survive in replay storage';
+    const input = {
+      id: ulid(),
+      text: sentinel,
+      type: 'note' as const,
+      date: '2026-07-31',
+      tags: ['private'],
+    };
+    const created = domain.createEntry(input, owner, {
+      id: 'expiring-create-replay',
+      statusCode: 201,
+    });
+    if (created.kind !== 'entry') throw new Error('Expected entry');
+    domain.deleteEntry(
+      created.entry.id,
+      owner,
+      { id: 'expiring-delete-replay' },
+      { expectedRevision: created.entry.revision },
+    );
+    const before = database.raw
+      .prepare(
+        `SELECT mutation_id, request_hash, status_code, result FROM processed_mutations
+         ORDER BY mutation_id`,
+      )
+      .all() as Array<{
+      mutation_id: string;
+      request_hash: string;
+      status_code: number;
+      result: string;
+    }>;
+    expect(JSON.stringify(before)).toContain(sentinel);
+
+    advance(30 * 86_400_000 + 1);
+    expect(domain.purgeExpired()).toMatchObject({ entries: 1, mutations: 2 });
+    const after = database.raw
+      .prepare(
+        `SELECT mutation_id, request_hash, status_code, result FROM processed_mutations
+         ORDER BY mutation_id`,
+      )
+      .all() as Array<{
+      mutation_id: string;
+      request_hash: string;
+      status_code: number;
+      result: string;
+    }>;
+    expect(
+      after.map(({ mutation_id, request_hash, status_code }) => ({
+        mutation_id,
+        request_hash,
+        status_code,
+      })),
+    ).toEqual(
+      before.map(({ mutation_id, request_hash, status_code }) => ({
+        mutation_id,
+        request_hash,
+        status_code,
+      })),
+    );
+    expect(JSON.stringify(after)).not.toContain(sentinel);
+    expect(after.every((row) => row.result.includes('Content expired'))).toBe(true);
+
+    const replay = domain.createEntry(input, owner, {
+      id: 'expiring-create-replay',
+      statusCode: 201,
+    });
+    expect(replay).toMatchObject({
+      kind: 'entry',
+      entry: { id: input.id, text: 'Content expired', tags: [], deletedAt: expect.any(String) },
+    });
+    if (replay.kind !== 'entry') throw new Error('Expected entry replay');
+    expect(() => EntrySchema.parse(replay.entry)).not.toThrow();
+    expect(domain.getEntry(input.id, { includeDeleted: true })).toBeNull();
+    expect(() =>
+      domain.createEntry({ ...input, text: 'A different request' }, owner, {
+        id: 'expiring-create-replay',
+      }),
+    ).toThrowError(/different request/i);
   });
 
   it('round-trips a clean export and rejects id collisions with different payloads', () => {
