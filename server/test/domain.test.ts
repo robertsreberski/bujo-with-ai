@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,6 +6,7 @@ import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ulid } from 'ulid';
 import { JournalDatabase } from '../src/db/database.js';
+import { migrations } from '../src/db/migrations.js';
 import {
   ActivityItemSchema,
   ActivityViewSchema,
@@ -1143,6 +1145,47 @@ describe('JournalDomain weekly Reflections', () => {
 });
 
 describe('JournalDomain summaries and credentials', () => {
+  it('exports a valid v6 database readonly without migration-7 provenance storage', () => {
+    const root = mkdtempSync(join(tmpdir(), 'journal-readonly-v6-export-test-'));
+    roots.push(root);
+    const path = join(root, 'journal.db');
+    const raw = new Database(path);
+    raw.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      );
+    `);
+    const record = raw.prepare(
+      'INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (?,?,?,?)',
+    );
+    for (const migration of migrations.filter(({ version }) => version <= 6)) {
+      raw.exec(migration.sql);
+      record.run(
+        migration.version,
+        migration.name,
+        createHash('sha256')
+          .update(`${migration.version}\0${migration.name}\0${migration.sql}`)
+          .digest('hex'),
+        `2026-07-${String(10 + migration.version).padStart(2, '0')}T08:00:00.000Z`,
+      );
+    }
+    raw.close();
+
+    const database = new JournalDatabase({ path, applyMigrations: false, readonly: true });
+    const domain = new JournalDomain({
+      database,
+      config: { timezone: 'UTC', dayBoundaryOffsetMin: 0, deviceCredentialTtlDays: 365 },
+      now: () => new Date('2026-08-02T09:00:00.000Z'),
+    });
+    const exported = domain.exportJournal();
+    expect(exported.derived.summaryReflectionReverts).toEqual({ version: 1, items: [] });
+    expect(domain.listActivityViews()).toEqual([]);
+    domain.close();
+  });
+
   it('reverts v2 Summary filings together with their exact Reflection aggregate', () => {
     const { domain, database, agent, owner, advance } = fixture();
     const created = domain.fileSummary(
@@ -1291,6 +1334,98 @@ describe('JournalDomain summaries and credentials', () => {
     expect(forgedTarget.domain.listSummaries()).toEqual([]);
   });
 
+  it('preserves a synthetic Summary marker through export, import, revert, and compatibility writes', () => {
+    const sourceRoot = mkdtempSync(join(tmpdir(), 'journal-portable-summary-marker-source-'));
+    roots.push(sourceRoot);
+    const sourcePath = join(sourceRoot, 'journal.db');
+    const summaryId = ulid();
+    const tokenId = ulid();
+    const seed = new JournalDatabase({ path: sourcePath });
+    seed.raw
+      .prepare(
+        `INSERT INTO summaries(
+          id,week_start,text,status,source,token_id,created_at,updated_at,saved_entry_id,revision
+         ) VALUES (?,?,'Synthetic portable base','current','Synthetic portable source.',?, ?, ?,NULL,2)`,
+      )
+      .run(
+        summaryId,
+        '2026-07-20',
+        tokenId,
+        '2026-07-27T08:00:00.000Z',
+        '2026-07-27T08:00:00.000Z',
+      );
+    seed.close();
+    const sourceDatabase = new JournalDatabase({
+      path: sourcePath,
+      now: () => new Date('2026-07-31T10:00:00.000Z'),
+    });
+    const source = new JournalDomain({
+      database: sourceDatabase,
+      config: { timezone: 'UTC', dayBoundaryOffsetMin: 0, deviceCredentialTtlDays: 365 },
+      now: () => new Date('2026-07-31T10:00:00.000Z'),
+    });
+    open.push(source);
+    const updated = source.fileSummary(
+      {
+        weekStart: '2026-07-20',
+        text: 'Synthetic portable update',
+        source: 'Synthetic portable update source.',
+      },
+      { kind: 'agent', tokenId, tokenLabel: 'portable-agent', tool: 'file_summary' },
+    );
+    const portable = source.exportJournal();
+    expect(portable.derived.summaryReflectionReverts.items).toMatchObject([
+      { activityId: updated.activityId, legacySummaryId: summaryId },
+    ]);
+
+    const intermediate = fixture();
+    intermediate.domain.importJournal(portable);
+    intermediate.domain.revertActivity(updated.activityId, intermediate.owner);
+    const revertedPortable = intermediate.domain.exportJournal();
+
+    const destination = fixture();
+    destination.domain.importJournal(revertedPortable);
+    expect(
+      destination.database.raw
+        .prepare('SELECT legacy_summary_id FROM reflection_slots WHERE id=?')
+        .pluck()
+        .get(summaryId),
+    ).toBe(summaryId);
+    destination.domain.close();
+    const destinationPath = join(destination.root, 'journal.db');
+    const compatibility = new Database(destinationPath);
+    compatibility
+      .prepare(
+        `UPDATE summaries SET text='Portable compatibility update',
+           source='Portable compatibility source.',updated_at='2026-08-01T08:00:00.000Z',
+           revision=revision+1 WHERE id=?`,
+      )
+      .run(summaryId);
+    compatibility.close();
+    const upgraded = new JournalDatabase({
+      path: destinationPath,
+      now: () => new Date('2026-08-02T09:00:00.000Z'),
+    });
+    expect(
+      upgraded.raw
+        .prepare('SELECT text FROM reflection_versions WHERE id=?')
+        .pluck()
+        .get(summaryId),
+    ).toBe('Portable compatibility update');
+    upgraded.close();
+    const removal = new Database(destinationPath);
+    removal.prepare('DELETE FROM summaries WHERE id=?').run(summaryId);
+    removal.close();
+    const removed = new JournalDatabase({ path: destinationPath });
+    expect(
+      removed.raw
+        .prepare('SELECT count(*) FROM reflection_slots WHERE id=?')
+        .pluck()
+        .get(summaryId),
+    ).toBe(0);
+    removed.close();
+  });
+
   it('converges a protocol-1 Summary revert from private provenance on v2 reopen', () => {
     const source = fixture();
     const path = join(source.root, 'journal.db');
@@ -1349,6 +1484,29 @@ describe('JournalDomain summaries and credentials', () => {
       .prepare('UPDATE activity SET reverted_at=?,reverted_by_activity_id=? WHERE id=?')
       .run('2026-08-01T08:01:00.000Z', ulid(), updated.activityId);
     rollback.close();
+
+    const readonlyDatabase = new JournalDatabase({
+      path,
+      applyMigrations: false,
+      readonly: true,
+    });
+    const readonlyDomain = new JournalDomain({
+      database: readonlyDatabase,
+      config: { timezone: 'UTC', dayBoundaryOffsetMin: 0, deviceCredentialTtlDays: 365 },
+      now: () => new Date('2026-08-02T08:30:00.000Z'),
+    });
+    const unreconciledPortable = readonlyDomain.exportJournal();
+    expect(unreconciledPortable.derived.reflections.items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: filed.summary.id })]),
+    );
+    readonlyDomain.close();
+    const imported = fixture();
+    imported.domain.importJournal(unreconciledPortable);
+    expect(imported.domain.getReflection(filed.summary.id)).toBeNull();
+    expect(imported.domain.getReflection(original.summary.id)).toMatchObject({
+      currentVersionId: originalReflection.currentVersionId,
+      versions: expect.arrayContaining([expect.objectContaining({ text: original.summary.text })]),
+    });
 
     const upgradedDatabase = new JournalDatabase({
       path,
