@@ -1,0 +1,2327 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-02T10:29:06.160Z",
+  "corpus": "experiments/title-eval/corpus.json",
+  "label": "terra",
+  "endpointUsed": true,
+  "heuristic": {
+    "summary": {
+      "cases": 50,
+      "successful": 50,
+      "formatRate": 1,
+      "requiredTermRate": 0.12,
+      "negationRate": 0.62,
+      "medianDurationMs": 0,
+      "p95DurationMs": 0,
+      "totalCostUsd": 0
+    },
+    "results": [
+      {
+        "id": "garden-timber",
+        "title": "measure the eastern garden bed",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "eastern",
+              "present": true
+            },
+            {
+              "term": "timber",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "marieke-email",
+        "title": "do not email marieke before",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Marieke",
+              "present": true
+            },
+            {
+              "term": "August 12",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "passport-copy",
+        "title": "keep robert s passport copy",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "passport",
+              "present": true
+            },
+            {
+              "term": "Japan",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "never-cancel-friday",
+        "title": "never cancel the friday focus",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Friday",
+              "present": true
+            },
+            {
+              "term": "focus",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "amsterdam-train",
+        "title": "compare the amsterdam to berlin",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Amsterdam",
+              "present": true
+            },
+            {
+              "term": "Berlin",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "luna-terra",
+        "title": "does luna produce faithful short",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Luna",
+              "present": true
+            },
+            {
+              "term": "Terra",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "september-budget",
+        "title": "september renovation budget should reserve",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "September",
+              "present": true
+            },
+            {
+              "term": "fifteen percent",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "contractor-decision",
+        "title": "wait for noor s revised",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Noor",
+              "present": true
+            },
+            {
+              "term": "quote",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "subscription-renewal",
+        "title": "do not renew the analytics",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "November",
+              "present": false
+            },
+            {
+              "term": "analytics",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "anniversary-plan",
+        "title": "plan a quiet tenth anniversary",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "anniversary",
+              "present": true
+            },
+            {
+              "term": "coast",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "team-api-decision",
+        "title": "team agreed to keep the",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "seven",
+              "present": false
+            },
+            {
+              "term": "MCP",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "client-feedback",
+        "title": "sofia s feedback was mainly",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Sofia",
+              "present": true
+            },
+            {
+              "term": "navigation",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "reading-stack",
+        "title": "create a small reading stack",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "autumn",
+              "present": false
+            },
+            {
+              "term": "reading",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "rainwater-plan",
+        "title": "would a two hundred litre",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "rainwater",
+              "present": false
+            },
+            {
+              "term": "greenhouse",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "photo-archive",
+        "title": "move the 2019 family photographs",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "2019",
+              "present": true
+            },
+            {
+              "term": "photographs",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "tax-documents",
+        "title": "gather the 2025 dutch tax",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "2025",
+              "present": true
+            },
+            {
+              "term": "Elise",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "cancelled-lisbon",
+        "title": "lisbon trip was cancelled because",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Lisbon",
+              "present": true
+            },
+            {
+              "term": "cancelled",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "october-workshop",
+        "title": "host the accessibility workshop on",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "October 6",
+              "present": false
+            },
+            {
+              "term": "accessibility",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "collection-question",
+        "title": "should project notes stay in",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "flat collections",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "weekly-reflection",
+        "title": "week felt productive because i",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "mornings",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "proposal-scope",
+        "title": "keep the august proposal focused",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "August",
+              "present": true
+            },
+            {
+              "term": "timeline",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "recovery-codes",
+        "title": "print the account recovery codes",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "recovery codes",
+              "present": true
+            },
+            {
+              "term": "safe",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "kitchen-layout",
+        "title": "move the kitchen island thirty",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "thirty",
+              "present": true
+            },
+            {
+              "term": "window",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "bicycle-brakes",
+        "title": "replace the rear bicycle brake",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "brake",
+              "present": true
+            },
+            {
+              "term": "Ardennes",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "garden-shade",
+        "title": "which herbs will tolerate the",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "herbs",
+              "present": true
+            },
+            {
+              "term": "northern",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "dutch-course",
+        "title": "dutch evening course is useful",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Dutch",
+              "present": true
+            },
+            {
+              "term": "Thursday",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "dog-sitter",
+        "title": "confirm with jamal that he",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Jamal",
+              "present": true
+            },
+            {
+              "term": "Miso",
+              "present": false
+            },
+            {
+              "term": "December 23",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "travel-insurance",
+        "title": "check whether the annual travel",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "rail strikes",
+              "present": false
+            },
+            {
+              "term": "insurance",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "weekend-boundary",
+        "title": "stop treating sunday evening as",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Sunday",
+              "present": true
+            },
+            {
+              "term": "Monday",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "piano-recording",
+        "title": "record the new piano arrangement",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "piano",
+              "present": true
+            },
+            {
+              "term": "live",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "headache-pattern",
+        "title": "afternoon headaches appeared on the",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "headaches",
+              "present": true
+            },
+            {
+              "term": "pattern",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "lease-review",
+        "title": "ask the adviser to review",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "clause fourteen",
+              "present": false
+            },
+            {
+              "term": "lease",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "roof-repair",
+        "title": "photograph the damp patch above",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "attic",
+              "present": false
+            },
+            {
+              "term": "rain",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "backup-restore",
+        "title": "backup is not proven until",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "restore",
+              "present": false
+            },
+            {
+              "term": "Journal",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "screen-reader",
+        "title": "can a voiceover user understand",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "VoiceOver",
+              "present": true
+            },
+            {
+              "term": "iPhone",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "provider-privacy",
+        "title": "journal text must not reach",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Journal",
+              "present": true
+            },
+            {
+              "term": "external model",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "soup-recipe",
+        "title": "make the lentil soup again",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "lentil",
+              "present": true
+            },
+            {
+              "term": "lemon",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "camera-lens",
+        "title": "borrow nina s 35mm lens",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Nina",
+              "present": true
+            },
+            {
+              "term": "35mm",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "board-presentation",
+        "title": "open the board presentation with",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "customer",
+              "present": false
+            },
+            {
+              "term": "architecture",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "sleep-experiment",
+        "title": "going to bed thirty minutes",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "September 1",
+              "present": false
+            },
+            {
+              "term": "phone",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "volunteer-shift",
+        "title": "swap the august 18 volunteer",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "August 18",
+              "present": true
+            },
+            {
+              "term": "Priya",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "research-workshop",
+        "title": "design the research workshop around",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "three",
+              "present": false
+            },
+            {
+              "term": "decisions",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "migration-lineage",
+        "title": "migrated task currently looks like",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "source",
+              "present": false
+            },
+            {
+              "term": "destination",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "family-call",
+        "title": "call dad on saturday afternoon",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Dad",
+              "present": true
+            },
+            {
+              "term": "Saturday",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "cancel-gym",
+        "title": "cancel the old gym membership",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "September 30",
+              "present": false
+            },
+            {
+              "term": "gym",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "house-search",
+        "title": "pause the house search until",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "house",
+              "present": true
+            },
+            {
+              "term": "financing",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "emergency-fund",
+        "title": "should the emergency fund remain",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "twelve months",
+              "present": false
+            },
+            {
+              "term": "emergency fund",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "reading-notes",
+        "title": "writing one paragraph after each",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "paragraph",
+              "present": true
+            },
+            {
+              "term": "recall",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "short-film",
+        "title": "finish the short film as",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "six-minute",
+              "present": false
+            },
+            {
+              "term": "station",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      },
+      {
+        "id": "no-rush-decision",
+        "title": "there is no need to",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "new role",
+              "present": false
+            },
+            {
+              "term": "travel",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 0,
+        "costUsd": 0,
+        "error": null
+      }
+    ]
+  },
+  "model": {
+    "summary": {
+      "cases": 50,
+      "successful": 50,
+      "formatRate": 0.68,
+      "requiredTermRate": 0.54,
+      "negationRate": 0.64,
+      "medianDurationMs": 1543,
+      "p95DurationMs": 7203,
+      "totalCostUsd": 0.095595
+    },
+    "results": [
+      {
+        "id": "garden-timber",
+        "title": "Measure eastern bed before August timber",
+        "evaluation": {
+          "wordCount": 6,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "eastern",
+              "present": true
+            },
+            {
+              "term": "timber",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": false
+        },
+        "durationMs": 1461,
+        "costUsd": 0.00132,
+        "error": null
+      },
+      {
+        "id": "marieke-email",
+        "title": "Do not email Marieke before August 12",
+        "evaluation": {
+          "wordCount": 7,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "Marieke",
+              "present": true
+            },
+            {
+              "term": "August 12",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 2192,
+        "costUsd": 0.0013750000000000001,
+        "error": null
+      },
+      {
+        "id": "passport-copy",
+        "title": "Keep Robert passport copy private",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "passport",
+              "present": true
+            },
+            {
+              "term": "Japan",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 1248,
+        "costUsd": 0.0013,
+        "error": null
+      },
+      {
+        "id": "never-cancel-friday",
+        "title": "Never cancel Friday focus block",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Friday",
+              "present": true
+            },
+            {
+              "term": "focus",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 1284,
+        "costUsd": 0.0013,
+        "error": null
+      },
+      {
+        "id": "amsterdam-train",
+        "title": "Compare Amsterdam Berlin train flight",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Amsterdam",
+              "present": true
+            },
+            {
+              "term": "Berlin",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 1480,
+        "costUsd": 0.00131,
+        "error": null
+      },
+      {
+        "id": "luna-terra",
+        "title": "Assess Luna versus Terra tradeoffs",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Luna",
+              "present": true
+            },
+            {
+              "term": "Terra",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 3209,
+        "costUsd": 0.00277,
+        "error": null
+      },
+      {
+        "id": "september-budget",
+        "title": "September budget adds electrical contingency",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "September",
+              "present": true
+            },
+            {
+              "term": "fifteen percent",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 1204,
+        "costUsd": 0.0012850000000000001,
+        "error": null
+      },
+      {
+        "id": "contractor-decision",
+        "title": "Wait for Noor's revised quote",
+        "evaluation": {
+          "wordCount": 6,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "Noor",
+              "present": true
+            },
+            {
+              "term": "quote",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 1471,
+        "costUsd": 0.0013000000000000002,
+        "error": null
+      },
+      {
+        "id": "subscription-renewal",
+        "title": "No November renewal before export",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "November",
+              "present": true
+            },
+            {
+              "term": "analytics",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 5713,
+        "costUsd": 0.00472,
+        "error": null
+      },
+      {
+        "id": "anniversary-plan",
+        "title": "Quiet tenth anniversary coastal weekend",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "anniversary",
+              "present": true
+            },
+            {
+              "term": "coast",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": false
+        },
+        "durationMs": 7203,
+        "costUsd": 0.005475000000000001,
+        "error": null
+      },
+      {
+        "id": "team-api-decision",
+        "title": "No queue seven MCP tools",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "seven",
+              "present": true
+            },
+            {
+              "term": "MCP",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 7835,
+        "costUsd": 0.00424,
+        "error": null
+      },
+      {
+        "id": "client-feedback",
+        "title": "Sofia Preserve Warm Colors Clarify Navigation",
+        "evaluation": {
+          "wordCount": 6,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "Sofia",
+              "present": true
+            },
+            {
+              "term": "navigation",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": false
+        },
+        "durationMs": 1439,
+        "costUsd": 0.00135,
+        "error": null
+      },
+      {
+        "id": "reading-stack",
+        "title": "Autumn Reading Stack No Additions",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "autumn",
+              "present": true
+            },
+            {
+              "term": "reading",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 1238,
+        "costUsd": 0.001345,
+        "error": null
+      },
+      {
+        "id": "rainwater-plan",
+        "title": "Measure weekly greenhouse water use",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "rainwater",
+              "present": false
+            },
+            {
+              "term": "greenhouse",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 3944,
+        "costUsd": 0.001315,
+        "error": null
+      },
+      {
+        "id": "photo-archive",
+        "title": "Archive 2019 photos after backup verification",
+        "evaluation": {
+          "wordCount": 6,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "2019",
+              "present": true
+            },
+            {
+              "term": "photographs",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 3729,
+        "costUsd": 0.00135,
+        "error": null
+      },
+      {
+        "id": "tax-documents",
+        "title": "Gather 2025 Dutch tax documents",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "2025",
+              "present": true
+            },
+            {
+              "term": "Elise",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 1400,
+        "costUsd": 0.001335,
+        "error": null
+      },
+      {
+        "id": "cancelled-lisbon",
+        "title": "Lisbon trip cancelled conference online",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Lisbon",
+              "present": true
+            },
+            {
+              "term": "cancelled",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 3695,
+        "costUsd": 0.001325,
+        "error": null
+      },
+      {
+        "id": "october-workshop",
+        "title": "Host accessibility workshop October 6 conditionally",
+        "evaluation": {
+          "wordCount": 6,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "October 6",
+              "present": true
+            },
+            {
+              "term": "accessibility",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 1458,
+        "costUsd": 0.001335,
+        "error": null
+      },
+      {
+        "id": "collection-question",
+        "title": "Keep Project Notes Flat Collections",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "flat collections",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": false
+        },
+        "durationMs": 1372,
+        "costUsd": 0.0013,
+        "error": null
+      },
+      {
+        "id": "weekly-reflection",
+        "title": "Protected Mornings Enabled Deliberate Productivity",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "mornings",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 1280,
+        "costUsd": 0.0013400000000000003,
+        "error": null
+      },
+      {
+        "id": "proposal-scope",
+        "title": "NO_TITLE",
+        "evaluation": {
+          "wordCount": 2,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "August",
+              "present": false
+            },
+            {
+              "term": "timeline",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 4898,
+        "costUsd": 0.004145,
+        "error": null
+      },
+      {
+        "id": "recovery-codes",
+        "title": "Store Recovery Codes Safely",
+        "evaluation": {
+          "wordCount": 4,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "recovery codes",
+              "present": true
+            },
+            {
+              "term": "safe",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": false
+        },
+        "durationMs": 1558,
+        "costUsd": 0.00129,
+        "error": null
+      },
+      {
+        "id": "kitchen-layout",
+        "title": "Move kitchen island toward window",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "thirty",
+              "present": false
+            },
+            {
+              "term": "window",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 1203,
+        "costUsd": 0.001295,
+        "error": null
+      },
+      {
+        "id": "bicycle-brakes",
+        "title": "Replace rear pads before Ardennes",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "brake",
+              "present": false
+            },
+            {
+              "term": "Ardennes",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 1653,
+        "costUsd": 0.00133,
+        "error": null
+      },
+      {
+        "id": "garden-shade",
+        "title": "Track actual sun for week",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "herbs",
+              "present": false
+            },
+            {
+              "term": "northern",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 3462,
+        "costUsd": 0.003215,
+        "error": null
+      },
+      {
+        "id": "dutch-course",
+        "title": "Ask moving Dutch course Thursday",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Dutch",
+              "present": true
+            },
+            {
+              "term": "Thursday",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 1245,
+        "costUsd": 0.001295,
+        "error": null
+      },
+      {
+        "id": "dog-sitter",
+        "title": "NO_TITLE",
+        "evaluation": {
+          "wordCount": 2,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "Jamal",
+              "present": false
+            },
+            {
+              "term": "Miso",
+              "present": false
+            },
+            {
+              "term": "December 23",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 3784,
+        "costUsd": 0.0031200000000000004,
+        "error": null
+      },
+      {
+        "id": "travel-insurance",
+        "title": "Check rail strike connection coverage",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "rail strikes",
+              "present": false
+            },
+            {
+              "term": "insurance",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 1488,
+        "costUsd": 0.00128,
+        "error": null
+      },
+      {
+        "id": "weekend-boundary",
+        "title": "Sunday Planning Waits Until Monday",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Sunday",
+              "present": true
+            },
+            {
+              "term": "Monday",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": false
+        },
+        "durationMs": 2182,
+        "costUsd": 0.0013000000000000002,
+        "error": null
+      },
+      {
+        "id": "piano-recording",
+        "title": "Record piano arrangement before adding layers",
+        "evaluation": {
+          "wordCount": 6,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "piano",
+              "present": true
+            },
+            {
+              "term": "live",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 1593,
+        "costUsd": 0.00132,
+        "error": null
+      },
+      {
+        "id": "headache-pattern",
+        "title": "Track headaches with late lunch",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "headaches",
+              "present": true
+            },
+            {
+              "term": "pattern",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 1326,
+        "costUsd": 0.001325,
+        "error": null
+      },
+      {
+        "id": "lease-review",
+        "title": "Review lease clause fourteen before signing",
+        "evaluation": {
+          "wordCount": 6,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "clause fourteen",
+              "present": true
+            },
+            {
+              "term": "lease",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": false
+        },
+        "durationMs": 1217,
+        "costUsd": 0.001315,
+        "error": null
+      },
+      {
+        "id": "roof-repair",
+        "title": "Photograph attic leak after heavy rain",
+        "evaluation": {
+          "wordCount": 6,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "attic",
+              "present": true
+            },
+            {
+              "term": "rain",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 1543,
+        "costUsd": 0.00134,
+        "error": null
+      },
+      {
+        "id": "backup-restore",
+        "title": "Schedule restore drill before cutover",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "restore",
+              "present": true
+            },
+            {
+              "term": "Journal",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 1541,
+        "costUsd": 0.0013000000000000002,
+        "error": null
+      },
+      {
+        "id": "screen-reader",
+        "title": "Test VoiceOver activity flow iPhone",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "VoiceOver",
+              "present": true
+            },
+            {
+              "term": "iPhone",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": false
+        },
+        "durationMs": 1175,
+        "costUsd": 0.00133,
+        "error": null
+      },
+      {
+        "id": "provider-privacy",
+        "title": "Owner enables external preview retention",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Journal",
+              "present": false
+            },
+            {
+              "term": "external model",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 4324,
+        "costUsd": 0.0035150000000000003,
+        "error": null
+      },
+      {
+        "id": "soup-recipe",
+        "title": "NO_TITLE",
+        "evaluation": {
+          "wordCount": 2,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "lentil",
+              "present": false
+            },
+            {
+              "term": "lemon",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 10174,
+        "costUsd": 0.00727,
+        "error": null
+      },
+      {
+        "id": "camera-lens",
+        "title": "Borrow Nina's lens before buying",
+        "evaluation": {
+          "wordCount": 6,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "Nina",
+              "present": true
+            },
+            {
+              "term": "35mm",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 2111,
+        "costUsd": 0.00132,
+        "error": null
+      },
+      {
+        "id": "board-presentation",
+        "title": "Lead With Customer Outcome",
+        "evaluation": {
+          "wordCount": 4,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "customer",
+              "present": true
+            },
+            {
+              "term": "architecture",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 1373,
+        "costUsd": 0.0012700000000000003,
+        "error": null
+      },
+      {
+        "id": "sleep-experiment",
+        "title": "Continue experiment through September 1",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "September 1",
+              "present": true
+            },
+            {
+              "term": "phone",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 1815,
+        "costUsd": 0.001315,
+        "error": null
+      },
+      {
+        "id": "volunteer-shift",
+        "title": "Swap August 18 shift Priya",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "August 18",
+              "present": true
+            },
+            {
+              "term": "Priya",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 1263,
+        "costUsd": 0.00132,
+        "error": null
+      },
+      {
+        "id": "research-workshop",
+        "title": "Design workshop around three decisions",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "three",
+              "present": true
+            },
+            {
+              "term": "decisions",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 1075,
+        "costUsd": 0.0012850000000000001,
+        "error": null
+      },
+      {
+        "id": "migration-lineage",
+        "title": "Link migrated task source destination",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "source",
+              "present": true
+            },
+            {
+              "term": "destination",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": false
+        },
+        "durationMs": 1267,
+        "costUsd": 0.001295,
+        "error": null
+      },
+      {
+        "id": "family-call",
+        "title": "Call Dad Saturday listen first",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "Dad",
+              "present": true
+            },
+            {
+              "term": "Saturday",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": false
+        },
+        "durationMs": 2434,
+        "costUsd": 0.001305,
+        "error": null
+      },
+      {
+        "id": "cancel-gym",
+        "title": "Cancel gym membership before September 30",
+        "evaluation": {
+          "wordCount": 6,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "September 30",
+              "present": true
+            },
+            {
+              "term": "gym",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 1228,
+        "costUsd": 0.00132,
+        "error": null
+      },
+      {
+        "id": "house-search",
+        "title": "Pause house search pending financing comparison",
+        "evaluation": {
+          "wordCount": 6,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "house",
+              "present": true
+            },
+            {
+              "term": "financing",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 1677,
+        "costUsd": 0.0013000000000000002,
+        "error": null
+      },
+      {
+        "id": "emergency-fund",
+        "title": "Compare Emergency Fund Opportunity Cost",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "twelve months",
+              "present": false
+            },
+            {
+              "term": "emergency fund",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 1481,
+        "costUsd": 0.0012850000000000001,
+        "error": null
+      },
+      {
+        "id": "reading-notes",
+        "title": "Do not overcomplicate chapter summaries",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "paragraph",
+              "present": false
+            },
+            {
+              "term": "recall",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": true
+        },
+        "durationMs": 3567,
+        "costUsd": 0.00302,
+        "error": null
+      },
+      {
+        "id": "short-film",
+        "title": "Finish six-minute empty station story",
+        "evaluation": {
+          "wordCount": 6,
+          "validLength": false,
+          "preserve": [
+            {
+              "term": "six-minute",
+              "present": true
+            },
+            {
+              "term": "station",
+              "present": true
+            }
+          ],
+          "preservesAllRequiredTerms": true,
+          "preservesNegation": true
+        },
+        "durationMs": 4153,
+        "costUsd": 0.0028650000000000004,
+        "error": null
+      },
+      {
+        "id": "no-rush-decision",
+        "title": "Ask Reporting Structure Before Deciding",
+        "evaluation": {
+          "wordCount": 5,
+          "validLength": true,
+          "preserve": [
+            {
+              "term": "new role",
+              "present": false
+            },
+            {
+              "term": "travel",
+              "present": false
+            }
+          ],
+          "preservesAllRequiredTerms": false,
+          "preservesNegation": false
+        },
+        "durationMs": 1579,
+        "costUsd": 0.00132,
+        "error": null
+      }
+    ]
+  }
+}

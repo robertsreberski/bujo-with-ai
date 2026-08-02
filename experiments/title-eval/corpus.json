@@ -1,0 +1,352 @@
+[
+  {
+    "id": "garden-timber",
+    "kind": "note",
+    "text": "Need to measure the eastern garden bed before ordering timber because the earlier dimensions were wrong. I do not want to repeat that mistake when planning the August work.",
+    "preserve": ["eastern", "timber"],
+    "negation": true
+  },
+  {
+    "id": "marieke-email",
+    "kind": "note",
+    "text": "Do not email Marieke before August 12 because she is still collecting the final figures. The draft can be prepared now, but sending it early would create confusion.",
+    "preserve": ["Marieke", "August 12"],
+    "negation": true
+  },
+  {
+    "id": "passport-copy",
+    "kind": "idea",
+    "text": "Keep Robert's passport copy in the encrypted travel folder rather than the shared documents directory. The copy is for the October Japan booking and should remain private.",
+    "preserve": ["passport", "Japan"],
+    "negation": false
+  },
+  {
+    "id": "never-cancel-friday",
+    "kind": "reflection",
+    "text": "Never cancel the Friday focus block merely because the inbox looks busy. The last three weeks showed that protecting that time is what keeps the important project moving.",
+    "preserve": ["Friday", "focus"],
+    "negation": true
+  },
+  {
+    "id": "amsterdam-train",
+    "kind": "note",
+    "text": "Compare the Amsterdam to Berlin night train with the morning flight before booking. The train is slower but may preserve an entire useful workday and avoid an airport hotel.",
+    "preserve": ["Amsterdam", "Berlin"],
+    "negation": false
+  },
+  {
+    "id": "luna-terra",
+    "kind": "question",
+    "text": "Does Luna produce faithful short journal titles often enough to justify using it instead of Terra? The decision must consider privacy, latency, cost, and lost negation rather than style alone.",
+    "preserve": ["Luna", "Terra"],
+    "negation": false
+  },
+  {
+    "id": "september-budget",
+    "kind": "note",
+    "text": "The September renovation budget should reserve an extra fifteen percent for electrical work. The first estimate omitted the upstairs sockets and therefore looks artificially low.",
+    "preserve": ["September", "fifteen percent"],
+    "negation": false
+  },
+  {
+    "id": "contractor-decision",
+    "kind": "reflection",
+    "text": "Wait for Noor's revised contractor quote before choosing a builder. The cheaper proposal is not actually comparable because it excludes painting and disposal costs.",
+    "preserve": ["Noor", "quote"],
+    "negation": true
+  },
+  {
+    "id": "subscription-renewal",
+    "kind": "note",
+    "text": "Do not renew the analytics subscription in November unless the export feature is complete. We have paid for six months without being able to retrieve the historical data.",
+    "preserve": ["November", "analytics"],
+    "negation": true
+  },
+  {
+    "id": "anniversary-plan",
+    "kind": "idea",
+    "text": "Plan a quiet tenth-anniversary weekend near the coast instead of a large party. A long walk, one excellent dinner, and no complicated travel would feel more like us.",
+    "preserve": ["anniversary", "coast"],
+    "negation": true
+  },
+  {
+    "id": "team-api-decision",
+    "kind": "reflection",
+    "text": "The team agreed to keep the existing seven MCP tools and add no proposal queue. Agent writes should remain immediate, revision-safe, attributed, and reversible.",
+    "preserve": ["seven", "MCP"],
+    "negation": true
+  },
+  {
+    "id": "client-feedback",
+    "kind": "note",
+    "text": "Sofia's feedback was mainly about navigation clarity, not the visual palette. The next prototype should preserve the warm colors while making the active section unmistakable.",
+    "preserve": ["Sofia", "navigation"],
+    "negation": true
+  },
+  {
+    "id": "reading-stack",
+    "kind": "idea",
+    "text": "Create a small reading stack for autumn with one history book, one novel, and one practical design book. Do not add anything else until one of those is finished.",
+    "preserve": ["autumn", "reading"],
+    "negation": true
+  },
+  {
+    "id": "rainwater-plan",
+    "kind": "question",
+    "text": "Would a two-hundred-litre rainwater barrel cover the greenhouse through a normal July? Measure weekly use first so the purchase is based on evidence rather than enthusiasm.",
+    "preserve": ["rainwater", "greenhouse"],
+    "negation": false
+  },
+  {
+    "id": "photo-archive",
+    "kind": "note",
+    "text": "Move the 2019 family photographs into the dated archive after checking that both backups are complete. Do not delete the camera originals until the checksums match.",
+    "preserve": ["2019", "photographs"],
+    "negation": true
+  },
+  {
+    "id": "tax-documents",
+    "kind": "note",
+    "text": "Gather the 2025 Dutch tax documents before the appointment with Elise. The missing pension statement is the only item that cannot be downloaded from the usual portal.",
+    "preserve": ["2025", "Elise"],
+    "negation": true
+  },
+  {
+    "id": "cancelled-lisbon",
+    "kind": "reflection",
+    "text": "The Lisbon trip was cancelled because the conference moved online, not because we lost interest. Keep the itinerary for spring and ask whether the hotel credit can be extended.",
+    "preserve": ["Lisbon", "cancelled"],
+    "negation": true
+  },
+  {
+    "id": "october-workshop",
+    "kind": "idea",
+    "text": "Host the accessibility workshop on October 6 if the library room is available. Cap attendance at twenty people so everyone can test the exercises directly.",
+    "preserve": ["October 6", "accessibility"],
+    "negation": false
+  },
+  {
+    "id": "collection-question",
+    "kind": "question",
+    "text": "Should project notes stay in flat collections or move into nested folders? The journal is easier to maintain now, and no concrete retrieval problem requires hierarchy yet.",
+    "preserve": ["flat collections"],
+    "negation": true
+  },
+  {
+    "id": "weekly-reflection",
+    "kind": "reflection",
+    "text": "This week felt productive because I finished fewer things but chose them deliberately. The strongest change was protecting mornings from reactive messages and meetings.",
+    "preserve": ["mornings"],
+    "negation": false
+  },
+  {
+    "id": "proposal-scope",
+    "kind": "note",
+    "text": "Keep the August proposal focused on the timeline and recovery experience. Search redesign can follow later and should not delay the first useful release.",
+    "preserve": ["August", "timeline"],
+    "negation": true
+  },
+  {
+    "id": "recovery-codes",
+    "kind": "note",
+    "text": "Print the account recovery codes and place them in the home safe after confirming the new login works. Never store the only copy beside the laptop.",
+    "preserve": ["recovery codes", "safe"],
+    "negation": true
+  },
+  {
+    "id": "kitchen-layout",
+    "kind": "idea",
+    "text": "Move the kitchen island thirty centimetres toward the window before approving the final drawing. That leaves enough clearance for two people without narrowing the pantry door.",
+    "preserve": ["thirty", "window"],
+    "negation": false
+  },
+  {
+    "id": "bicycle-brakes",
+    "kind": "note",
+    "text": "Replace the rear bicycle brake pads before the Ardennes weekend even though they still work in dry weather. The long descents make waiting another month a poor tradeoff.",
+    "preserve": ["brake", "Ardennes"],
+    "negation": false
+  },
+  {
+    "id": "garden-shade",
+    "kind": "question",
+    "text": "Which herbs will tolerate the shaded northern planter after the tree fills out? Track actual sun for one week before buying plants labelled merely as partial shade.",
+    "preserve": ["herbs", "northern"],
+    "negation": false
+  },
+  {
+    "id": "dutch-course",
+    "kind": "reflection",
+    "text": "The Dutch evening course is useful, but Tuesday sessions are making the work week too fragmented. Ask about moving to Thursday before deciding to stop entirely.",
+    "preserve": ["Dutch", "Thursday"],
+    "negation": false
+  },
+  {
+    "id": "dog-sitter",
+    "kind": "note",
+    "text": "Confirm with Jamal that he can watch Miso from December 23 through December 27. Do not book the train until those exact dates are settled.",
+    "preserve": ["Jamal", "Miso", "December 23"],
+    "negation": true
+  },
+  {
+    "id": "travel-insurance",
+    "kind": "question",
+    "text": "Check whether the annual travel policy covers missed connections caused by rail strikes. The wording mentions delays but does not clearly include replacement accommodation.",
+    "preserve": ["rail strikes", "insurance"],
+    "negation": true
+  },
+  {
+    "id": "weekend-boundary",
+    "kind": "reflection",
+    "text": "Stop treating Sunday evening as an unofficial work session. Preparing three priorities is enough; the rest of the planning can wait until Monday morning.",
+    "preserve": ["Sunday", "Monday"],
+    "negation": true
+  },
+  {
+    "id": "piano-recording",
+    "kind": "idea",
+    "text": "Record the new piano arrangement as a simple live take before adding more layers. The melody is strong, and production experiments should not hide whether the performance works.",
+    "preserve": ["piano", "live"],
+    "negation": true
+  },
+  {
+    "id": "headache-pattern",
+    "kind": "reflection",
+    "text": "The afternoon headaches appeared on the three days when lunch was late and water intake was low. This is only a pattern to track, not a diagnosis or reason to change medication.",
+    "preserve": ["headaches", "pattern"],
+    "negation": true
+  },
+  {
+    "id": "lease-review",
+    "kind": "note",
+    "text": "Ask the adviser to review clause fourteen of the lease before signing. The repair obligation seems broader than what was discussed and should not be accepted by assumption.",
+    "preserve": ["clause fourteen", "lease"],
+    "negation": true
+  },
+  {
+    "id": "roof-repair",
+    "kind": "note",
+    "text": "Photograph the damp patch above the attic window after the next heavy rain. The roofer needs evidence of where water enters rather than another description of the stain.",
+    "preserve": ["attic", "rain"],
+    "negation": false
+  },
+  {
+    "id": "backup-restore",
+    "kind": "reflection",
+    "text": "The backup is not proven until a clean restore succeeds on another directory. Schedule that drill before calling the Journal release ready for cutover.",
+    "preserve": ["restore", "Journal"],
+    "negation": true
+  },
+  {
+    "id": "screen-reader",
+    "kind": "question",
+    "text": "Can a VoiceOver user understand which agent changed an entry without opening raw audit details? Test the complete activity flow on a real iPhone before release.",
+    "preserve": ["VoiceOver", "iPhone"],
+    "negation": true
+  },
+  {
+    "id": "provider-privacy",
+    "kind": "note",
+    "text": "Journal text must not reach an external model unless the owner explicitly enables generated previews. The setting also needs to explain local artifact retention.",
+    "preserve": ["Journal", "external model"],
+    "negation": true
+  },
+  {
+    "id": "soup-recipe",
+    "kind": "idea",
+    "text": "Make the lentil soup again with half the smoked paprika and more lemon at the end. The first batch was good but the smoke overwhelmed the vegetables.",
+    "preserve": ["lentil", "lemon"],
+    "negation": false
+  },
+  {
+    "id": "camera-lens",
+    "kind": "question",
+    "text": "Borrow Nina's 35mm lens for one weekend before buying a similar one. Most photographs may still work better with the lighter lens already in the bag.",
+    "preserve": ["Nina", "35mm"],
+    "negation": false
+  },
+  {
+    "id": "board-presentation",
+    "kind": "note",
+    "text": "Open the board presentation with the customer outcome rather than the architecture diagram. The technical detail belongs in the appendix unless someone asks for it.",
+    "preserve": ["customer", "architecture"],
+    "negation": false
+  },
+  {
+    "id": "sleep-experiment",
+    "kind": "reflection",
+    "text": "Going to bed thirty minutes earlier improved mornings, but only when the phone stayed outside the bedroom. Continue the experiment through September 1 before drawing conclusions.",
+    "preserve": ["September 1", "phone"],
+    "negation": false
+  },
+  {
+    "id": "volunteer-shift",
+    "kind": "note",
+    "text": "Swap the August 18 volunteer shift with Priya because of the dentist appointment. Confirm the exchange in writing so neither of us appears absent.",
+    "preserve": ["August 18", "Priya"],
+    "negation": false
+  },
+  {
+    "id": "research-workshop",
+    "kind": "idea",
+    "text": "Design the research workshop around three real decisions instead of a long presentation. Participants should leave with tested assumptions, owners, and next actions.",
+    "preserve": ["three", "decisions"],
+    "negation": false
+  },
+  {
+    "id": "migration-lineage",
+    "kind": "reflection",
+    "text": "A migrated task currently looks like two unrelated duplicate entries. The source and destination need a visible lineage link without changing the underlying BuJo copy behavior.",
+    "preserve": ["source", "destination"],
+    "negation": true
+  },
+  {
+    "id": "family-call",
+    "kind": "note",
+    "text": "Call Dad on Saturday afternoon to hear how the scan went, but do not turn the conversation into advice. Listen first and ask what support would actually help.",
+    "preserve": ["Dad", "Saturday"],
+    "negation": true
+  },
+  {
+    "id": "cancel-gym",
+    "kind": "note",
+    "text": "Cancel the old gym membership before September 30 and keep the confirmation email. Do not assume the direct debit stops merely because the card expired.",
+    "preserve": ["September 30", "gym"],
+    "negation": true
+  },
+  {
+    "id": "house-search",
+    "kind": "reflection",
+    "text": "Pause the house search until the financing comparison is complete. Visiting more properties will not clarify the decision while the real monthly cost remains uncertain.",
+    "preserve": ["house", "financing"],
+    "negation": true
+  },
+  {
+    "id": "emergency-fund",
+    "kind": "question",
+    "text": "Should the emergency fund remain at twelve months while income is variable? Compare the security it provides with the opportunity cost before moving any money.",
+    "preserve": ["twelve months", "emergency fund"],
+    "negation": false
+  },
+  {
+    "id": "reading-notes",
+    "kind": "reflection",
+    "text": "Writing one paragraph after each chapter is improving recall more than highlighting. Keep the practice simple and do not build another elaborate note-taking system around it.",
+    "preserve": ["paragraph", "recall"],
+    "negation": true
+  },
+  {
+    "id": "short-film",
+    "kind": "idea",
+    "text": "Finish the short film as a six-minute story about the empty station. Adding the second character would require new locations and weaken the quiet ending.",
+    "preserve": ["six-minute", "station"],
+    "negation": false
+  },
+  {
+    "id": "no-rush-decision",
+    "kind": "reflection",
+    "text": "There is no need to choose the new role this week. Ask for the reporting structure and travel expectations first, then decide from concrete information rather than urgency.",
+    "preserve": ["new role", "travel"],
+    "negation": true
+  }
+]
