@@ -283,21 +283,17 @@ export function EntryRow({
               </Badge>
             ) : null}
             {showAi ? (
-              <Badge
-                variant="ai"
-                className="badge badge--ai"
-                title="Added by assistant"
-                aria-label="Added by assistant"
-              >
+              <Badge variant="ai" className="badge badge--ai" title="Added by assistant">
                 <Icon name="sparkle" size={10} />
+                <span className="sr-only">Added by assistant</span>
               </Badge>
             ) : null}
             {agentTouch ? (
               <span
                 className="entry-row__agent-touch flex min-w-0 max-w-full items-center gap-1 text-tag text-ai-fg"
                 title={agentTouch.reason ?? undefined}
-                aria-label={`Latest agent change: ${agentTouch.actor.label} ${actionPhrase(agentTouch.action)}${agentTouch.reason ? ` — ${agentTouch.reason}` : ''}`}
               >
+                <span className="sr-only">Latest agent change: </span>
                 <Icon name="sparkle" size={10} />
                 <span className="overflow-hidden text-ellipsis whitespace-nowrap">
                   {agentTouch.actor.label} {actionPhrase(agentTouch.action)}

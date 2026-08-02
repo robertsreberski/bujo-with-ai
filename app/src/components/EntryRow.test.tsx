@@ -251,8 +251,12 @@ describe('EntryRow', () => {
       />,
     );
 
-    expect(
-      screen.getByLabelText('Latest agent change: Mira updated — Clarified the next action.'),
-    ).toHaveTextContent('Mira updated · Clarified the next action.');
+    const touch = screen
+      .getByText('Mira updated · Clarified the next action.', { exact: true })
+      .closest('.entry-row__agent-touch');
+    expect(touch).toHaveTextContent(
+      'Latest agent change: Mira updated · Clarified the next action.',
+    );
+    expect(touch).not.toHaveAttribute('aria-label');
   });
 });
