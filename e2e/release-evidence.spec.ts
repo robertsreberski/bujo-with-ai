@@ -942,9 +942,19 @@ test('the weekly Summary card saves an assistant note before requesting a rewrit
     }),
   );
 
-  await summaryCard.getByRole('button', { name: 'Rewrite', exact: true }).click();
+  const [rewriteResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname === '/api/summary/latest/rewrite',
+    ),
+    summaryCard.getByRole('button', { name: 'Rewrite', exact: true }).click(),
+  ]);
+  expect(rewriteResponse.status()).toBe(200);
+  await expect(
+    summaryCard.locator('header').getByText('rewrite requested', { exact: true }),
+  ).toBeVisible();
   await expect(summaryCard.getByRole('button', { name: 'Rewrite requested' })).toBeDisabled();
-  await expect(page.getByRole('status').filter({ hasText: 'Rewrite requested' })).toBeVisible();
   await expect.poll(async () => (await getLatestSummary(context, month))?.status).toBe('stale');
   expect(await getLatestSummary(context, month)).toMatchObject({
     id: created.id,
