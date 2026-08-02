@@ -39,6 +39,7 @@ import {
   selectActiveCollections,
   selectHasUnseenActivity,
   selectJournalStatus,
+  selectLatestAgentTouches,
   selectTimelineEntries,
   selectUnseenActivityIds,
   useJournalStore,
@@ -102,6 +103,7 @@ export default function App() {
       store.activityOrder.flatMap((id) => (store.activityById[id] ? [store.activityById[id]] : [])),
     [store.activityById, store.activityOrder],
   );
+  const latestAgentTouches = useMemo(() => selectLatestAgentTouches(store), [store]);
   const reflections = useMemo(
     () =>
       Object.values(store.reflectionsByWeek)
@@ -549,6 +551,7 @@ export default function App() {
             }
             collectionsById={store.collectionsById}
             entriesById={store.entriesById}
+            latestAgentTouches={latestAgentTouches}
             reflections={reflections}
             today={store.today}
             selectedDate={route.date}

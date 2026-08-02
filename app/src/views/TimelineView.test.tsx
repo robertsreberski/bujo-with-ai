@@ -36,6 +36,7 @@ const props = {
   preferences: { density: 'comfortable' as const, showTypeBadges: true, highlightAiEntries: true },
   reflections: [],
   entriesById: { [entry.id]: entry },
+  latestAgentTouches: {},
   online: true,
   timezone: 'Europe/Amsterdam',
   onOpenEntry: vi.fn(),

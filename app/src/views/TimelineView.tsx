@@ -6,7 +6,7 @@ import { Button } from '../components/ui/button';
 import { formatLongDate } from '../components/dates';
 import { destinationLabel } from '../components/destination';
 import type { DisplayPreferences, JournalCollection, JournalEntry } from '../components/types';
-import type { Entry, Reflection } from '../api/types';
+import type { AgentTouch, Entry, Reflection } from '../api/types';
 
 interface TimelineViewProps {
   entries: JournalEntry[];
@@ -19,6 +19,7 @@ interface TimelineViewProps {
   preferences: DisplayPreferences;
   reflections: Reflection[];
   entriesById: Record<string, Entry>;
+  latestAgentTouches: Record<string, AgentTouch>;
   online: boolean;
   timezone: string;
   onOpenEntry: (entry: JournalEntry) => void;
@@ -58,6 +59,7 @@ export function TimelineView({
   preferences,
   reflections,
   entriesById,
+  latestAgentTouches,
   online,
   timezone,
   onOpenEntry,
@@ -281,6 +283,7 @@ export function TimelineView({
                               today,
                             )
                       }
+                      agentTouch={latestAgentTouches[entry.id]}
                       onOpen={onOpenEntry}
                       onToggle={onToggleEntry}
                       key={entry.id}
