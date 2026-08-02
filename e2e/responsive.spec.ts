@@ -69,19 +69,20 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
   }
 
   /*
-   * DS-14 control heights. The phone projects are the coarse-pointer ones, so
-   * they are the only place the 44px primary-target minimum applies; the pointer-precise
-   * layouts use the tighter desk metrics — 34px sidebar nav rows on the wide
-   * layout, 30px tab segments on the mid layout, and a 36px composer trio.
+   * DS-14 control heights. Every touch project, including the tablet layout,
+   * pays the 44px primary-target minimum. Pointer-precise layouts retain the
+   * tighter desk metrics: 34px sidebar rows, 30px mid-layout tab segments, and
+   * a 36px composer trio.
    */
   const isNarrow = testInfo.project.name === 'chromium-narrow';
+  const isTouch = testInfo.project.use.hasTouch === true;
   const isPhone =
     isNarrow ||
     testInfo.project.name === 'chromium-short' ||
     testInfo.project.name === 'chromium-landscape' ||
     testInfo.project.name === 'webkit-iphone';
-  const primaryMinimum = isPhone ? 44 : testInfo.project.name === 'chromium-desktop' ? 34 : 30;
-  const composerMinimum = isPhone ? 44 : 36;
+  const primaryMinimum = isTouch ? 44 : testInfo.project.name === 'chromium-desktop' ? 34 : 30;
+  const composerMinimum = isTouch ? 44 : 36;
 
   // The untouched composer is one row. Focusing it restores the full capture
   // grammar without changing the owner's draft or filing path.
@@ -116,6 +117,7 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
     await page.setViewportSize({ width: 320, height: 700 });
     await page.getByRole('button', { name: 'Month', exact: true }).click();
     const dayButtons = page.locator('.calendar-day');
+    await expect(dayButtons.first()).toBeVisible();
     const dayCount = await dayButtons.count();
     expect(dayCount).toBeGreaterThanOrEqual(28);
     expect(dayCount).toBeLessThanOrEqual(31);

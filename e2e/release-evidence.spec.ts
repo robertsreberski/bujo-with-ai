@@ -695,7 +695,7 @@ test('entry detail supports a full edit followed by legal move, file, and delete
   expect(liveMatches.some((item) => item.id === entry.id)).toBe(false);
 });
 
-test('authoritative text, exact tags, and all three saved views return the intended entries', async ({
+test('authoritative text, conjunctive exact tags, and all three saved views return intended entries', async ({
   baseURL,
   context,
   page,
@@ -761,6 +761,21 @@ test('authoritative text, exact tags, and all three saved views return the inten
   );
   await expect(results.locator(`[data-entry-id="${authoritative.id}"]`)).toBeVisible();
   await expect(results).toHaveAttribute('aria-busy', 'false');
+  await expect(results.locator(`[data-entry-id="${distractor.id}"]`)).toHaveCount(0);
+
+  const conjunctiveQuery = `${textQuery} #work`;
+  const conjunctiveResponse = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === '/api/entries' && url.searchParams.get('q') === conjunctiveQuery;
+  });
+  await searchInput.fill(conjunctiveQuery);
+  const conjunctiveDocument = (await (await conjunctiveResponse).json()) as {
+    items?: EntryEvidence[];
+  };
+  expect(conjunctiveDocument.items?.map((entry) => entry.id)).toEqual([authoritative.id]);
+  await expect(results).toHaveAttribute('aria-busy', 'false');
+  await expect(results.locator('[data-entry-id]')).toHaveCount(1);
+  await expect(results.locator(`[data-entry-id="${authoritative.id}"]`)).toBeVisible();
   await expect(results.locator(`[data-entry-id="${distractor.id}"]`)).toHaveCount(0);
 
   const exactTagResponse = page.waitForResponse((response) => {

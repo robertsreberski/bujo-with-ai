@@ -21,6 +21,11 @@ interface ServerContext {
   timezone: string;
 }
 
+interface PersistedActivityAcknowledgement {
+  cursor: { at: string; id: string } | null;
+  seenIds: string[];
+}
+
 /**
  * The Playwright server is shared by every spec, so its database carries the
  * other tests' rows. Seeds therefore establish *relative* facts (one more open
@@ -87,10 +92,12 @@ function humanizeSlug(slug: string): string {
 }
 
 /** Reads the exact persisted acknowledgement straight out of IndexedDB. */
-async function persistedActivityAcknowledgement(page: Page): Promise<string | null> {
+async function persistedActivityAcknowledgement(
+  page: Page,
+): Promise<PersistedActivityAcknowledgement | null> {
   return page.evaluate(
     () =>
-      new Promise<string | null>((resolve) => {
+      new Promise<PersistedActivityAcknowledgement | null>((resolve) => {
         const request = indexedDB.open('journal-pwa');
         request.onerror = () => resolve(null);
         request.onsuccess = () => {
@@ -118,10 +125,10 @@ async function persistedActivityAcknowledgement(page: Page): Promise<string | nu
             database.close();
             resolve(
               record
-                ? JSON.stringify({
+                ? {
                     cursor: record.activitySeenThrough ?? null,
                     seenIds: [...(record.seenActivityIds ?? [])].sort(),
-                  })
+                  }
                 : null,
             );
           };
@@ -353,14 +360,14 @@ test('Timeline stays bounded and reveals older daily and collection entries expl
   await expect(page.locator('#journal-content')).toBeVisible();
 
   await expect(page.locator('.entry-row')).toHaveCount(100);
-  await expect(page.getByText(filedText, { exact: true })).toHaveCount(0);
-  await expect(page.getByText(dailyText, { exact: true })).toHaveCount(0);
+  const filedRow = page.locator('.entry-row').filter({ hasText: filedText });
+  const dailyRow = page.locator('.entry-row').filter({ hasText: dailyText });
+  await expect(filedRow).toHaveCount(0);
+  await expect(dailyRow).toHaveCount(0);
   await page.getByRole('button', { name: 'Earlier' }).click();
-  await expect(page.getByText(filedText, { exact: true })).toBeVisible();
-  await expect(page.getByText(dailyText, { exact: true })).toBeVisible();
-  await expect(
-    page.locator('.entry-row').filter({ hasText: filedText }).getByText(collectionName),
-  ).toBeVisible();
+  await expect(filedRow).toHaveCount(1);
+  await expect(dailyRow).toHaveCount(1);
+  await expect(filedRow.getByText(collectionName)).toBeVisible();
   expect(entryRequests).not.toContain('');
 });
 
@@ -859,14 +866,13 @@ test('every capture sigil opens its own completion panel', async ({ page }) => {
   await expect(panel).toBeHidden();
 });
 
-test('Timeline avoids a partial count while Activity uses a truthful unseen indicator', async ({
+test('Timeline avoids a partial count while visible Activity rows persist their acknowledgement', async ({
   baseURL,
   context,
   page,
 }) => {
   await pairAndBootstrap(context, baseURL);
   await openJournal(page);
-  const acknowledgementBefore = await persistedActivityAcknowledgement(page);
 
   // Timeline is cursor-bounded, so it must not imply a complete task total.
   await expect(page.getByRole('button', { name: 'Timeline', exact: true })).toBeVisible();
@@ -878,9 +884,10 @@ test('Timeline avoids a partial count while Activity uses a truthful unseen indi
     requestInit: { headers: { Authorization: `Bearer ${secret}` } },
   });
   const agentText = uniqueText('Badge agent addition');
+  let agentWrite: McpEntryWrite;
   try {
     await client.connect(transport as unknown as Transport);
-    mcpEntryWrite(
+    agentWrite = mcpEntryWrite(
       await client.callTool({
         name: 'add_entry',
         arguments: {
@@ -901,16 +908,74 @@ test('Timeline avoids a partial count while Activity uses a truthful unseen indi
   await page.getByRole('button', { name: /^Activity/ }).click();
   await expect(page.getByRole('region', { name: 'Activity history' })).toBeVisible();
   await expect(page.getByRole('article').filter({ hasText: agentText })).toBeVisible();
-  // A visible row is acknowledged locally; route opening alone is not the mark.
-  // The shared E2E database may have older unloaded rows, so deliberately use
-  // the explicit acknowledgement when the conservative signal remains.
+  await expect
+    .poll(async () => (await persistedActivityAcknowledgement(page))?.seenIds ?? [])
+    .toContain(agentWrite.activityId);
+
+  await page.reload();
+  await expect(page.locator('#journal-content')).toBeVisible();
+  await expect(page.getByRole('article').filter({ hasText: agentText })).toBeVisible();
+  await expect
+    .poll(async () => (await persistedActivityAcknowledgement(page))?.seenIds ?? [])
+    .toContain(agentWrite.activityId);
+});
+
+test('Mark all seen persists an Activity high-water mark independently of row visibility', async ({
+  baseURL,
+  context,
+  page,
+}) => {
+  await pairAndBootstrap(context, baseURL);
+  await openJournal(page);
+  const secret = await issueMcpSecret(page, uniqueText('Mark all agent'));
+  const client = new Client({ name: 'journal-mark-all-evidence', version: '1.0.0' });
+  const transport = new StreamableHTTPClientTransport(new URL('/mcp', baseURL), {
+    requestInit: { headers: { Authorization: `Bearer ${secret}` } },
+  });
+  const writes: McpEntryWrite[] = [];
+  try {
+    await client.connect(transport as unknown as Transport);
+    for (let index = 0; index < 12; index += 1) {
+      const text = uniqueText(`Mark all unseen ${index}`);
+      writes.push(
+        mcpEntryWrite(
+          await client.callTool({
+            name: 'add_entry',
+            arguments: {
+              idempotencyKey: ulid(),
+              source: 'Playwright explicit Mark all coverage',
+              text,
+              type: 'note',
+            },
+          }),
+          text,
+        ),
+      );
+    }
+  } finally {
+    await client.close();
+  }
+
+  await expect(page.getByRole('button', { name: 'Activity — unseen changes' })).toBeVisible();
+  await page.getByRole('button', { name: /^Activity/ }).click();
+  const activity = page.getByRole('region', { name: 'Activity history' });
+  await expect(activity).toBeVisible();
+  await expect(activity.locator(`[data-activity-id="${writes.at(-1)?.activityId}"]`)).toBeVisible();
   const markAllSeen = page.getByRole('button', { name: 'Mark all seen' });
-  if (await markAllSeen.isVisible()) await markAllSeen.click();
+  await expect(markAllSeen).toBeVisible();
+  await markAllSeen.click();
   await expect(page.getByRole('button', { name: 'Activity', exact: true })).toBeVisible();
-  await expect.poll(() => persistedActivityAcknowledgement(page)).not.toBe(acknowledgementBefore);
+  await expect
+    .poll(async () => persistedActivityAcknowledgement(page))
+    .toMatchObject({ cursor: { at: expect.any(String), id: expect.any(String) }, seenIds: [] });
+  const markedThrough = (await persistedActivityAcknowledgement(page))?.cursor;
+  expect(markedThrough).not.toBeNull();
 
   await page.reload();
   await expect(page.locator('#journal-content')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Activity', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Activity — unseen changes' })).toHaveCount(0);
+  await expect
+    .poll(async () => (await persistedActivityAcknowledgement(page))?.cursor)
+    .toEqual(markedThrough);
 });
