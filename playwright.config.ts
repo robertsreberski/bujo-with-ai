@@ -84,7 +84,7 @@ export default defineConfig({
     },
     {
       name: 'chromium-narrow',
-      testMatch: /(?:responsive|entry-sheet|accessibility-mobile)\.spec\.ts/,
+      testMatch: /(?:responsive|entry-sheet|accessibility-mobile|reflection-timeline)\.spec\.ts/,
       use: {
         browserName: 'chromium',
         hasTouch: true,
@@ -100,7 +100,7 @@ export default defineConfig({
      */
     {
       name: 'webkit-iphone',
-      testMatch: /(?:responsive|entry-sheet|keyboard-layout)\.spec\.ts/,
+      testMatch: /(?:responsive|entry-sheet|keyboard-layout|reflection-timeline)\.spec\.ts/,
       use: {
         browserName: 'webkit',
         deviceScaleFactor: 3,
