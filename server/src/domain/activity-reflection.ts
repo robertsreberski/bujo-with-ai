@@ -861,13 +861,51 @@ export class ActivityReflection {
       }
     }
     const tokenLabels = new Map<string, string>();
+    const summaryReflectionReverts = new Map<string, boolean>();
+    const summaryActivityIds = activities
+      .filter(
+        (activity) =>
+          activity.kind === 'summary-filed' &&
+          activity.postImages.some((snapshot) => snapshot.entity === 'summary'),
+      )
+      .map((activity) => activity.id);
+    if (summaryActivityIds.length > 0) {
+      const rows = this.db
+        .prepare(
+          `SELECT activity_id,reflection_id,post_state FROM summary_reflection_reverts
+           WHERE activity_id IN (SELECT value FROM json_each(?))`,
+        )
+        .all(JSON.stringify(summaryActivityIds)) as Array<{
+        activity_id: string;
+        reflection_id: string;
+        post_state: string;
+      }>;
+      for (const row of rows) {
+        try {
+          const expected = ReflectionSchema.parse(JSON.parse(row.post_state) as unknown);
+          const current = this.getReflection(row.reflection_id);
+          summaryReflectionReverts.set(
+            row.activity_id,
+            stableJson(current) === stableJson(expected),
+          );
+        } catch {
+          summaryReflectionReverts.set(row.activity_id, false);
+        }
+      }
+    }
 
     return activities.map((activity) => {
       let reason: 'already_reverted' | 'post_image_mismatch' | 'not_reversible' | null = null;
+      const hasSummarySnapshot =
+        activity.kind === 'summary-filed' &&
+        activity.postImages.some((snapshot) => snapshot.entity === 'summary');
       if (activity.revertedAt !== null) reason = 'already_reverted';
+      else if (hasSummarySnapshot && summaryReflectionReverts.get(activity.id) === false)
+        reason = 'post_image_mismatch';
       else if (
         activity.kind === 'revert' ||
         activity.postImages.length === 0 ||
+        (hasSummarySnapshot && !summaryReflectionReverts.has(activity.id)) ||
         activityContentExpired(activity.text)
       )
         reason = 'not_reversible';
