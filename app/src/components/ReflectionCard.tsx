@@ -74,7 +74,7 @@ function VersionProvenance({
             }
             return (
               <button
-                className="min-h-8 rounded-full border border-border px-2 text-left text-fg-mid hover:bg-bg-hover"
+                className="min-h-10 rounded-full border border-border px-2 text-left text-fg-mid hover:bg-bg-hover"
                 type="button"
                 key={source.id}
                 onClick={() => onOpenEntry(entry)}
@@ -172,7 +172,7 @@ export function ReflectionCard({
         ) : null}
         {reflection.versions.length > 0 ? (
           <details className="mt-3 border-t border-ai-border pt-2">
-            <summary className="min-h-8 cursor-pointer text-xs leading-8 text-fg-mid">
+            <summary className="min-h-10 cursor-pointer text-xs leading-10 text-fg-mid">
               Version history ({reflection.versions.length})
             </summary>
             <div className="grid gap-2 pb-1">
@@ -190,6 +190,7 @@ export function ReflectionCard({
                       <Button
                         variant="secondary"
                         size="sm"
+                        className="min-h-10"
                         disabled={!online}
                         onClick={() => onRestore(reflection.id, version.id)}
                       >
@@ -215,6 +216,7 @@ export function ReflectionCard({
           <Button
             variant="secondary"
             size="sm"
+            className="min-h-10"
             disabled={!online}
             onClick={() => onRequest(reflection.id)}
           >
@@ -225,13 +227,19 @@ export function ReflectionCard({
           <Button
             variant="secondary"
             size="sm"
+            className="min-h-10"
             disabled={!online}
             onClick={() => onRetry(reflection.id)}
           >
             Retry
           </Button>
         ) : null}
-        <Button variant="ghost" size="sm" onClick={() => onWrite(reflection.weekEnd)}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="min-h-10"
+          onClick={() => onWrite(reflection.weekEnd)}
+        >
           Write your reflection
         </Button>
         {!online ? (
