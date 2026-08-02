@@ -1029,21 +1029,39 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
     await expect(activity.locator('.activity-row__kind path')).toHaveAttribute('d', SPARKLE_PATH);
 
     const visibleIcons = page.locator('svg:visible');
-    expect(await visibleIcons.count()).toBeGreaterThan(0);
-    for (const icon of await visibleIcons.all()) {
-      await expect(icon).toHaveAttribute('aria-hidden', 'true');
-      await expect(icon).toHaveAttribute('focusable', 'false');
-      await expect(icon).toHaveAttribute('viewBox', '0 0 24 24');
-      await expect(icon).toHaveAttribute('fill', 'none');
-      await expect(icon).toHaveAttribute('stroke', 'currentColor');
-      await expect(icon).toHaveAttribute('stroke-width', '2');
-      await expect(icon).toHaveAttribute('stroke-linecap', 'round');
-      await expect(icon).toHaveAttribute('stroke-linejoin', 'round');
-      const iconBox = await icon.boundingBox();
-      expect(iconBox?.width).toBeGreaterThanOrEqual(10);
-      expect(iconBox?.width).toBeLessThanOrEqual(16);
-      expect(iconBox?.height).toBeGreaterThanOrEqual(10);
-      expect(iconBox?.height).toBeLessThanOrEqual(16);
+    const visibleIconEvidence = await visibleIcons.evaluateAll((icons) =>
+      icons.map((icon) => {
+        const box = icon.getBoundingClientRect();
+        return {
+          ariaHidden: icon.getAttribute('aria-hidden'),
+          fill: icon.getAttribute('fill'),
+          focusable: icon.getAttribute('focusable'),
+          height: box.height,
+          stroke: icon.getAttribute('stroke'),
+          strokeLinecap: icon.getAttribute('stroke-linecap'),
+          strokeLinejoin: icon.getAttribute('stroke-linejoin'),
+          strokeWidth: icon.getAttribute('stroke-width'),
+          viewBox: icon.getAttribute('viewBox'),
+          width: box.width,
+        };
+      }),
+    );
+    expect(visibleIconEvidence.length).toBeGreaterThan(0);
+    for (const icon of visibleIconEvidence) {
+      expect(icon).toMatchObject({
+        ariaHidden: 'true',
+        fill: 'none',
+        focusable: 'false',
+        stroke: 'currentColor',
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        strokeWidth: '2',
+        viewBox: '0 0 24 24',
+      });
+      expect(icon.width).toBeGreaterThanOrEqual(10);
+      expect(icon.width).toBeLessThanOrEqual(16);
+      expect(icon.height).toBeGreaterThanOrEqual(10);
+      expect(icon.height).toBeLessThanOrEqual(16);
     }
 
     await page.evaluate(async () => {
