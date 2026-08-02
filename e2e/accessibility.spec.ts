@@ -37,18 +37,18 @@ test('all primary surfaces and an open dialog pass the WCAG 2.2 A/AA smoke', asy
   ]) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await openJournal(page);
-    await expectNoAxeViolations(page, `${viewport.label} Today`);
+    await expectNoAxeViolations(page, `${viewport.label} Timeline`);
 
-    for (const view of ['Month', 'Index', 'Review']) {
+    for (const view of ['Month', 'Index', 'Activity']) {
       await page.getByRole('button', { name: view, exact: true }).click();
       await expectNoAxeViolations(page, `${viewport.label} ${view}`);
     }
 
-    await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Assistant access' });
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Settings' });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS('opacity', '1');
-    await expectNoAxeViolations(page, `${viewport.label} Assistant access dialog`);
+    await expectNoAxeViolations(page, `${viewport.label} Settings dialog`);
     await dialog.getByRole('button', { name: 'Open recovery' }).click();
     const recovery = page.getByRole('dialog', { name: 'Recovery' });
     await expect(recovery).toBeVisible();

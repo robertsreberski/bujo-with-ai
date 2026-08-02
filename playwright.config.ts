@@ -53,6 +53,35 @@ export default defineConfig({
       },
     },
     {
+      name: 'chromium-short',
+      testMatch: /responsive\.spec\.ts/,
+      use: {
+        browserName: 'chromium',
+        hasTouch: true,
+        isMobile: true,
+        viewport: { width: 375, height: 500 },
+      },
+    },
+    {
+      name: 'chromium-landscape',
+      testMatch: /responsive\.spec\.ts/,
+      use: {
+        browserName: 'chromium',
+        hasTouch: true,
+        isMobile: true,
+        viewport: { width: 812, height: 375 },
+      },
+    },
+    {
+      name: 'chromium-tablet',
+      testMatch: /responsive\.spec\.ts/,
+      use: {
+        browserName: 'chromium',
+        hasTouch: true,
+        viewport: { width: 834, height: 1_194 },
+      },
+    },
+    {
       name: 'chromium-narrow',
       testMatch: /(?:responsive|entry-sheet)\.spec\.ts/,
       use: {

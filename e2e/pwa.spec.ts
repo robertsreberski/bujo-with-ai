@@ -75,6 +75,7 @@ test('manifest, install metadata, icons, and custom service worker ship from one
     name: string;
     short_name: string;
     display: string;
+    orientation: string;
     start_url: string;
     scope: string;
     icons: Array<{ src: string; sizes: string; purpose?: string }>;
@@ -86,13 +87,14 @@ test('manifest, install metadata, icons, and custom service worker ship from one
     name: 'Journal',
     short_name: 'Journal',
     display: 'standalone',
+    orientation: 'any',
     start_url: '/',
     scope: '/',
   });
   expect(manifest.shortcuts).toEqual([
-    { name: 'Today', short_name: 'Today', url: '/' },
+    { name: 'Timeline', short_name: 'Timeline', url: '/' },
     { name: 'This month', short_name: 'Month', url: '/month' },
-    { name: 'Review', short_name: 'Review', url: '/review' },
+    { name: 'Activity', short_name: 'Activity', url: '/review' },
   ]);
   expect(manifest.icons).toEqual(
     expect.arrayContaining([

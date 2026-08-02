@@ -12,14 +12,13 @@ import type { JournalStatus } from '../store/models';
 export interface ShellCounts {
   /** Open tasks and habits due today or earlier, outside collections. */
   today?: number;
-  /** Automatic changes recorded since Review was last opened. */
+  /** Automatic changes recorded since Activity was last opened. */
   review?: number;
 }
 
 interface ShellProps {
   route: JournalRoute;
   today: string;
-  dayCount: number;
   journalStatus: JournalStatus;
   counts?: ShellCounts;
   title: string;
@@ -44,10 +43,10 @@ const navItems: Array<{
   /** The count's unit, singular, for the accessible name. */
   unit?: string;
 }> = [
-  { name: 'today', label: 'Today', icon: 'check', unit: 'open task' },
+  { name: 'today', label: 'Timeline', icon: 'check', unit: 'open item' },
   { name: 'month', label: 'Month', icon: 'calendar' },
   { name: 'index', label: 'Index', icon: 'folder' },
-  { name: 'review', label: 'Review', icon: 'sparkle', unit: 'unseen change' },
+  { name: 'review', label: 'Activity', icon: 'sparkle', unit: 'unseen change' },
 ];
 
 /** Two digits is all the badge has room for; past that the number stops mattering. */
@@ -69,7 +68,6 @@ const tabClassName =
 export function Shell({
   route,
   today,
-  dayCount,
   journalStatus,
   counts,
   title,
@@ -113,7 +111,6 @@ export function Shell({
     return `${item.label} — ${count} ${item.unit}${count === 1 ? '' : 's'}`;
   };
   const dateCaption = formatLongDate(today);
-  const mobileSubtitle = `${dateCaption} · ${dayCount} ${dayCount === 1 ? 'day' : 'days'} logged`;
   const pendingChanges = `${journalStatus.pendingChanges} change${journalStatus.pendingChanges === 1 ? '' : 's'} ${
     journalStatus.persistence === 'available' ? 'saved on this device' : 'only in this open tab'
   }`;
@@ -170,10 +167,9 @@ export function Shell({
     journalStatus.synchronization === 'syncing' ||
     journalStatus.failedChanges > 0 ||
     localSaveUnavailable;
-
   return (
     <div className="flex h-[var(--app-height,100vh)] justify-center bg-bg-page">
-      <div className="app-frame relative flex h-full w-full min-w-0 overflow-hidden bg-bg pr-(--sar) pl-(--sal) min-[680px]:max-w-[560px] min-[680px]:border-x min-[680px]:border-border min-[1024px]:max-w-[1160px]">
+      <div className="app-frame relative flex h-full w-full min-w-0 overflow-hidden bg-bg pr-(--sar) pl-(--sal) min-[680px]:max-w-[860px] min-[680px]:border-x min-[680px]:border-border min-[1024px]:max-w-[1160px]">
         <div
           className="safe-area-top absolute inset-x-0 top-0 z-(--z-safe-area) h-(--sat) bg-bg-page"
           aria-hidden="true"
@@ -229,7 +225,7 @@ export function Shell({
               onClick={onSettings}
             >
               <Icon name="settings" size={15} />
-              <span className="min-w-0 flex-1">Assistant access</span>
+              <span className="min-w-0 flex-1">Settings</span>
             </button>
           </div>
         </aside>
@@ -237,25 +233,19 @@ export function Shell({
           className="main-pane relative flex h-full w-full min-w-0 flex-col bg-bg pt-(--sat)"
           ref={paneRef}
         >
-          <header className="z-(--z-header) flex-none border-b border-border bg-bg">
+          <header className="app-header z-(--z-header) flex-none border-b border-border bg-bg">
             <div
               className={cn(
                 contentColumn,
-                'flex min-h-[59px] items-center justify-between gap-3 px-4 pt-[11px] pb-2 min-[1024px]:min-h-16 min-[1024px]:py-3',
+                'app-header__inner flex min-h-[59px] items-center justify-between gap-3 px-4 pt-[11px] pb-2 min-[1024px]:min-h-16 min-[1024px]:py-3',
               )}
             >
               <div className="min-w-0">
-                <h1 className="app-header__desktop-title hidden overflow-hidden text-lg font-semibold tracking-[-0.01em] text-ellipsis whitespace-nowrap min-[1024px]:block">
+                <h1 className="app-header__desktop-title app-header__title overflow-hidden text-lg font-semibold tracking-[-0.01em] text-ellipsis whitespace-nowrap">
                   {title}
                 </h1>
-                <h1 className="overflow-hidden text-lg font-semibold tracking-[-0.01em] text-ellipsis whitespace-nowrap min-[1024px]:hidden">
-                  Journal
-                </h1>
-                <p className="app-header__desktop-title hidden overflow-hidden pt-0.5 text-sm text-fg-mute text-ellipsis whitespace-nowrap min-[1024px]:block">
+                <p className="app-header__subtitle overflow-hidden pt-0.5 text-sm text-fg-mute text-ellipsis whitespace-nowrap">
                   {subtitle}
-                </p>
-                <p className="overflow-hidden pt-0.5 text-sm text-fg-mute text-ellipsis whitespace-nowrap min-[1024px]:hidden">
-                  {mobileSubtitle}
                 </p>
               </div>
               <div className="flex flex-none gap-2 min-[1024px]:hidden">
@@ -273,7 +263,7 @@ export function Shell({
                   size="icon"
                   className="text-fg-mid"
                   onClick={onSettings}
-                  aria-label="Assistant access"
+                  aria-label="Settings"
                 >
                   <Icon name="settings" size={15} />
                 </Button>

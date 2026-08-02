@@ -515,7 +515,7 @@ export default function App() {
   const routeTitle = (() => {
     switch (route.name) {
       case 'today':
-        return route.date && route.date !== store.today ? formatLongDate(route.date) : 'Today';
+        return route.date && route.date !== store.today ? formatLongDate(route.date) : 'Timeline';
       case 'month':
         return formatMonth(displayedMonth);
       case 'index':
@@ -523,16 +523,28 @@ export default function App() {
       case 'collection':
         return store.collectionsById[route.collectionId]?.name ?? 'Collection';
       case 'review':
-        return 'Review';
+        return 'Activity';
     }
   })();
   const dayCount = new Set(
     entries.filter((entry) => entry.collection === null).map((entry) => entry.date),
   ).size;
-  const routeSubtitle =
-    route.name === 'today'
-      ? formatLongDate(route.date ?? store.today)
-      : `${dayCount} ${dayCount === 1 ? 'day' : 'days'} logged`;
+  const routeSubtitle = (() => {
+    switch (route.name) {
+      case 'today':
+        return route.date && route.date !== store.today
+          ? 'Daily log in your Timeline'
+          : `${formatLongDate(store.today)} · ${dayCount} ${dayCount === 1 ? 'day' : 'days'} logged`;
+      case 'month':
+        return `${dayCount} ${dayCount === 1 ? 'day' : 'days'} logged in Timeline`;
+      case 'index':
+        return `${activeCollections.length} active ${activeCollections.length === 1 ? 'collection' : 'collections'}`;
+      case 'collection':
+        return 'Collection in your journal index';
+      case 'review':
+        return 'Agent changes and reversible history';
+    }
+  })();
   const selectedTodayDate = route.name === 'today' ? route.date : null;
 
   useEffect(() => {
@@ -579,7 +591,6 @@ export default function App() {
       <Shell
         route={route}
         today={store.today}
-        dayCount={dayCount}
         counts={counts}
         journalStatus={journalStatus}
         title={routeTitle}

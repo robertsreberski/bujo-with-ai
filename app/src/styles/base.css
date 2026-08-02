@@ -156,6 +156,24 @@ time {
   }
 }
 
+/* Short phones and landscape devices keep the route name visible while giving
+ * the timeline back the vertical space normally spent on secondary chrome. */
+@media (max-height: 520px) and (max-width: 1023px) {
+  .app-header__inner {
+    min-height: 48px;
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+
+  .app-header__subtitle {
+    display: none;
+  }
+
+  .tab-list {
+    margin-bottom: 6px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

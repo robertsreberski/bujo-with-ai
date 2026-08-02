@@ -321,8 +321,8 @@ async function motionStyle(locator: Locator): Promise<MotionEvidence> {
 }
 
 async function issueMcpSecret(page: Page, tokenLabel: string): Promise<string> {
-  await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Assistant access' });
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
   await dialog.getByRole('textbox', { name: 'New agent token label' }).fill(tokenLabel);
   await dialog.getByRole('button', { name: 'Create token' }).click();
   const secretPanel = dialog.locator('aside').filter({ hasText: 'Token created — copy it now' });
@@ -553,7 +553,7 @@ test('a collection can be created, renamed, filled, opened, and archived without
   await expect(page.getByRole('status').filter({ hasText: 'Collection updated' })).toBeVisible();
   await expect(collectionsSection.getByText(renamedCollection, { exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: /^Today/ }).click();
+  await page.getByRole('button', { name: /^Timeline/ }).click();
   const entryRow = page.locator(`[data-entry-id="${entry.id}"]`);
   await entryRow.locator('.entry-row__content').click();
   const entryDialog = page.getByRole('dialog', { name: entryText });
@@ -857,9 +857,7 @@ test('the month flow exposes calendar navigation and the complete habit grid at 
       const frameWidth = await screenshotPage
         .locator('.app-frame')
         .evaluate((element) => Math.round(element.getBoundingClientRect().width));
-      expect(frameWidth).toBe(
-        viewport.width >= 1_024 ? 1_160 : viewport.width >= 680 ? 560 : viewport.width,
-      );
+      expect(frameWidth).toBe(viewport.width >= 1_024 ? 1_160 : Math.min(viewport.width, 860));
       const horizontalOverflow = await screenshotPage.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       );
@@ -982,7 +980,7 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
     await expect(composer).toHaveCSS('outline-width', '2px');
     await expect(composer).toHaveCSS('outline-offset', '2px');
     await expect(composer).toHaveCSS('font-size', '16px');
-    await expectTouchTargets(page, '375px Today');
+    await expectTouchTargets(page, '375px Timeline');
 
     const aiText = uniqueText('Assistant design evidence');
     const aiEntryId = await createAssistantEntry(page, origin, aiText);
@@ -993,7 +991,7 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
     await expect(aiBadge).toHaveCSS('color', 'rgb(240, 154, 112)');
     await expect(aiBadge.locator('path')).toHaveAttribute('d', SPARKLE_PATH);
 
-    await page.getByRole('button', { name: /^Review/ }).click();
+    await page.getByRole('button', { name: /^Activity/ }).click();
     const activity = page.getByRole('article').filter({ hasText: aiText });
     await expect(activity).toBeVisible();
     await expect(page.locator('.review-intro__icon path')).toHaveAttribute('d', SPARKLE_PATH);
@@ -1037,7 +1035,7 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
 
     // The coarse-pointer entry surface is the sheet, so the sweep has to reach
     // its rows too — they are the densest stack of controls the phone renders.
-    await page.getByRole('button', { name: /^Today/ }).click();
+    await page.getByRole('button', { name: /^Timeline/ }).click();
     await page.locator('.entry-row__content').filter({ hasText: aiText }).click();
     const entrySheet = page.locator('.entry-sheet');
     await expect(entrySheet).toBeVisible();
@@ -1047,11 +1045,11 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
     await page.keyboard.press('Escape');
     await expect(entrySheet).toHaveCount(0);
 
-    await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
-    const accessDialog = page.getByRole('dialog', { name: 'Assistant access' });
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const accessDialog = page.getByRole('dialog', { name: 'Settings' });
     await expect(accessDialog).toBeVisible();
     await waitForFiniteAnimations(accessDialog);
-    await expectTouchTargets(page, '375px Assistant access');
+    await expectTouchTargets(page, '375px Settings');
     await captureEvidenceScreenshot(page, testInfo, 'design-ai-touch-375.png');
   } finally {
     await touchContext.close();
@@ -1070,7 +1068,7 @@ test('normal motion stays within the approved bounds and reduced motion removes 
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await openJournal(page);
 
-  await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const overlayMotion = await motionStyle(page.locator('.dialog-overlay'));
   const panelMotion = await motionStyle(page.locator('.dialog-panel'));
   expect(overlayMotion.animationName).toBe('overlay-in');
@@ -1117,7 +1115,7 @@ test('normal motion stays within the approved bounds and reduced motion removes 
   expect(cssTimeMilliseconds((await motionStyle(row)).transitionDuration)).toBeLessThanOrEqual(
     0.01,
   );
-  await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   expect((await motionStyle(page.locator('.dialog-overlay'))).animationName).toBe('none');
   expect((await motionStyle(page.locator('.dialog-panel'))).animationName).toBe('none');
   await page.keyboard.press('Escape');
