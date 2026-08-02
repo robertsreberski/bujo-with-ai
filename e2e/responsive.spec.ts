@@ -248,7 +248,7 @@ test('mobile controls keep named touch targets and primary actions reach 44px', 
   await expectTouchTargets(page, 'New collection');
   await page.keyboard.press('Escape');
 
-  await page.getByRole('button', { name: /^Timeline/ }).click();
+  await page.getByRole('button', { name: 'Timeline', exact: true }).click();
   const entryText = uniqueText('Touch target entry');
   await page.getByRole('combobox', { name: 'Add an entry' }).fill(entryText);
   await page.getByRole('button', { name: 'Add entry' }).click();

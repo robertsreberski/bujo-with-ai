@@ -13,6 +13,8 @@ interface TimelineViewProps {
   collectionsById: Record<string, JournalCollection>;
   today: string;
   selectedDate: string | null;
+  focusRequest?: { date: string; key: number } | null;
+  onFocusRequestHandled?: (key: number) => void;
   loading: boolean;
   hasEarlier: boolean;
   loadingEarlier: boolean;
@@ -53,6 +55,8 @@ export function TimelineView({
   collectionsById,
   today,
   selectedDate,
+  focusRequest = null,
+  onFocusRequestHandled,
   loading,
   hasEarlier,
   loadingEarlier,
@@ -166,6 +170,22 @@ export function TimelineView({
     }
     if (target) scrolledLayoutRef.current = selectedDateFocusKey;
   }, [selectedDate, selectedDateFocusKey]);
+
+  // Selecting today from the month spread keeps `/` canonical, so it cannot
+  // use the URL-backed selectedDate prop. Carry that one interaction through
+  // as a transient request and complete the same scroll-and-focus handoff.
+  useEffect(() => {
+    if (!focusRequest) return;
+    const target = document.querySelector<HTMLElement>(
+      `[data-day="${CSS.escape(focusRequest.date)}"]`,
+    );
+    if (!target) return;
+    if (typeof target.scrollIntoView === 'function') {
+      target.scrollIntoView({ block: 'start', behavior: 'auto' });
+    }
+    target.focus({ preventScroll: true });
+    onFocusRequestHandled?.(focusRequest.key);
+  }, [focusRequest, onFocusRequestHandled]);
 
   useEffect(() => {
     if (!selectedDate || !selectedDateFocusKey || typeof ResizeObserver === 'undefined') return;

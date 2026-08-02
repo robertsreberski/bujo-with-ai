@@ -148,9 +148,14 @@ test('the sheet names the month it would file into on the month spread', async (
 
   // The composer's screen default on this spread is the browsed month's log.
   const text = uniqueText('Previous month item');
+  await page.getByRole('combobox', { name: 'Add an entry' }).focus();
   await expect(page.getByRole('button', { name: /^Destination:/ })).toBeVisible();
   const row = await captureEntry(page, `. ${text}`, text);
 
+  // On this short month view the success toast intentionally covers the new
+  // bottom row. Wait for that live feedback to clear before exercising the
+  // row's own pointer action instead of asking Playwright to click through it.
+  await expect(page.locator('.toast')).toHaveCount(0);
   await row.click();
   const sheet = page.locator('.entry-sheet');
   await expect(sheet).toBeVisible();
