@@ -1287,6 +1287,26 @@ describe('JournalDomain summaries and credentials', () => {
     expect(domain.purgeExpired().entries).toBe(1);
   });
 
+  it('rejects per-operation retention overrides that could make recovery disagree', () => {
+    const { domain, owner, advance } = fixture();
+    const created = domain.createEntry(
+      { id: ulid(), text: 'One recovery policy', type: 'note', date: '2026-07-31' },
+      owner,
+    );
+    if (created.kind !== 'entry') throw new Error('Expected entry');
+    const deleted = domain.deleteEntry(created.entry.id, owner);
+    advance(31 * 86_400_000);
+
+    expect(() => domain.listRecentlyDeleted(60)).toThrowError(/configured as 30/i);
+    expect(() => domain.purgeExpired(60)).toThrowError(/configured as 30/i);
+    expect(() =>
+      domain.restoreEntry(created.entry.id, owner, undefined, {
+        expectedRevision: deleted.entry.revision,
+        retentionDays: 60,
+      }),
+    ).toThrowError(/configured as 30/i);
+  });
+
   it('describes recovery destinations, reopens archives, and falls back from missing collections', () => {
     const { domain, database, owner } = fixture();
     domain.createCollection({ id: 'archive-me', name: 'Archive me' }, owner);
