@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EntryRow } from './EntryRow';
 import type { JournalEntry } from './types';
 
@@ -23,6 +23,14 @@ const entry: JournalEntry = {
   revision: 1,
   deletedAt: null,
 };
+
+function setPreviewMetrics(element: HTMLElement, scrollHeight: number, clientHeight: number): void {
+  Object.defineProperty(element, 'scrollHeight', { configurable: true, value: scrollHeight });
+  Object.defineProperty(element, 'clientHeight', { configurable: true, value: clientHeight });
+  fireEvent(window, new Event('resize'));
+}
+
+afterEach(cleanup);
 
 describe('EntryRow', () => {
   it('keeps checkbox and detail interactions distinct and keyboard accessible', async () => {
@@ -78,5 +86,119 @@ describe('EntryRow', () => {
       expect(row, state).not.toHaveClass('entry-row--struck');
       cleanup();
     }
+  });
+
+  it('offers an explicit disclosure only when canonical text exceeds two lines', async () => {
+    const user = userEvent.setup();
+    const longText =
+      'Review the complete garden plan before ordering soil, timber, irrigation parts, and the remaining native plants.';
+    const { container } = render(
+      <EntryRow
+        entry={{ ...entry, text: longText }}
+        preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
+        onToggle={vi.fn()}
+        onOpen={vi.fn()}
+      />,
+    );
+    const preview = screen.getByText(longText, { exact: true });
+
+    setPreviewMetrics(preview, 60, 40);
+    const expand = screen.getByRole('button', { name: /^Expand entry preview:/ });
+    expect(expand).toHaveAttribute('aria-controls', preview.id);
+    expect(expand).toHaveAttribute('aria-expanded', 'false');
+    expect(preview).toHaveClass('line-clamp-2');
+    expect(preview).toHaveTextContent(longText);
+    expect(container.querySelector('.entry-row__content .entry-row__expand')).toBeNull();
+
+    await user.click(expand);
+    expect(screen.getByRole('button', { name: /^Collapse entry preview:/ })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(preview).not.toHaveClass('line-clamp-2');
+
+    await user.click(screen.getByRole('button', { name: /^Collapse entry preview:/ }));
+    expect(screen.getByRole('button', { name: /^Expand entry preview:/ })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+
+    setPreviewMetrics(preview, 40, 40);
+    expect(screen.queryByRole('button', { name: /entry preview/ })).not.toBeInTheDocument();
+  });
+
+  it('preserves multiline, Unicode, and long unbroken content across the preview', async () => {
+    const user = userEvent.setup();
+    const multiline =
+      'Zażółć gęślą jaźń 🌱\nhttps://example.test/a/very/long/unbroken/path/that/must/wrap\n月次レビュー';
+    const { container } = render(
+      <EntryRow
+        entry={{ ...entry, text: multiline }}
+        preferences={{ density: 'compact', showTypeBadges: false, highlightAiEntries: false }}
+        onToggle={vi.fn()}
+        onOpen={vi.fn()}
+      />,
+    );
+    const preview = container.querySelector<HTMLElement>('.entry-row__text');
+    expect(preview).not.toBeNull();
+    if (!preview) throw new Error('Entry preview did not render.');
+    setPreviewMetrics(preview, 72, 36);
+
+    expect(preview).toHaveClass('whitespace-pre-wrap', '[overflow-wrap:anywhere]');
+    await user.click(screen.getByRole('button', { name: /^Expand entry preview:/ }));
+    expect(preview.textContent).toBe(multiline);
+    expect(preview).not.toHaveClass('line-clamp-2');
+  });
+
+  it('supports Enter and Space without triggering the entry detail action', async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    const longText =
+      'A long entry that needs a stable keyboard-operated progressive preview control.';
+    render(
+      <EntryRow
+        entry={{ ...entry, text: longText }}
+        preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
+        onToggle={vi.fn()}
+        onOpen={onOpen}
+      />,
+    );
+    const preview = screen.getByText(longText, { exact: true });
+    setPreviewMetrics(preview, 60, 40);
+
+    const expand = screen.getByRole('button', { name: /^Expand entry preview:/ });
+    expand.focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('button', { name: /^Collapse entry preview:/ })).toHaveFocus();
+    expect(onOpen).not.toHaveBeenCalled();
+
+    await user.keyboard(' ');
+    expect(screen.getByRole('button', { name: /^Expand entry preview:/ })).toHaveFocus();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('keeps text selectable without treating a pointer selection as detail activation', () => {
+    const onOpen = vi.fn();
+    render(
+      <EntryRow
+        entry={entry}
+        preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
+        onToggle={vi.fn()}
+        onOpen={onOpen}
+      />,
+    );
+    const content = screen.getByRole('button', { name: 'Reply to Mira' });
+    const preview = screen.getByText('Reply to Mira', { exact: true });
+    const range = document.createRange();
+    range.selectNodeContents(preview);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    fireEvent.click(content, { detail: 1 });
+    expect(onOpen).not.toHaveBeenCalled();
+
+    fireEvent.click(content, { detail: 0 });
+    expect(onOpen).toHaveBeenCalledWith(entry);
   });
 });

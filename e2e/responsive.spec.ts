@@ -112,6 +112,62 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
   }
 });
 
+test('entry previews clamp only real overflow and disclose it without nested actions', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-narrow');
+  await openJournal(page);
+  await page.setViewportSize({ width: 320, height: 700 });
+
+  const capture = async (draft: string, text: string) => {
+    await page.getByRole('combobox', { name: 'Add an entry' }).fill(draft);
+    await page.getByRole('button', { name: 'Add entry' }).click();
+    const row = page.locator('.entry-row').filter({ hasText: text });
+    await expect(row).toBeVisible();
+    return row;
+  };
+
+  const shortText = uniqueText('Short note');
+  const shortRow = await capture(`- ${shortText}`, shortText);
+  await expect(shortRow.getByRole('button', { name: /entry preview/i })).toHaveCount(0);
+
+  const longText = uniqueText(
+    'Reflect on the garden redesign with Łukasz and compare irrigation notes, planting constraints, and https://example.test/research/garden/native-plants/irrigation/soil/sunlight before making the final order 🌱',
+  );
+  const longRow = await capture(`- ${longText}`, longText);
+  const disclosure = longRow.locator('.entry-row__expand');
+  await expect(disclosure).toBeVisible();
+  await expect(disclosure).toHaveAccessibleName(/expand entry preview/i);
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+
+  const collapsed = await longRow.locator('.entry-row__text').evaluate((element) => {
+    const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight);
+    return {
+      clientHeight: element.clientHeight,
+      lineHeight,
+      scrollHeight: element.scrollHeight,
+    };
+  });
+  expect(collapsed.clientHeight).toBeLessThanOrEqual(collapsed.lineHeight * 2 + 1);
+  expect(collapsed.scrollHeight).toBeGreaterThan(collapsed.clientHeight);
+  expect(await longRow.locator('button button').count()).toBe(0);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(0);
+
+  await disclosure.focus();
+  await page.keyboard.press('Enter');
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
+  await expect(disclosure).toHaveAccessibleName(/collapse entry preview/i);
+  await expect(longRow.locator('.entry-row__text')).toHaveText(longText);
+
+  await page.keyboard.press('Space');
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+  await expect(disclosure).toHaveAccessibleName(/expand entry preview/i);
+});
+
 test('reduced-motion preference collapses animations', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openJournal(page);

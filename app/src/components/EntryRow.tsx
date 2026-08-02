@@ -1,3 +1,4 @@
+import { useCallback, useId, useLayoutEffect, useRef, useState, type MouseEvent } from 'react';
 import { Icon } from './Icon';
 import { Badge } from './ui/badge';
 import { entryIcon } from './entry-icons';
@@ -34,6 +35,22 @@ interface EntryRowProps {
  */
 const LEAD_HIT_BOX = '-mx-[11px] grid h-5 w-10 place-items-center touch:h-10 touch:-mb-5';
 
+function selectionIsInside(target: HTMLElement): boolean {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) return false;
+
+  return Boolean(
+    (selection.anchorNode && target.contains(selection.anchorNode)) ||
+      (selection.focusNode && target.contains(selection.focusNode)),
+  );
+}
+
+function previewContext(text: string): string {
+  const singleLine = text.replace(/\s+/gu, ' ').trim();
+  const characters = Array.from(singleLine);
+  return characters.length > 56 ? `${characters.slice(0, 55).join('').trimEnd()}…` : singleLine;
+}
+
 export function EntryRow({
   entry,
   preferences,
@@ -41,6 +58,12 @@ export function EntryRow({
   onToggle,
   showDate = false,
 }: EntryRowProps) {
+  const previewId = useId();
+  const previewRef = useRef<HTMLSpanElement>(null);
+  const previewVersion = `${entry.id}:${entry.revision}:${entry.text}`;
+  const [expandedPreviewVersion, setExpandedPreviewVersion] = useState<string | null>(null);
+  const previewExpanded = expandedPreviewVersion === previewVersion;
+  const [previewOverflows, setPreviewOverflows] = useState(false);
   const actionable = isActionable(entry);
   const done = entry.state === 'done';
   const toggleable = actionable && (entry.state === 'open' || done);
@@ -58,6 +81,59 @@ export function EntryRow({
   const metaVisible =
     showDate || showType || showAi || displayState !== null || entry.tags.length > 0;
   const toggleLabel = `${done ? 'Mark as not done' : 'Mark as done'}: ${entry.text}`;
+
+  const measurePreview = useCallback(() => {
+    const preview = previewRef.current;
+    if (!preview) return;
+
+    /*
+     * The browser reports a pixel line-height even when the authored value is
+     * unitless. Measuring against that natural two-line height works in both
+     * collapsed and expanded states, so resizing an expanded row cannot make
+     * its collapse control disappear. The client-height fallback keeps the
+     * check deterministic in test/non-layout DOMs.
+     */
+    const computedLineHeight = window.getComputedStyle(preview).lineHeight;
+    const lineHeight = computedLineHeight.endsWith('px')
+      ? Number.parseFloat(computedLineHeight)
+      : Number.NaN;
+    const collapsedHeight = Number.isFinite(lineHeight) ? lineHeight * 2 : preview.clientHeight;
+    const overflows = preview.scrollHeight > collapsedHeight + 1;
+
+    setPreviewOverflows((current) => (current === overflows ? current : overflows));
+    if (!overflows) setExpandedPreviewVersion(null);
+  }, []);
+
+  useLayoutEffect(() => {
+    measurePreview();
+
+    const frame =
+      typeof requestAnimationFrame === 'function' ? requestAnimationFrame(measurePreview) : null;
+    const observer =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measurePreview);
+    const preview = previewRef.current;
+    if (preview) observer?.observe(preview);
+    window.addEventListener('resize', measurePreview);
+
+    let mounted = true;
+    void document.fonts?.ready.then(() => {
+      if (mounted) measurePreview();
+    });
+
+    return () => {
+      mounted = false;
+      if (frame !== null) cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener('resize', measurePreview);
+    };
+  }, [entry.id, entry.text, measurePreview]);
+
+  const handleOpen = (event: MouseEvent<HTMLButtonElement>) => {
+    // A pointer drag that selected canonical text is not an intent to open the
+    // details surface. Keyboard-generated clicks have detail=0 and still open.
+    if (event.detail > 0 && selectionIsInside(event.currentTarget)) return;
+    onOpen(entry);
+  };
 
   return (
     <article
@@ -107,22 +183,27 @@ export function EntryRow({
           <Icon name={entryIcon[entry.type]} size={15} />
         </button>
       )}
-      <button
-        className="entry-row__content flex min-w-0 flex-col items-stretch justify-center gap-[5px] text-left touch:min-h-10"
-        type="button"
-        onClick={() => onOpen(entry)}
-      >
-        <span
-          className={cn(
-            'entry-row__text text-base text-pretty decoration-1',
-            dimmed ? 'text-fg-mute decoration-fg-faint' : 'text-fg',
-            struck && 'line-through',
-          )}
+      <div className="entry-row__body flex min-w-0 flex-col items-stretch justify-center gap-[5px]">
+        <button
+          className="entry-row__content flex min-w-0 flex-col items-stretch text-left touch:min-h-10"
+          type="button"
+          onClick={handleOpen}
         >
-          {entry.text}
-        </span>
-        {metaVisible ? (
-          <span className="entry-row__meta flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-[5px]">
+          <span
+            ref={previewRef}
+            id={previewId}
+            className={cn(
+              'entry-row__text block min-w-0 select-text whitespace-pre-wrap [overflow-wrap:anywhere] text-base text-pretty decoration-1',
+              !previewExpanded && 'line-clamp-2',
+              dimmed ? 'text-fg-mute decoration-fg-faint' : 'text-fg',
+              struck && 'line-through',
+            )}
+          >
+            {entry.text}
+          </span>
+        </button>
+        {metaVisible || previewOverflows ? (
+          <div className="entry-row__support flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-[5px]">
             {showDate ? (
               <span className="entry-row__date mr-0.5 font-mono text-tag text-fg-mute">
                 {formatShortDate(entry.date)}
@@ -153,9 +234,25 @@ export function EntryRow({
                 #{tag}
               </span>
             ))}
-          </span>
+            {previewOverflows ? (
+              <button
+                className="entry-row__expand ml-auto min-h-6 rounded-sm px-1.5 text-tag font-medium text-fg-mute underline decoration-border-strong underline-offset-2 hover:text-fg touch:min-h-10 touch:px-2"
+                type="button"
+                aria-controls={previewId}
+                aria-expanded={previewExpanded}
+                aria-label={`${previewExpanded ? 'Collapse' : 'Expand'} entry preview: ${previewContext(entry.text)}`}
+                onClick={() =>
+                  setExpandedPreviewVersion((current) =>
+                    current === previewVersion ? null : previewVersion,
+                  )
+                }
+              >
+                {previewExpanded ? 'Show less' : 'Show more'}
+              </button>
+            ) : null}
+          </div>
         ) : null}
-      </button>
+      </div>
       {entry.time ? (
         <time className="entry-row__time pt-[2px] text-right font-mono text-tag whitespace-nowrap text-fg-mute">
           {entry.time}
