@@ -1,3 +1,4 @@
+-- journal:migration-mode additive
 CREATE TABLE reflection_slots (
   id TEXT PRIMARY KEY,
   week_start TEXT NOT NULL UNIQUE CHECK (week_start GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
@@ -33,52 +34,9 @@ CREATE TABLE reflection_versions (
   source TEXT NOT NULL CHECK (length(trim(source)) BETWEEN 1 AND 300),
   generated_at TEXT NOT NULL,
   source_entries TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(source_entries) AND json_type(source_entries) = 'array'),
-  FOREIGN KEY (reflection_id) REFERENCES reflection_slots(id) ON DELETE CASCADE,
+  FOREIGN KEY (reflection_id) REFERENCES reflection_slots(id),
   UNIQUE (reflection_id, version_number)
 );
 
 CREATE INDEX idx_reflection_slots_week ON reflection_slots(week_start DESC);
 CREATE INDEX idx_reflection_versions_slot ON reflection_versions(reflection_id, version_number DESC);
-
-INSERT INTO reflection_slots(
-  id, week_start, week_end, status, request_id, requested_at, claimed_at,
-  claimed_token_id, claimed_label, claimed_tool, failure, current_version_id,
-  created_at, updated_at, revision
-)
-SELECT
-  id,
-  week_start,
-  date(week_start, '+6 days'),
-  CASE status WHEN 'stale' THEN 'stale' ELSE 'current' END,
-  NULL,
-  NULL,
-  NULL,
-  NULL,
-  NULL,
-  NULL,
-  NULL,
-  id,
-  created_at,
-  updated_at,
-  revision
-FROM summaries;
-
-INSERT INTO reflection_versions(
-  id, reflection_id, version_number, text, source_from, source_to,
-  generator_token_id, generator_label, generator_tool, source, generated_at,
-  source_entries
-)
-SELECT
-  id,
-  id,
-  1,
-  text,
-  week_start,
-  date(week_start, '+6 days'),
-  token_id,
-  'Legacy assistant',
-  NULL,
-  source,
-  updated_at,
-  '[]'
-FROM summaries;
