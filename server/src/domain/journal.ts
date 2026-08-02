@@ -6,6 +6,7 @@ import { journalDate } from '../config.js';
 import {
   ActivityItemSchema,
   ActivityViewSchema,
+  AgentTokenScopeSchema,
   AgentTokenSchema,
   CalendarMonthSchema,
   CollectionSchema,
@@ -14,6 +15,7 @@ import {
   IsoTimestampSchema,
   JournalExportSchema,
   JournalExportV2Schema,
+  MigrationOperationSchema,
   SearchInputSchema,
   SettingsSchema,
   SummarySchema,
@@ -28,6 +30,7 @@ import type {
   ActorContext,
   AgentMigrationResult,
   AgentTokenRecord,
+  AgentTokenScope,
   ApplyAgentMigrationInput,
   AuthenticatedAgent,
   AuthenticatedDevice,
@@ -271,6 +274,11 @@ function validateAgentMigration(input: ApplyAgentMigrationInput): void {
   normalizeText(input.detail, 300, 'migration detail');
   if (input.ops.length < 1 || input.ops.length > 10)
     invalid('Migration requires 1 to 10 operations');
+  for (const operation of input.ops) {
+    if (!MigrationOperationSchema.safeParse(operation).success) {
+      invalid('Migration operation does not satisfy the revision-bound contract');
+    }
+  }
   if ((input.lines?.length ?? 0) > 6) invalid('Migration supports at most 6 display lines');
 }
 
@@ -371,9 +379,10 @@ function normalizeTags(values: readonly string[]): string[] {
   return [...new Set(values.map(normalizeTag))];
 }
 
-function normalizeScope(value: string): 'journal:full' {
-  if (value !== 'journal:full') invalid('The only v1 token scope is journal:full');
-  return value;
+function normalizeScope(value: string): AgentTokenScope {
+  const parsed = AgentTokenScopeSchema.safeParse(value);
+  if (!parsed.success) invalid(`Unknown agent token scope: ${value}`);
+  return parsed.data;
 }
 
 function isActionable(type: EntryType): boolean {
@@ -391,6 +400,12 @@ function assertExpectedRevision(entry: Entry, expected: number | undefined): voi
     throw new DomainError('CONFLICT', `Entry changed since revision ${expected}`, {
       details: { expectedRevision: expected, actualRevision: entry.revision },
     });
+  }
+}
+
+function requireAgentExpectedRevision(actor: ActorContext, expected: number | undefined): void {
+  if (actor.kind === 'agent' && expected === undefined) {
+    invalid('Agent update and delete operations require expectedRevision');
   }
 }
 
@@ -635,7 +650,7 @@ function migrationActivityText(input: ApplyAgentMigrationInput): string {
         .map((operation) => operation.entry.source),
     ),
   ];
-  const parts = [input.title, input.detail];
+  const parts = [`Applied migration: ${input.title}`, input.detail];
   if (lines !== '') parts.push(lines);
   if (sources.length > 0) parts.push(`Source: ${sources.join('; ')}`);
   const text = parts.join(' — ').replace(/\s+/g, ' ').trim();
@@ -1149,6 +1164,7 @@ export class JournalDomain {
   ): { readonly entry: Entry; readonly activityId?: string } {
     validateId(id);
     if (Object.keys(patch).length === 0) invalid('Entry patch must contain at least one field');
+    requireAgentExpectedRevision(actor, options.expectedRevision);
     return this.write('update-entry', { id, patch, ...options }, actor, mutation, (context) => {
       const before = this.requireLiveEntry(id);
       assertExpectedRevision(before, options.expectedRevision);
@@ -1360,6 +1376,7 @@ export class JournalDomain {
     options: { readonly expectedRevision?: number; readonly reason?: string } = {},
   ): { readonly entry: Entry; readonly activityId?: string } {
     validateId(id);
+    requireAgentExpectedRevision(actor, options.expectedRevision);
     return this.write('delete-entry', { id, ...options }, actor, mutation, (context) => {
       const before = this.requireLiveEntry(id);
       assertExpectedRevision(before, options.expectedRevision);
@@ -1753,6 +1770,52 @@ export class JournalDomain {
                  ORDER BY e.date DESC, e.created_at DESC, e.id DESC`,
               )
               .all(from) as EntryRow[];
+            const expectedById = new Map(
+              op.sources.map((source) => [source.id, source.expectedRevision] as const),
+            );
+            for (const row of rows) {
+              if (!expectedById.has(row.id)) {
+                throw new DomainError(
+                  'CONFLICT',
+                  `Retag source set changed: entry ${row.id} now carries #${from}`,
+                  {
+                    details: {
+                      reason: 'source_set_changed',
+                      entryId: row.id,
+                      actualRevision: row.revision,
+                    },
+                  },
+                );
+              }
+            }
+            for (const source of op.sources) {
+              const before = remember(source.id);
+              if (before === null || before.deletedAt !== null) {
+                throw new DomainError('CONFLICT', `Retag source ${source.id} is no longer live`, {
+                  details: {
+                    reason: 'source_set_changed',
+                    entryId: source.id,
+                    expectedRevision: source.expectedRevision,
+                    actualRevision: before?.revision ?? null,
+                  },
+                });
+              }
+              assertExpectedRevision(before, source.expectedRevision);
+              if (!before.tags.includes(from)) {
+                throw new DomainError(
+                  'CONFLICT',
+                  `Retag source ${source.id} no longer carries #${from}`,
+                  {
+                    details: {
+                      reason: 'source_set_changed',
+                      entryId: source.id,
+                      expectedRevision: source.expectedRevision,
+                      actualRevision: before.revision,
+                    },
+                  },
+                );
+              }
+            }
             for (const row of rows) {
               const before = mapEntry(row);
               if (!initial.has(before.id)) initial.set(before.id, before);

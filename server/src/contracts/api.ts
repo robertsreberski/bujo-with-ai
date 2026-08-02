@@ -12,6 +12,7 @@ import {
   ActivityItemSchema,
   ActivitySnapshotSchema,
   ActivityViewSchema,
+  AgentTokenScopesSchema,
   AgentTokenSchema,
   CollectionSchema,
   EntrySchema,
@@ -136,6 +137,7 @@ export const SettingsPatchSchema = z
 
 export const TokenCreateRequestSchema = z.strictObject({
   label: z.string().trim().min(1).max(80),
+  scopes: AgentTokenScopesSchema.default(['journal:full']),
 });
 
 export const TokenCreateResponseSchema = z.strictObject({

@@ -123,15 +123,39 @@ const MigrationDeleteOperationSchema = z.strictObject({
   expectedRevision: ExpectedRevisionSchema,
 });
 
+const MigrationSourceRevisionSchema = z.strictObject({
+  id: UlidSchema.describe('Entry id returned by a current tag search.'),
+  expectedRevision: ExpectedRevisionSchema.describe(
+    'Revision observed for this exact retag source entry.',
+  ),
+});
+
 const MigrationRetagOperationSchema = z
   .strictObject({
     op: z.literal('retag').describe('Replace one tag across matching live entries.'),
     from: TagSchema.describe('Existing tag to replace.'),
     to: TagSchema.describe('Replacement tag.'),
+    sources: z
+      .array(MigrationSourceRevisionSchema)
+      .min(1)
+      .max(100)
+      .describe('Complete observed set of live entries carrying the source tag.'),
   })
-  .refine((operation) => operation.from !== operation.to, {
-    path: ['to'],
-    message: 'Retag source and target must differ.',
+  .superRefine((operation, context) => {
+    if (operation.from === operation.to) {
+      context.addIssue({
+        code: 'custom',
+        path: ['to'],
+        message: 'Retag source and target must differ.',
+      });
+    }
+    if (new Set(operation.sources.map((source) => source.id)).size !== operation.sources.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['sources'],
+        message: 'Retag source entry ids must be unique.',
+      });
+    }
   });
 
 export const MigrationOperationSchema = z.discriminatedUnion('op', [

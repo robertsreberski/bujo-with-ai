@@ -260,12 +260,34 @@ export const SettingsSchema = z.strictObject({
   updatedAt: IsoTimestampSchema,
 });
 
-export const AgentTokenScopeSchema = z.literal('journal:full');
+export const AgentTokenScopeSchema = z.enum([
+  'journal:full',
+  'timeline:read',
+  'entry:write',
+  'destructive',
+  'preview:write',
+]);
+
+export const AgentTokenScopesSchema = z
+  .array(AgentTokenScopeSchema)
+  .min(1)
+  .max(5)
+  .superRefine((scopes, context) => {
+    if (new Set(scopes).size !== scopes.length) {
+      context.addIssue({ code: 'custom', message: 'Agent token scopes must be unique.' });
+    }
+    if (scopes.includes('journal:full') && scopes.length > 1) {
+      context.addIssue({
+        code: 'custom',
+        message: 'journal:full cannot be combined with narrower scopes.',
+      });
+    }
+  });
 
 export const AgentTokenSchema = z.strictObject({
   id: UlidSchema,
   label: z.string().trim().min(1).max(80),
-  scopes: z.tuple([AgentTokenScopeSchema]),
+  scopes: AgentTokenScopesSchema,
   createdAt: IsoTimestampSchema,
   lastUsedAt: IsoTimestampSchema.nullable(),
   revokedAt: IsoTimestampSchema.nullable(),
@@ -314,4 +336,5 @@ export type Activity = ActivityItem;
 export type ActivityView = z.infer<typeof ActivityViewSchema>;
 export type Settings = z.infer<typeof SettingsSchema>;
 export type AgentToken = z.infer<typeof AgentTokenSchema>;
+export type AgentTokenScope = z.infer<typeof AgentTokenScopeSchema>;
 export type DeviceToken = z.infer<typeof DeviceTokenSchema>;

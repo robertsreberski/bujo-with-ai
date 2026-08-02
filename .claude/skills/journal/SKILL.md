@@ -44,7 +44,10 @@ returned revision to protect against overwriting a newer edit.
    only while no later conflicting edit exists.
 3. Use `propose_migration` for one atomic multi-entry hygiene transaction. Its
    legacy name does not mean pending approval. Every target operation carries
-   the current expected revision; every create operation carries `source`.
+   the current expected revision; a retag supplies the complete observed
+   `sources` list with each source revision; every create operation carries
+   `source`. A successful call returns `Applied migration` because it has
+   already committed.
 4. If a revision conflict occurs, reread and reassess instead of retrying the
    stale operation.
 

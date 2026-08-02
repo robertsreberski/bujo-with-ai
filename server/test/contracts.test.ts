@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   ActivityItemSchema,
   AgentEntryCreateSchema,
+  AgentTokenScopeSchema,
   BootstrapResponseSchema,
   ChangeBatchSchema,
   DateIntentSchema,
@@ -19,6 +20,7 @@ import {
   OwnerEntryCreateSchema,
   SseReplayReadySchema,
   TagSchema,
+  TokenCreateRequestSchema,
 } from '../src/contracts/index.js';
 
 const ENTRY_ID = '01K1A2B3C4D5E6F7G8H9J0K1M2';
@@ -139,6 +141,46 @@ describe('journal entity contracts', () => {
 });
 
 describe('autonomous write contracts', () => {
+  it('requires compare-and-set revisions for direct MCP mutations', () => {
+    const update = {
+      id: ENTRY_ID,
+      patch: { text: 'Changed' },
+      reason: 'Keep the mutation attributable.',
+    };
+    const remove = {
+      id: ENTRY_ID,
+      reason: 'Remove the obsolete journal entry.',
+    };
+    expect(McpUpdateEntryInputSchema.safeParse(update).success).toBe(false);
+    expect(McpUpdateEntryInputSchema.safeParse({ ...update, expectedRevision: 1 }).success).toBe(
+      true,
+    );
+    expect(McpDeleteEntryInputSchema.safeParse(remove).success).toBe(false);
+    expect(McpDeleteEntryInputSchema.safeParse({ ...remove, expectedRevision: 1 }).success).toBe(
+      true,
+    );
+  });
+
+  it('accepts least-privilege token scopes while defaulting legacy creation to full access', () => {
+    expect(TokenCreateRequestSchema.parse({ label: 'Legacy assistant' }).scopes).toEqual([
+      'journal:full',
+    ]);
+    expect(
+      TokenCreateRequestSchema.parse({
+        label: 'Timeline reader',
+        scopes: ['timeline:read'],
+      }).scopes,
+    ).toEqual(['timeline:read']);
+    expect(AgentTokenScopeSchema.safeParse('preview:write').success).toBe(true);
+    expect(AgentTokenScopeSchema.safeParse('journal:everything').success).toBe(false);
+    expect(
+      TokenCreateRequestSchema.safeParse({
+        label: 'Duplicate scope',
+        scopes: ['entry:write', 'entry:write'],
+      }).success,
+    ).toBe(false);
+  });
+
   it('describes every named MCP tool parameter, including nested patches and migration ops', () => {
     const inputs = [
       McpAddEntryInputSchema,
@@ -170,6 +212,17 @@ describe('autonomous write contracts', () => {
         id: ENTRY_ID,
         expectedRevision: 1,
         patch: { text: 'Changed' },
+      }).success,
+    ).toBe(true);
+    expect(
+      MigrationOperationSchema.safeParse({ op: 'retag', from: 'old', to: 'new' }).success,
+    ).toBe(false);
+    expect(
+      MigrationOperationSchema.safeParse({
+        op: 'retag',
+        from: 'old',
+        to: 'new',
+        sources: [{ id: ENTRY_ID, expectedRevision: 1 }],
       }).success,
     ).toBe(true);
   });

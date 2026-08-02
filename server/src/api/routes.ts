@@ -19,6 +19,7 @@ import {
   SummaryRewriteRequestSchema,
   SummarySaveRequestSchema,
   TokenCreateRequestSchema,
+  type AgentTokenScope,
   UlidSchema,
   UpdateCollectionRequestSchema,
   UpdateEntryRequestSchema,
@@ -126,7 +127,11 @@ export interface ApiJournalOperations extends DeviceAuthenticator {
   getSettings(actor: OwnerActor): unknown | Promise<unknown>;
   updateSettings(input: Record<string, unknown>, actor: OwnerActor): unknown | Promise<unknown>;
   listTokens(actor: OwnerActor): unknown | Promise<unknown>;
-  createToken(label: string, actor: OwnerActor): unknown | Promise<unknown>;
+  createToken(
+    label: string,
+    scopes: readonly AgentTokenScope[],
+    actor: OwnerActor,
+  ): unknown | Promise<unknown>;
   revokeToken(id: string, actor: OwnerActor): unknown | Promise<unknown>;
 }
 
@@ -471,8 +476,8 @@ export function createApiRouter(options: ApiRouterOptions): Router {
   router.post(
     '/tokens',
     asyncRoute((request) => {
-      const { label } = TokenCreateRequestSchema.parse(request.body);
-      return options.operations.createToken(label, actor(request));
+      const { label, scopes } = TokenCreateRequestSchema.parse(request.body);
+      return options.operations.createToken(label, scopes, actor(request));
     }, 201),
   );
   router.delete(
