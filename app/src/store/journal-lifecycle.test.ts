@@ -265,6 +265,23 @@ describe('journal lifecycle persistence', () => {
     vi.stubGlobal('EventSource', OpeningEventSource);
   };
 
+  it('surfaces a store-owned service-worker registration failure', async () => {
+    pwaMocks.register.mockRejectedValueOnce(new Error('temporary registration failure'));
+
+    await journalActions.initialize();
+    await vi.waitFor(() =>
+      expect(useJournalStore.getState().notices).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            message: 'Offline app setup failed.',
+          }),
+        ]),
+      ),
+    );
+
+    expect(pwaMocks.register).toHaveBeenCalledTimes(1);
+  });
+
   const autoReadyEventSources = (cursor: string): EventTarget[] => {
     const sources: EventTarget[] = [];
     class ReadyEventSource extends EventTarget {

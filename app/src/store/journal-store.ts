@@ -313,6 +313,15 @@ function addErrorNotice(message: string, error?: unknown): void {
   addNotice({ kind: 'error', message: `${message}${detail}` });
 }
 
+function observePwaOperation(operation: () => Promise<void>): void {
+  const expectedGeneration = lifecycleGeneration;
+  void operation().catch((error: unknown) => {
+    if (expectedGeneration === lifecycleGeneration) {
+      addErrorNotice('Offline app setup failed.', error);
+    }
+  });
+}
+
 function ensureSse(): JournalSseClient {
   if (sse) return sse;
   const generation = lifecycleGeneration;
@@ -1800,9 +1809,7 @@ async function initializeJournal(): Promise<void> {
     unsubscribePwa = subscribePwaRegistration((pwaState) => {
       if (generation === lifecycleGeneration) useJournalStore.setState(pwaState);
     });
-    void registerJournalServiceWorker().catch((error: unknown) => {
-      if (generation === lifecycleGeneration) addErrorNotice('Offline app setup failed.', error);
-    });
+    observePwaOperation(registerJournalServiceWorker);
 
     attachLifecycle();
     if (networkAvailable) {
@@ -1859,7 +1866,7 @@ function attachLifecycle(): void {
       connectionStatus: pairingExpired ? 'error' : 'connecting',
     });
     if (!pairingExpired) requestAuthenticatedReconnect();
-    void checkForJournalUpdate();
+    observePwaOperation(checkForJournalUpdate);
   };
   const onOffline = (): void => {
     sseReplayReady = false;
@@ -1884,7 +1891,7 @@ function attachLifecycle(): void {
     if (changedDay) void persistNow();
     if (navigator.onLine) {
       requestAuthenticatedReconnect();
-      void checkForJournalUpdate();
+      observePwaOperation(checkForJournalUpdate);
     } else if (useJournalStore.getState().outbox.length > 0) {
       scheduleOutboxRetry();
     }

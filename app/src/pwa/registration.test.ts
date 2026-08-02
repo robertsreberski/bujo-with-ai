@@ -49,4 +49,72 @@ describe('service-worker registration', () => {
     expect(waitingWorker.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
     unsubscribe();
   });
+
+  it('shares concurrent registration and permits a retry after an observable failure', async () => {
+    vi.stubEnv('PROD', true);
+    const registration = {
+      addEventListener: vi.fn(),
+      installing: null,
+      update: vi.fn().mockResolvedValue(undefined),
+      waiting: null,
+    } as unknown as ServiceWorkerRegistration;
+    let rejectFirstAttempt: ((error: Error) => void) | undefined;
+    const firstAttempt = new Promise<ServiceWorkerRegistration>((_resolve, reject) => {
+      rejectFirstAttempt = reject;
+    });
+    const serviceWorker = {
+      addEventListener: vi.fn(),
+      controller: null,
+      ready: Promise.resolve(registration),
+      register: vi.fn().mockReturnValueOnce(firstAttempt).mockResolvedValueOnce(registration),
+    };
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: serviceWorker,
+    });
+
+    const pwa = await import('./registration');
+    const first = pwa.registerJournalServiceWorker();
+    const concurrent = pwa.registerJournalServiceWorker();
+    expect(serviceWorker.register).toHaveBeenCalledTimes(1);
+
+    const firstRejection = expect(first).rejects.toThrow('temporary registration failure');
+    const concurrentRejection = expect(concurrent).rejects.toThrow(
+      'temporary registration failure',
+    );
+    rejectFirstAttempt?.(new Error('temporary registration failure'));
+    await firstRejection;
+    await concurrentRejection;
+
+    await expect(pwa.registerJournalServiceWorker()).resolves.toBeUndefined();
+    expect(serviceWorker.register).toHaveBeenCalledTimes(2);
+    expect(serviceWorker.addEventListener).toHaveBeenCalledTimes(1);
+    expect(pwa.getPwaRegistrationState().offlineReady).toBe(true);
+  });
+
+  it('uses update checks as a later retry opportunity when registration is absent', async () => {
+    vi.stubEnv('PROD', true);
+    const registration = {
+      addEventListener: vi.fn(),
+      installing: null,
+      update: vi.fn().mockResolvedValue(undefined),
+      waiting: null,
+    } as unknown as ServiceWorkerRegistration;
+    const serviceWorker = {
+      addEventListener: vi.fn(),
+      controller: null,
+      ready: Promise.resolve(registration),
+      register: vi.fn().mockResolvedValue(registration),
+    };
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: serviceWorker,
+    });
+
+    const pwa = await import('./registration');
+    await pwa.checkForJournalUpdate();
+
+    expect(serviceWorker.register).toHaveBeenCalledTimes(1);
+    expect(registration.update).toHaveBeenCalledTimes(1);
+  });
 });
