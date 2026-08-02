@@ -283,6 +283,54 @@ describe('JournalDatabase and backups', () => {
     migrated.close();
   });
 
+  it('restates a filing that named a day, exactly once, and leaves the ambiguous one alone', () => {
+    const root = mkdtempSync(join(tmpdir(), 'journal-date-stated-restate-test-'));
+    roots.push(root);
+    const path = join(root, 'journal.db');
+    const first = new JournalDatabase({ path });
+    const insert = (into: JournalDatabase, id: string, date: string, createdDay: string) =>
+      into.raw
+        .prepare(
+          `INSERT INTO entries(id,date,type,text,state,time,tags,author,source,migrations,
+             collection,date_stated,created_at,updated_at,deleted_at,revision)
+           VALUES (?,?,'task',?,'open',NULL,'[]','me',NULL,0,'month:2026-08',0,?,?,NULL,1)`,
+        )
+        .run(id, date, `Task ${id}`, `${createdDay}T09:00:00.000Z`, `${createdDay}T09:00:00.000Z`);
+
+    // The correction already ran on this fresh database, so seed the pre-fix
+    // shape directly and clear its marker to replay the upgrade.
+    insert(first, '01K1H0000000000000000STATE', '2026-08-14', '2026-08-02');
+    insert(first, '01K1H0000000000000000AMBIG', '2026-08-02', '2026-08-02');
+    first.raw.exec('DELETE FROM date_stated_restate_state');
+    first.close();
+
+    const upgraded = new JournalDatabase({ path });
+    const stated = (id: string) =>
+      upgraded.raw.prepare('SELECT date_stated FROM entries WHERE id=?').pluck().get(id);
+
+    // A date the creation day cannot explain was necessarily chosen.
+    expect(stated('01K1H0000000000000000STATE')).toBe(1);
+    // A date equal to the creation day is indistinguishable from the default.
+    expect(stated('01K1H0000000000000000AMBIG')).toBe(0);
+    expect(upgraded.raw.prepare('SELECT count(*) c FROM date_stated_restate_state').get()).toEqual({
+      c: 1,
+    });
+    upgraded.close();
+
+    // A deliberate inventory filing made after the correction must survive it.
+    const later = new JournalDatabase({ path });
+    insert(later, '01K1H0000000000000000AFTER', '2026-08-20', '2026-08-05');
+    later.close();
+    const reopened = new JournalDatabase({ path });
+    expect(
+      reopened.raw
+        .prepare('SELECT date_stated FROM entries WHERE id=?')
+        .pluck()
+        .get('01K1H0000000000000000AFTER'),
+    ).toBe(0);
+    reopened.close();
+  });
+
   it('keeps migrations 004-006 additive-only and moves data healing to writable startup', () => {
     for (const migration of migrations.filter(({ version }) => version >= 4)) {
       expect(migration.sql).toMatch(/^\s*--\s*journal:migration-mode\s+additive(?:\r?\n|$)/i);

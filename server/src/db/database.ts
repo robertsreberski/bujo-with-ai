@@ -235,6 +235,7 @@ export class JournalDatabase {
       { version: 7, type: 'table', name: 'legacy_summary_reconciliation_state' },
       { version: 8, type: 'index', name: 'idx_entries_stated_day' },
       { version: 8, type: 'table', name: 'date_stated_backfill_state' },
+      { version: 9, type: 'table', name: 'date_stated_restate_state' },
     ] as const;
     const lookup = this.raw.prepare('SELECT type FROM sqlite_master WHERE name = ?');
     for (const object of required) {
@@ -273,6 +274,9 @@ export class JournalDatabase {
     const dateStatedBackfillPending =
       (appliedVersion ?? 0) >= 8 &&
       this.raw.prepare('SELECT 1 FROM date_stated_backfill_state WHERE id=1').get() === undefined;
+    const dateStatedRestatePending =
+      (appliedVersion ?? 0) >= 9 &&
+      this.raw.prepare('SELECT 1 FROM date_stated_restate_state WHERE id=1').get() === undefined;
     const now = this.now().toISOString();
     const reconcile = this.raw.transaction(() => {
       if (hasLegacySummaryProvenance)
@@ -392,6 +396,24 @@ export class JournalDatabase {
         this.raw.exec('UPDATE entries SET date_stated = 0 WHERE collection IS NOT NULL');
         this.raw
           .prepare('INSERT OR IGNORE INTO date_stated_backfill_state(id,completed_at) VALUES (1,?)')
+          .run(now);
+      }
+
+      if (dateStatedRestatePending) {
+        // The 008 backfill was too broad: it stood down filings that had named
+        // a day as well as those that never did. The server's only default is
+        // the creation day, so a date that differs from it was necessarily
+        // stated, and that entry belongs to its day. A date equal to the
+        // creation day is indistinguishable from the default and stays
+        // inventory rather than having a day asserted for it.
+        this.raw.exec(
+          `UPDATE entries SET date_stated = 1
+             WHERE collection IS NOT NULL
+               AND date_stated = 0
+               AND date <> substr(created_at, 1, 10)`,
+        );
+        this.raw
+          .prepare('INSERT OR IGNORE INTO date_stated_restate_state(id,completed_at) VALUES (1,?)')
           .run(now);
       }
     });
