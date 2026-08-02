@@ -151,8 +151,30 @@ time {
   input,
   select,
   textarea {
-    min-height: 40px;
+    min-height: 44px;
     font-size: 16px;
+  }
+}
+
+/* System colors must preserve selected destinations and focus without relying
+ * on the app's subtle fills, which forced-colors mode intentionally replaces. */
+@media (forced-colors: active) {
+  .nav-item--active,
+  .tab--active {
+    outline: 2px solid CanvasText;
+    outline-offset: -2px;
+  }
+
+  .status-strip > *,
+  .entry-row,
+  [role='dialog'] {
+    border-color: CanvasText;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  [tabindex]:focus-visible {
+    outline-color: Highlight;
   }
 }
 

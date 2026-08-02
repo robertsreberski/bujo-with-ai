@@ -92,7 +92,7 @@ export function Dialog({
           <Button
             variant="ghost"
             size="icon"
-            className="size-[26px] touch:size-10"
+            className="size-[26px] touch:size-11"
             onClick={onClose}
             aria-label="Close dialog"
           >
@@ -145,7 +145,7 @@ export function ConfirmDialog({
           <Button
             variant="ghost"
             size="icon"
-            className="size-[26px] touch:size-10"
+            className="size-[26px] touch:size-11"
             onClick={onCancel}
             aria-label="Close dialog"
           >

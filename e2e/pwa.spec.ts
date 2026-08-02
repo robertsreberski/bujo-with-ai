@@ -209,7 +209,7 @@ test('the cached shell launches offline and an offline capture replays after rec
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(page.locator('#journal-content')).toBeVisible();
   await expect(page.locator('.status-strip')).toContainText(
-    /Offline — showing what is available on this device|Journal server unavailable/,
+    /Offline ready — showing what is saved on this device|Offline — showing what is available on this device|Journal server unavailable/,
   );
 
   const text = uniqueText('Offline queued capture');
@@ -256,7 +256,7 @@ test('a draft and queued capture survive page loss through the IndexedDB journal
 
     await context.setOffline(true);
     await expect(restoredPage.locator('.status-strip')).toContainText(
-      'Offline — showing what is available on this device',
+      /Offline ready — showing what is saved on this device|Offline — showing what is available on this device/,
     );
     await restoredPage.getByRole('button', { name: 'Add entry' }).click();
     await expect(restoredPage.getByText(text, { exact: true })).toBeVisible();
@@ -297,6 +297,147 @@ test('a draft and queued capture survive page loss through the IndexedDB journal
   }
 });
 
+test('install guidance is capability-gated, post-capture, and never repeats', async ({ page }) => {
+  await openJournal(page);
+  await expect(page.getByRole('button', { name: 'Install app' })).toHaveCount(0);
+  await page.evaluate(() => {
+    const state = window as Window & { journalInstallPromptCalls?: number };
+    state.journalInstallPromptCalls = 0;
+    const event = new Event('beforeinstallprompt', { cancelable: true }) as Event & {
+      prompt: () => Promise<void>;
+      userChoice: Promise<{ outcome: 'accepted'; platform: string }>;
+    };
+    event.prompt = async () => {
+      state.journalInstallPromptCalls = (state.journalInstallPromptCalls ?? 0) + 1;
+    };
+    event.userChoice = Promise.resolve({ outcome: 'accepted', platform: 'web' });
+    window.dispatchEvent(event);
+  });
+
+  const first = uniqueText('Install-aware Enter capture');
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${first}`);
+  await page.getByRole('combobox', { name: 'Add an entry' }).press('Enter');
+  await expect(page.getByText(first, { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Install app' }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as Window & { journalInstallPromptCalls?: number }).journalInstallPromptCalls ??
+          0,
+      ),
+    )
+    .toBe(1);
+
+  const second = uniqueText('No repeated install capture');
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${second}`);
+  await page.getByRole('combobox', { name: 'Add an entry' }).press('Enter');
+  await expect(page.getByText(second, { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Install app' })).toHaveCount(0);
+});
+
+test('offline Search remains useful for downloaded entries', async ({ context, page }) => {
+  await openJournal(page);
+  const text = uniqueText('Downloaded search result');
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text} #downloaded`);
+  await page.getByRole('button', { name: 'Add entry' }).click();
+  await expect(page.getByText(text, { exact: true })).toBeVisible();
+
+  await context.setOffline(true);
+  try {
+    await page
+      .locator('.sidebar')
+      .getByRole('button', { name: /^Search/ })
+      .click();
+    await page.getByRole('searchbox', { name: 'Search entries and tags' }).fill(text);
+    await expect(
+      page
+        .getByRole('status')
+        .filter({ hasText: 'Search unavailable — showing downloaded entries.' }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('dialog', { name: 'Search journal' }).getByText(text, { exact: true }),
+    ).toBeVisible();
+  } finally {
+    await context.setOffline(false);
+  }
+});
+
+test('malformed routes canonicalize and missing resources fail without breaking the shell', async ({
+  context,
+  page,
+}) => {
+  await page.goto('/?date=2026-02-30');
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('heading', { level: 1, name: 'Timeline' })).toBeVisible();
+
+  await page.goto('/c/%E0%A4%A');
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('#journal-content')).toBeVisible();
+
+  await page.goto('/c/missing-project');
+  await expect(page.getByRole('heading', { name: 'Collection not found' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to Index' }).click();
+  await expect(page).toHaveURL(/\/index$/);
+
+  const missingAsset = await context.request.get('/icons/does-not-exist.png', {
+    headers: { Accept: 'image/png' },
+  });
+  expect(missingAsset.status()).toBe(404);
+  await expect(page.locator('#journal-content')).toBeVisible();
+});
+
+test('pairing expiry preserves the capture locally until a reload pairs and replays it', async ({
+  context,
+  page,
+}) => {
+  await openJournal(page);
+  await context.clearCookies();
+  const text = uniqueText('Pairing-expiry capture');
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text}`);
+  await page.getByRole('combobox', { name: 'Add an entry' }).press('Enter');
+  await expect(page.getByText(text, { exact: true })).toBeVisible();
+  await expect(page.locator('.status-strip')).toContainText(/Pairing expired/);
+  await page.getByRole('button', { name: /Pairing expired.*Reload/ }).click();
+
+  await expect(page.getByText(text, { exact: true })).toBeVisible();
+  await expect(page.locator('.status-strip').filter({ hasText: 'Pairing expired' })).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const response = await context.request.get(`/api/entries?q=${encodeURIComponent(text)}`);
+      if (!response.ok()) return false;
+      const body = (await response.json()) as { items?: Array<{ text?: string }> };
+      return body.items?.some((entry) => entry.text === text) ?? false;
+    })
+    .toBe(true);
+});
+
+test('an installed offline deep link survives a full page restart', async ({ context, page }) => {
+  await openJournal(page);
+  const today = await page.evaluate(async () => {
+    const response = await fetch('/api/bootstrap');
+    const body = (await response.json()) as { today: string };
+    await navigator.serviceWorker.ready;
+    return body.today;
+  });
+  await expect
+    .poll(() => page.evaluate(() => navigator.serviceWorker.controller?.scriptURL ?? null))
+    .toMatch(/\/sw\.js$/);
+  await page.close();
+
+  await context.setOffline(true);
+  const restarted = await context.newPage();
+  try {
+    await restarted.goto(`/month?month=${today.slice(0, 7)}`, { waitUntil: 'domcontentloaded' });
+    await expect(restarted.locator('#journal-content')).toBeVisible();
+    await expect(restarted).toHaveURL(new RegExp(`/month\\?month=${today.slice(0, 7)}$`));
+    await expect(restarted.getByRole('region', { name: 'Monthly log', exact: true })).toBeVisible();
+  } finally {
+    await restarted.close();
+    await context.setOffline(false);
+  }
+});
+
 test('an offline tomorrow capture after browser midnight replays to its intended date', async ({
   baseURL,
   context,
@@ -328,7 +469,7 @@ test('an offline tomorrow capture after browser midnight replays to its intended
 
   await context.setOffline(true);
   await expect(page.locator('.status-strip')).toContainText(
-    'Offline — showing what is available on this device',
+    /Offline ready — showing what is saved on this device|Offline — showing what is available on this device/,
   );
   await page.clock.fastForward(60_000);
   await expect(page.locator(`[data-day="${browserTomorrow}"]`)).toBeVisible();

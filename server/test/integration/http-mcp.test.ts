@@ -760,6 +760,14 @@ describe('one-origin HTTP application', () => {
         .expect(200);
       expect(response.text).toContain('<title>Journal shell</title>');
       expect(response.headers['cache-control']).toBe('no-cache');
+
+      const malformedDeepLink = await request(application.app)
+        .get('/c/%E0%A4%A')
+        .set('Host', 'localhost:5178')
+        .set('Accept', 'text/html')
+        .expect(200);
+      expect(malformedDeepLink.text).toContain('<title>Journal shell</title>');
+      expect(malformedDeepLink.headers['cache-control']).toBe('no-cache');
     } finally {
       await application.close();
       rmSync(hiddenRoot, { recursive: true, force: true });

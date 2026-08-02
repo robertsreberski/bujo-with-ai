@@ -70,7 +70,7 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
 
   /*
    * DS-14 control heights. The phone projects are the coarse-pointer ones, so
-   * they are the only place the 40px touch minimum applies; the pointer-precise
+   * they are the only place the 44px primary-target minimum applies; the pointer-precise
    * layouts use the tighter desk metrics — 34px sidebar nav rows on the wide
    * layout, 30px tab segments on the mid layout, and a 36px composer trio.
    */
@@ -80,8 +80,8 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
     testInfo.project.name === 'chromium-short' ||
     testInfo.project.name === 'chromium-landscape' ||
     testInfo.project.name === 'webkit-iphone';
-  const primaryMinimum = isPhone ? 40 : testInfo.project.name === 'chromium-desktop' ? 34 : 30;
-  const composerMinimum = isPhone ? 40 : 36;
+  const primaryMinimum = isPhone ? 44 : testInfo.project.name === 'chromium-desktop' ? 34 : 30;
+  const composerMinimum = isPhone ? 44 : 36;
 
   // The untouched composer is one row. Focusing it restores the full capture
   // grammar without changing the owner's draft or filing path.
@@ -221,7 +221,9 @@ test('mobile chrome names the route instead of repeating the app name', async ({
   await expect(title).toHaveText('Activity');
 });
 
-test('all mobile form and dialog controls keep 40px touch targets', async ({ page }, testInfo) => {
+test('mobile controls keep named touch targets and primary actions reach 44px', async ({
+  page,
+}, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-narrow');
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openJournal(page);
@@ -229,6 +231,15 @@ test('all mobile form and dialog controls keep 40px touch targets', async ({ pag
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
   await expectTouchTargets(page, 'Settings');
+  for (const primary of [
+    page.getByRole('button', { name: 'Close dialog' }),
+    page.getByRole('button', { name: 'Create token' }),
+    page.getByRole('button', { name: 'Open recovery' }),
+  ]) {
+    const box = await primary.boundingBox();
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+    expect(box?.width).toBeGreaterThanOrEqual(44);
+  }
   await page.keyboard.press('Escape');
 
   await page.getByRole('button', { name: 'Index', exact: true }).click();

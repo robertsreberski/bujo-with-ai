@@ -1987,6 +1987,12 @@ async function promoteReleaseLocked({
       if (typeof field !== 'string' || field.trim() === '')
         throw new Error(`Device ${name} is empty.`);
     }
+    if (device.status === 'DEVICE HANDOFF') {
+      const targets = device.handoff?.targets;
+      if (!Array.isArray(targets) || !targets.includes('iPhone') || !targets.includes('iPad')) {
+        throw new Error('Device handoff must explicitly assign both iPhone and iPad targets.');
+      }
+    }
     assertDeviceLedgerConsistency(ledger, device);
 
     assertCurrentPointer(context, currentLink);

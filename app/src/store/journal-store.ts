@@ -2539,6 +2539,7 @@ function attachLifecycle(): void {
     if (changedDay) void persistNow();
     if (navigator.onLine) {
       requestAuthenticatedReconnect();
+      void checkForJournalUpdate();
     } else if (useJournalStore.getState().outbox.length > 0) {
       scheduleOutboxRetry();
     }

@@ -181,10 +181,12 @@ the same stamp.
 
 ## 6. Record physical-device provenance
 
-### The physical-iPhone checklist
+### The physical iPhone and iPad checklist
 
-Run every check on a notched iPhone with the release installed to the home screen, in standalone
-mode. This list is authoritative; it moved here from the retired SPEC-05 when v1 shipped.
+Run every check on both a notched iPhone and an iPad with the release installed to the home screen,
+in standalone mode, over the Tailnet origin. Record the model, OS, orientation, and result for each;
+browser emulation is useful preflight evidence but is never a physical-device pass. This list is
+authoritative; it moved here from the retired SPEC-05 when v1 shipped.
 
 1. No white/black bar at top or bottom; status-bar area painted `#16130F`.
 2. Composer sits flush above the keyboard while typing; no jitter while typing; it neither shifts
@@ -200,10 +202,10 @@ mode. This list is authoritative; it moved here from the retired SPEC-05 when v1
 9. Open an entry sheet with the keyboard raised, then the destination picker's "New collection"
    field: both must stay above the keyboard — the one known divergence this list leaves open.
 
-### Record the handoff
+### Record the dual-device handoff
 
-The physical-iPhone checklist is explicitly approved as a handoff. Record the assignee and exact
-checklist reference without inventing device results:
+The physical-device checklist is explicitly approved as a handoff. Record the assignee, both target
+classes, and exact checklist reference without inventing device results:
 
 ```zsh
 STAMP=$(jq -er '.releaseStamp' "$CONTEXT")
@@ -217,14 +219,16 @@ EVIDENCE=${CONTEXT:h}
   --output "$EVIDENCE/device-$STAMP.json" \
   --status 'DEVICE HANDOFF' \
   --assignee 'Robert' \
-  --checklist-reference 'operations.md section 6, nine physical-iPhone checks' \
-  --notes 'Assigned for owner execution; this release does not claim a device pass.'
+  --device-targets 'iPhone,iPad' \
+  --checklist-reference 'operations.md section 6, nine checks on physical iPhone and iPad' \
+  --notes 'Assigned for owner execution on both targets; emulation is not a device pass.'
 ```
 
-The handoff remains bound to the release stamp, base commit, manifest SHA-256, and archive SHA-256.
+The artifact records `handoff.targets` as `iPhone` and `iPad` and remains bound to the release stamp,
+base commit, manifest SHA-256, and archive SHA-256.
 It refuses stale manifest or archive bytes. Only an actual `PASS` record requires and accepts a
 concrete device model, iOS version, and Tailnet account. In the release ledger, record this gate as
-`EVIDENCE: device-<release-stamp>.json; assignee and section 6 physical-iPhone checklist` with result
+`EVIDENCE: device-<release-stamp>.json; assignee and section 6 physical iPhone/iPad checklist` with result
 `DEVICE HANDOFF`; do not reuse the template's intended-evidence text.
 
 ## 7. Capture final context-bound live evidence

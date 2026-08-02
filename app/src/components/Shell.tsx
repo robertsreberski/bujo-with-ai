@@ -20,6 +20,8 @@ interface ShellProps {
   route: JournalRoute;
   today: string;
   journalStatus: JournalStatus;
+  offlineReady: boolean;
+  updateReady: boolean;
   counts?: ShellCounts;
   title: string;
   subtitle: string;
@@ -31,6 +33,7 @@ interface ShellProps {
   onRetryConnection: () => void;
   onRetryLocalSave: () => void;
   onReload: () => void;
+  onActivateUpdate: () => void;
   onOpenRecovery: () => void;
 }
 
@@ -56,19 +59,21 @@ const badgeLabel = (count: number): string => (count > 9 ? '9+' : String(count))
 const contentColumn = 'mx-auto w-full max-w-(--content-width)';
 
 /* DS-14 chrome density: 34px sidebar rows and 30px tab segments, both inflated
-   to the 40px coarse-pointer minimum through the `touch:` variant. */
+   to the 44px primary-target minimum through the `touch:` variant. */
 const navItemClassName =
-  'flex h-[34px] items-center gap-[9px] rounded-md px-[9px] text-left text-md hover:bg-bg-line hover:text-fg touch:min-h-10';
+  'flex h-[34px] items-center gap-[9px] rounded-md px-[9px] text-left text-md hover:bg-bg-line hover:text-fg touch:min-h-11';
 /* A counted segment carries label + badge, so the tab is a centred flex row and
    clips rather than wraps: two lines would not fit its 30px box, and an
    overflowing one would widen the 320px frame the narrow sweep measures. */
 const tabClassName =
-  'flex h-[30px] min-w-0 items-center justify-center gap-1.5 overflow-hidden rounded-md text-sm font-medium whitespace-nowrap touch:min-h-10';
+  'flex h-[30px] min-w-0 items-center justify-center gap-1.5 overflow-hidden rounded-md text-sm font-medium whitespace-nowrap touch:min-h-11';
 
 export function Shell({
   route,
   today,
   journalStatus,
+  offlineReady,
+  updateReady,
   counts,
   title,
   subtitle,
@@ -80,6 +85,7 @@ export function Shell({
   onRetryConnection,
   onRetryLocalSave,
   onReload,
+  onActivateUpdate,
   onOpenRecovery,
 }: ShellProps) {
   const paneRef = useRef<HTMLDivElement>(null);
@@ -136,8 +142,10 @@ export function Shell({
           variant: 'statusOffline' as const,
           message:
             journalStatus.pendingChanges > 0
-              ? `Offline — ${pendingChanges}`
-              : 'Offline — showing what is available on this device',
+              ? `${offlineReady ? 'Offline ready' : 'Offline'} — ${pendingChanges}`
+              : offlineReady
+                ? 'Offline ready — showing what is saved on this device'
+                : 'Offline — showing what is available on this device',
           action: null,
           onAction: null,
         };
@@ -167,7 +175,8 @@ export function Shell({
     showPending ||
     journalStatus.synchronization === 'syncing' ||
     journalStatus.failedChanges > 0 ||
-    localSaveUnavailable;
+    localSaveUnavailable ||
+    updateReady;
   return (
     <div className="flex h-[var(--app-height,100vh)] justify-center bg-bg-page">
       <div className="app-frame relative flex h-full w-full min-w-0 overflow-hidden bg-bg pr-(--sar) pl-(--sal) min-[680px]:max-w-[860px] min-[680px]:border-x min-[680px]:border-border min-[1024px]:max-w-[1160px]">
@@ -371,6 +380,16 @@ export function Shell({
                       {journalStatus.failedChanges === 1 ? '' : 's'} need attention
                       <span className="font-semibold underline underline-offset-2">
                         Open recovery
+                      </span>
+                    </button>
+                  </Badge>
+                ) : null}
+                {updateReady ? (
+                  <Badge asChild variant="status" className="min-h-8 touch:min-h-11">
+                    <button type="button" onClick={onActivateUpdate}>
+                      <Icon name="download" size={12} /> Update ready
+                      <span className="font-semibold underline underline-offset-2">
+                        Reload safely
                       </span>
                     </button>
                   </Badge>
