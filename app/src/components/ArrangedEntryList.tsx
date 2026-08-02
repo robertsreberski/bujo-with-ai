@@ -1,5 +1,5 @@
 import { Fragment } from 'react';
-import type { LogArrangement } from '../views/log-arrangement';
+import type { LogArrangement } from '../domain/log-arrangement';
 import { SECTION_EMPTY } from '../views/view-classes';
 import { EntryRow } from './EntryRow';
 import { Icon } from './Icon';

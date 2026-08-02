@@ -7,8 +7,6 @@ import type { IndexResponse } from '../api/types';
 import type { JournalCollection } from '../components/types';
 import { IndexView } from './IndexView';
 
-vi.mock('../store/journal-store', () => ({ journalActions: { focusComposer: vi.fn() } }));
-
 afterEach(cleanup);
 
 const collection = (
@@ -53,6 +51,7 @@ const renderIndex = (
     onOpenSearch: vi.fn(),
     onCreateCollection: vi.fn(),
     onUpdateCollection: vi.fn(),
+    onAddToCollection: vi.fn(),
   };
   render(<IndexView index={index} {...callbacks} {...state} />);
   return callbacks;

@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { JournalCollection, JournalEntry } from '../components/types';
 import { CollectionView } from './CollectionView';
-import { DEFAULT_LOG_VIEW, type LogViewConfig } from './log-arrangement';
+import { DEFAULT_LOG_VIEW, type LogViewConfig } from '../domain/log-arrangement';
 
 afterEach(cleanup);
 
@@ -46,6 +46,7 @@ const renderCollection = (entries: JournalEntry[], logView: LogViewConfig = DEFA
       onOpenEntry={vi.fn()}
       onToggleEntry={vi.fn()}
       onLogViewChange={vi.fn()}
+      onAddToCollection={vi.fn()}
     />,
   );
 

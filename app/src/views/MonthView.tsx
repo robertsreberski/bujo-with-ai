@@ -6,8 +6,7 @@ import { Icon } from '../components/Icon';
 import { Button } from '../components/ui/button';
 import { daysInMonth, formatLongDate, formatMonth, mondayStartOffset } from '../components/dates';
 import { cn } from '../lib/utils';
-import { journalActions } from '../store/journal-store';
-import { arrangeLog, logMetaLabel, type LogViewConfig } from './log-arrangement';
+import { arrangeLog, logMetaLabel, type LogViewConfig } from '../domain/log-arrangement';
 import {
   CALENDAR_DAY,
   CARD,
@@ -40,6 +39,7 @@ interface MonthViewProps {
   onSaveSummary: (summary: JournalSummary) => void;
   onRewriteSummary: (summary: JournalSummary) => void;
   onLogViewChange: (config: LogViewConfig) => void;
+  onAddToMonthlyLog: () => void;
 }
 
 const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
@@ -65,6 +65,7 @@ export function MonthView({
   onSaveSummary,
   onRewriteSummary,
   onLogViewChange,
+  onAddToMonthlyLog,
 }: MonthViewProps) {
   const datedEntries = useMemo(
     () =>
@@ -122,8 +123,7 @@ export function MonthView({
   );
   // The month log is a server-owned collection, so an invite files into it by
   // id rather than by date — the same address the schedule action uses.
-  const addToMonthlyLog = () =>
-    journalActions.focusComposer({ kind: 'collection', id: `month:${month}` });
+  const addToMonthlyLog = onAddToMonthlyLog;
   const habits = useMemo(() => {
     const names = [
       ...new Set(

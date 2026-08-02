@@ -1,5 +1,7 @@
 import type { TagUsage } from '@journal/server/contracts/app';
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useId,
@@ -10,9 +12,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react';
-import { CaptureHelp } from './CaptureHelp';
 import { ComposerSuggestions } from './ComposerSuggestions';
-import { DestinationChip } from './DestinationChip';
 import { Icon } from './Icon';
 import { parseDraft, removeCaptureToken, type CaptureTokenKind } from './capture';
 import {
@@ -34,6 +34,13 @@ import {
   type JournalCollection,
   type ParsedDraft,
 } from './types';
+
+const DestinationChip = lazy(async () => ({
+  default: (await import('./DestinationChip')).DestinationChip,
+}));
+const CaptureHelp = lazy(async () => ({
+  default: (await import('./CaptureHelp')).CaptureHelp,
+}));
 
 /*
  * `text-(length:--text-tag)`: tailwind-merge reads the bare `text-tag` size as a
@@ -498,17 +505,26 @@ export function Composer({
              * the later element — takes the taps meant for it.
              */}
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 touch:gap-y-2">
-              <DestinationChip
-                resolved={resolved}
-                route={route}
-                today={today}
-                collections={collections}
-                collectionsById={collectionsById}
-                screenDestination={screenDestination}
-                onSelect={selectDestination}
-                onClear={clearDestination}
-                onRestoreFocus={focusInput}
-              />
+              <Suspense
+                fallback={
+                  <span
+                    className="h-6 w-24 rounded-sm border border-border bg-bg-line"
+                    aria-label="Opening destination picker"
+                  />
+                }
+              >
+                <DestinationChip
+                  resolved={resolved}
+                  route={route}
+                  today={today}
+                  collections={collections}
+                  collectionsById={collectionsById}
+                  screenDestination={screenDestination}
+                  onSelect={selectDestination}
+                  onClear={clearDestination}
+                  onRestoreFocus={focusInput}
+                />
+              </Suspense>
               <div
                 className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 touch:gap-y-2"
                 aria-live="polite"
@@ -553,7 +569,16 @@ export function Composer({
                 ) : null}
               </div>
             </div>
-            <CaptureHelp />
+            <Suspense
+              fallback={
+                <span
+                  className="size-7 flex-none rounded-md bg-bg-line"
+                  aria-label="Opening capture help"
+                />
+              }
+            >
+              <CaptureHelp />
+            </Suspense>
           </div>
         ) : null}
         <form

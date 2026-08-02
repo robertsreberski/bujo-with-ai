@@ -14,6 +14,22 @@ const PRECACHE_EXCLUDED = /^splash[/\\]/;
 const MCP_CONTRACT_MODULE_SUFFIX = '/server/src/contracts/mcp.ts';
 const PUBLIC_DIRECTORY = fileURLToPath(new URL('./public', import.meta.url));
 const INDEX_HTML = fileURLToPath(new URL('./index.html', import.meta.url));
+export const APP_ENTRY_RAW_BUDGET_BYTES = 500_000;
+
+type PrecacheOutput =
+  | { fileName: string; type: 'asset'; source: string | Uint8Array }
+  | { fileName: string; type: 'chunk'; code: string };
+
+type GraphOutput =
+  | { fileName: string; type: 'asset' }
+  | {
+      fileName: string;
+      type: 'chunk';
+      name: string;
+      isEntry: boolean;
+      imports: string[];
+      code: string;
+    };
 
 function sourceText(source: string | Uint8Array): string {
   return typeof source === 'string' ? source : new TextDecoder().decode(source);
@@ -41,6 +57,75 @@ export function journalShellRevision(
     .slice(0, 16);
 }
 
+/** Every emitted application asset, including chunks reached only through dynamic import. */
+export function emittedPrecacheEntries(
+  outputs: readonly PrecacheOutput[],
+): Array<{ url: string; revision: string }> {
+  return outputs
+    .filter((output) => output.fileName !== 'sw.js' && !output.fileName.endsWith('.map'))
+    .map((output) => {
+      const contents = output.type === 'asset' ? sourceText(output.source) : output.code;
+      return {
+        url: `/${output.fileName}`,
+        revision: createHash('sha256').update(contents).digest('hex').slice(0, 16),
+      };
+    });
+}
+
+/** Raw JS bytes fetched before the first dynamic-import boundary. */
+export function appEntryStaticGraph(outputs: readonly GraphOutput[]): {
+  bytes: number;
+  files: string[];
+} {
+  const entry = outputs.find(
+    (output) => output.type === 'chunk' && output.isEntry && output.name === 'app',
+  );
+  if (!entry || entry.type !== 'chunk')
+    throw new Error('The Journal app entry chunk was not emitted.');
+
+  const chunks = new Map(
+    outputs.flatMap((output) =>
+      output.type === 'chunk' ? [[output.fileName, output] as const] : [],
+    ),
+  );
+  const visited = new Set<string>();
+  const visit = (fileName: string) => {
+    if (visited.has(fileName)) return;
+    const chunk = chunks.get(fileName);
+    if (!chunk) return;
+    visited.add(fileName);
+    for (const imported of chunk.imports) visit(imported);
+  };
+  visit(entry.fileName);
+
+  const files = [...visited].sort();
+  return {
+    files,
+    bytes: files.reduce(
+      (total, fileName) =>
+        total + new TextEncoder().encode(chunks.get(fileName)?.code ?? '').length,
+      0,
+    ),
+  };
+}
+
+/** Keeps startup growth visible even when Rollup moves code into shared static chunks. */
+export function appEntryBudgetPlugin(limit = APP_ENTRY_RAW_BUDGET_BYTES): Plugin {
+  return {
+    name: 'journal-app-entry-budget',
+    apply: 'build',
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      const graph = appEntryStaticGraph(Object.values(bundle));
+      if (graph.bytes <= limit) return;
+      this.error(
+        `Journal startup graph is ${graph.bytes.toLocaleString('en-US')} raw bytes; ` +
+          `the budget is ${limit.toLocaleString('en-US')} bytes (${graph.files.join(', ')}).`,
+      );
+    },
+  };
+}
+
 /** Injects a revisioned precache list without the vulnerable Workbox build toolchain. */
 export function journalServiceWorkerPlugin(): Plugin {
   return {
@@ -48,15 +133,7 @@ export function journalServiceWorkerPlugin(): Plugin {
     apply: 'build',
     enforce: 'post',
     generateBundle(_options, bundle) {
-      const emittedManifest = Object.values(bundle)
-        .filter((output) => output.fileName !== 'sw.js' && !output.fileName.endsWith('.map'))
-        .map((output) => {
-          const contents = output.type === 'asset' ? sourceText(output.source) : output.code;
-          return {
-            url: `/${output.fileName}`,
-            revision: createHash('sha256').update(contents).digest('hex').slice(0, 16),
-          };
-        });
+      const emittedManifest = emittedPrecacheEntries(Object.values(bundle));
       const publicManifest = publicFiles()
         .filter((path) => !PRECACHE_EXCLUDED.test(relative(PUBLIC_DIRECTORY, path)))
         .map((path) => {
@@ -126,6 +203,7 @@ export default defineConfig({
     // Vite's esbuild minifier handles CSS instead, preserving specified values.
     tailwindcss({ optimize: false }),
     browserContractBoundaryPlugin(),
+    appEntryBudgetPlugin(),
     journalServiceWorkerPlugin(),
   ],
   build: {

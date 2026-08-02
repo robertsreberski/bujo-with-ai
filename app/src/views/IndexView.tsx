@@ -11,7 +11,6 @@ import {
 } from '../components/ui/dialog-classes';
 import { formatMonth } from '../components/dates';
 import { cn } from '../lib/utils';
-import { journalActions } from '../store/journal-store';
 import {
   CARD,
   SECTION,
@@ -45,6 +44,7 @@ interface IndexViewProps {
   onOpenCollection: (collection: JournalCollection) => void;
   onOpenMonth: (month: string) => void;
   onOpenSearch: (query: string) => void;
+  onAddToCollection: (collection: JournalCollection) => void;
   onCreateCollection: (input: { id: string; name: string; note: string | null }) => void;
   onUpdateCollection: (
     id: string,
@@ -144,6 +144,7 @@ export function IndexView({
   onOpenCollection,
   onOpenMonth,
   onOpenSearch,
+  onAddToCollection,
   onCreateCollection,
   onUpdateCollection,
 }: IndexViewProps) {
@@ -267,9 +268,7 @@ export function IndexView({
                   className={INDEX_ROW_ACTION}
                   type="button"
                   aria-label={`Add to ${collection.name}`}
-                  onClick={() =>
-                    journalActions.focusComposer({ kind: 'collection', id: collection.id })
-                  }
+                  onClick={() => onAddToCollection(collection)}
                 >
                   <Icon name="plus" size={14} />
                 </button>

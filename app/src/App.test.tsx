@@ -133,6 +133,18 @@ describe('App resource loading', () => {
     await waitFor(() => expect(loadIndex).toHaveBeenCalledTimes(1));
     expect(loadEntries).not.toHaveBeenCalled();
   });
+
+  it('keeps an Index deep link stable while its route chunk resolves', async () => {
+    window.history.replaceState(null, '', '/index');
+    useJournalStore.setState({
+      index: { collections: [], months: [], types: [], savedViews: [] },
+    });
+
+    render(<App />);
+
+    expect(await screen.findByLabelText('Journal index')).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/index');
+  });
 });
 
 describe('App Activity acknowledgement', () => {
@@ -154,6 +166,58 @@ describe('App Activity acknowledgement', () => {
     render(<App />);
 
     await waitFor(() => expect(loadEntry).toHaveBeenCalledWith('01K1H000000000000000000042'));
+  });
+
+  it('opens a locally known entry deep link through the deferred detail surface', async () => {
+    const entry: Entry = {
+      id: '01K1H000000000000000000043',
+      date: TODAY,
+      type: 'task',
+      text: 'Review the release notes',
+      state: 'open',
+      time: null,
+      tags: [],
+      author: 'me',
+      source: null,
+      migrations: 0,
+      collection: null,
+      createdAt: `${TODAY}T09:00:00.000Z`,
+      updatedAt: `${TODAY}T09:00:00.000Z`,
+      revision: 1,
+      deletedAt: null,
+    };
+    window.history.replaceState(null, '', `/activity?entry=${entry.id}`);
+    useJournalStore.setState({ entriesById: { [entry.id]: entry } });
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole('dialog', { name: 'Review the release notes' }),
+    ).toBeInTheDocument();
+    expect(window.location.search).toBe(`?entry=${entry.id}`);
+  });
+});
+
+describe('App deferred dialogs', () => {
+  it('opens and closes Settings without changing the current route', async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(null, '', '/index');
+    useJournalStore.setState({
+      index: { collections: [], months: [], types: [], savedViews: [] },
+    });
+    render(<App />);
+    await screen.findByLabelText('Journal index');
+    const trigger = screen.getAllByRole('button', { name: 'Settings' })[0] as HTMLButtonElement;
+
+    await user.click(trigger);
+    const close = await waitFor(() => screen.getByRole('button', { name: 'Close dialog' }));
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/index');
+
+    await user.click(close);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull());
+    expect(trigger).toHaveFocus();
+    expect(window.location.pathname).toBe('/index');
   });
 });
 
