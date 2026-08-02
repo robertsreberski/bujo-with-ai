@@ -25,6 +25,10 @@ vi.mock('./store/journal-store', async (importOriginal) => {
       shutdown: vi.fn(),
       refreshTokens: vi.fn(() => Promise.resolve()),
       loadTagSuggestions: vi.fn(),
+      loadIndex: vi.fn(() =>
+        Promise.resolve({ collections: [], months: [], types: [], savedViews: [] }),
+      ),
+      loadEntries: vi.fn(() => Promise.resolve([])),
       createEntry: vi.fn(() => Promise.resolve({} as Entry)),
       createCollection: vi.fn(() => Promise.resolve({} as Collection)),
     },
@@ -43,6 +47,8 @@ const reading: Collection = {
 
 const createEntry = vi.mocked(journalActions.createEntry);
 const createCollection = vi.mocked(journalActions.createCollection);
+const loadIndex = vi.mocked(journalActions.loadIndex);
+const loadEntries = vi.mocked(journalActions.loadEntries);
 
 beforeAll(() => {
   globalThis.ResizeObserver ??= class {
@@ -68,6 +74,7 @@ beforeEach(() => {
     draft: '',
     defaultType: 'task',
     entriesById: {},
+    index: null,
     collectionsById: { reading },
     notices: [],
     composerPreset: null,
@@ -100,6 +107,24 @@ describe('App resource loading', () => {
 
     expect(screen.getByText('Opening your local journal…')).toBeInTheDocument();
     expect(screen.queryByLabelText('Add an entry')).not.toBeInTheDocument();
+  });
+
+  it('opens Index through its aggregate read model instead of lifetime hydration', async () => {
+    window.history.replaceState(null, '', '/index');
+    useJournalStore.setState({
+      hydrated: true,
+      loading: false,
+      resourceStatus: 'ready',
+      networkOnline: true,
+      online: true,
+      connectionStatus: 'connected',
+      cursor: 'epoch:9',
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(loadIndex).toHaveBeenCalledTimes(1));
+    expect(loadEntries).not.toHaveBeenCalled();
   });
 });
 

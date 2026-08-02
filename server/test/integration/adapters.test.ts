@@ -467,6 +467,12 @@ describe('HTTP and MCP domain adapters', () => {
       type: 'note',
       collection: 'projects',
     });
+    advance();
+    const monthly = createdEntry(domain, owner, {
+      text: 'Monthly planning thought',
+      type: 'note',
+      collection: 'month:2026-08',
+    });
 
     const page = (await adapters.api.timeline({ limit: 100 }, owner)) as {
       items: Entry[];
@@ -477,6 +483,7 @@ describe('HTTP and MCP domain adapters', () => {
     };
 
     expect(page.items.map((entry) => entry.id)).toEqual([filed.id, daily.id]);
+    expect(page.items.map((entry) => entry.id)).not.toContain(monthly.id);
     expect(new Set(page.items.map((entry) => entry.id)).size).toBe(page.items.length);
     expect(page.collections).toEqual([
       expect.objectContaining({ id: 'projects', name: 'Projects' }),
@@ -551,7 +558,7 @@ describe('HTTP and MCP domain adapters', () => {
     expect(new Set([...first.items, ...second.items].map((entry) => entry.id)).size).toBe(200);
   });
 
-  it('indexes months with data and returns every entry in a collection resource', async () => {
+  it('indexes every owning month and returns every entry in a collection resource', async () => {
     const statements: string[] = [];
     const { domain, owner, adapters } = fixture((sql) => statements.push(sql));
     domain.createCollection({ id: 'ideas', name: 'Ideas' }, owner);
@@ -576,11 +583,12 @@ describe('HTTP and MCP domain adapters', () => {
 
     const index = (await adapters.mcp.index()) as {
       collections: Array<Collection & { count: number }>;
-      months: Array<Collection & { count: number }>;
+      months: Array<{ month: string; count: number }>;
     };
     expect(index.collections.find((collection) => collection.id === 'ideas')?.count).toBe(105);
-    expect(index.months.map((month) => ({ id: month.id, count: month.count }))).toEqual([
-      { id: 'month:2026-08', count: 1 },
+    expect(index.months).toEqual([
+      { month: '2026-08', count: 1 },
+      { month: '2026-07', count: 105 },
     ]);
 
     statements.length = 0;
@@ -593,6 +601,55 @@ describe('HTTP and MCP domain adapters', () => {
     const reads = statements.filter((sql) => /^SELECT\b/i.test(sql.trim()));
     expect(reads).toHaveLength(3);
     expect(reads.join('\n')).not.toMatch(/\bOFFSET\b|count\s*\(/i);
+  });
+
+  it('serves a bounded aggregate index across a large history and counts persisted queries', async () => {
+    const statements: string[] = [];
+    const { database, domain, owner, adapters } = fixture((sql) => statements.push(sql));
+    domain.createCollection({ id: 'ideas', name: 'Ideas' }, owner);
+    domain.setSettings(
+      {
+        savedViews: [{ id: 'large-notes', name: 'Large notes', query: 'Large fixture' }],
+      },
+      owner,
+    );
+    const insert = database.raw.prepare(
+      `INSERT INTO entries(
+        id,date,type,text,state,time,tags,author,source,migrations,collection,
+        created_at,updated_at,deleted_at,revision
+      ) VALUES (?,?,'note',?,'logged',NULL,'[]','me',NULL,0,'ideas',?,?,NULL,1)`,
+    );
+    database.raw.transaction(() => {
+      for (let index = 0; index < 2_500; index += 1) {
+        const timestamp = '2026-07-31T09:00:00.000Z';
+        insert.run(
+          ulid(),
+          index % 2 === 0 ? '2026-08-05' : '2026-09-05',
+          `Large fixture ${index}`,
+          timestamp,
+          timestamp,
+        );
+      }
+    })();
+
+    statements.length = 0;
+    const index = (await adapters.api.getIndex(owner)) as {
+      collections: Array<Collection & { count: number }>;
+      months: Array<{ month: string; count: number }>;
+      savedViews: Array<{ id: string; query: string; count: number }>;
+    };
+
+    expect(index.collections).toEqual([expect.objectContaining({ id: 'ideas', count: 2_500 })]);
+    expect(index.months).toEqual([
+      { month: '2026-09', count: 1_250 },
+      { month: '2026-08', count: 1_250 },
+    ]);
+    expect(index.savedViews).toEqual([
+      { id: 'large-notes', name: 'Large notes', query: 'Large fixture', count: 2_500 },
+    ]);
+    const reads = statements.filter((sql) => /^SELECT\b/iu.test(sql.trim()));
+    expect(reads).toHaveLength(5);
+    expect(reads.join('\n')).not.toMatch(/SELECT\s+e\.\*|\bLIMIT\b|\bOFFSET\b/iu);
   });
 
   it('pages through more than 500 same-timestamp activity rows without skips', async () => {

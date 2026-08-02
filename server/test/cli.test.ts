@@ -114,7 +114,7 @@ describe('journald CLI durability boundaries', () => {
     roots.push(root);
     const database = new JournalDatabase({ path: join(root, 'journal.db') });
     database.raw.exec(
-      'DROP INDEX idx_entries_page; DELETE FROM schema_migrations WHERE version = 3',
+      'DROP INDEX idx_entries_page; DELETE FROM schema_migrations WHERE version >= 3',
     );
     database.close();
     const exportPath = join(root, 'export.json');

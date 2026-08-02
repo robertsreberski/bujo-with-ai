@@ -122,8 +122,12 @@ describe('capture invites', () => {
     const user = userEvent.setup();
     const { container } = render(
       <IndexView
-        collections={[atlas]}
-        entries={[]}
+        index={{
+          collections: [{ ...atlas, count: 0 }],
+          months: [],
+          types: [],
+          savedViews: [],
+        }}
         onOpenCollection={vi.fn()}
         onOpenMonth={vi.fn()}
         onOpenSearch={vi.fn()}

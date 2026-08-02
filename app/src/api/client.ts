@@ -4,6 +4,7 @@ import {
   AgentTokenSchema,
   CollectionSchema,
   EntrySchema,
+  IndexResponseSchema,
   SettingsResponseSchema,
 } from '@journal/server/contracts/app';
 import { z } from 'zod';
@@ -28,6 +29,7 @@ import {
   type CollectionListResponse,
   type Entry,
   type EntryListResponse,
+  type IndexResponse,
   type EntryPatch,
   type OwnerEntryCreate,
   type PairResponse,
@@ -192,6 +194,13 @@ export class JournalApiClient {
   listCollections(signal?: AbortSignal): Promise<CollectionListResponse> {
     return this.request('/api/collections', {
       schema: CollectionListResponseSchema,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  getIndex(signal?: AbortSignal): Promise<IndexResponse> {
+    return this.request('/api/index', {
+      schema: IndexResponseSchema,
       ...(signal === undefined ? {} : { signal }),
     });
   }
@@ -365,7 +374,9 @@ export class JournalApiClient {
   }
 
   updateSettings(
-    patch: Partial<Pick<Settings, 'density' | 'showTypeBadges' | 'highlightAiEntries'>>,
+    patch: Partial<
+      Pick<Settings, 'density' | 'showTypeBadges' | 'highlightAiEntries' | 'savedViews'>
+    >,
   ): Promise<SettingsPayload> {
     return this.request('/api/settings', {
       method: 'PATCH',

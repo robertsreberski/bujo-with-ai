@@ -17,11 +17,14 @@ import {
   CollectionSchema,
   EntrySchema,
   EntryTypeSchema,
+  SavedViewSchema,
+  SavedViewsSchema,
   SettingsSchema,
   SummarySchema,
 } from './entities.js';
 import {
   CalendarDateSchema,
+  CalendarMonthSchema,
   CollectionIdSchema,
   CursorSchema,
   IdempotencyKeySchema,
@@ -143,6 +146,7 @@ export const SettingsPatchSchema = z
     density: z.enum(['comfortable', 'compact']).optional(),
     showTypeBadges: z.boolean().optional(),
     highlightAiEntries: z.boolean().optional(),
+    savedViews: SavedViewsSchema.optional(),
   })
   .refine((patch) => Object.keys(patch).length > 0, 'Patch must contain at least one field.');
 
@@ -202,6 +206,31 @@ export const EntryListResponseSchema = z.strictObject({
   timezone: TimeZoneSchema,
   items: z.array(EntrySchema),
   nextCursor: z.string().min(1).nullable(),
+});
+
+export const IndexCollectionSchema = CollectionSchema.extend({
+  count: z.number().int().nonnegative(),
+});
+
+export const IndexMonthSchema = z.strictObject({
+  month: CalendarMonthSchema,
+  count: z.number().int().positive(),
+});
+
+export const IndexTypeSchema = z.strictObject({
+  type: EntryTypeSchema,
+  count: z.number().int().nonnegative(),
+});
+
+export const IndexSavedViewSchema = SavedViewSchema.extend({
+  count: z.number().int().nonnegative(),
+});
+
+export const IndexResponseSchema = z.strictObject({
+  collections: z.array(IndexCollectionSchema),
+  months: z.array(IndexMonthSchema),
+  types: z.array(IndexTypeSchema),
+  savedViews: z.array(IndexSavedViewSchema),
 });
 
 export const EntryResponseSchema = z.strictObject({ entry: EntrySchema });
@@ -505,6 +534,7 @@ export type EntryListResponse = z.infer<typeof EntryListResponseSchema>;
 export type RecentlyDeletedEntry = z.infer<typeof RecentlyDeletedEntrySchema>;
 export type RecentlyDeletedListResponse = z.infer<typeof RecentlyDeletedListResponseSchema>;
 export type RestoreEntryResponse = z.infer<typeof RestoreEntryResponseSchema>;
+export type IndexResponse = z.infer<typeof IndexResponseSchema>;
 export type CollectionListResponse = z.infer<typeof CollectionListResponseSchema>;
 export type TagUsage = z.infer<typeof TagUsageSchema>;
 export type TagListResponse = z.infer<typeof TagListResponseSchema>;

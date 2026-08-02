@@ -558,6 +558,84 @@ describe('JournalDomain entry commands', () => {
   });
 });
 
+describe('JournalDomain index aggregates', () => {
+  it('assigns each live entry to one month while retaining renamed and archived collections', () => {
+    const { domain, owner } = fixture();
+    domain.createCollection({ id: 'focus-a', name: 'Focus' }, owner);
+    domain.createCollection({ id: 'focus-b', name: 'Focus' }, owner);
+
+    const create = (input: Parameters<JournalDomain['createEntry']>[0]) => {
+      const result = domain.createEntry({ id: ulid(), ...input }, owner);
+      if (result.kind !== 'entry') throw new Error('Expected entry');
+      return result.entry;
+    };
+    create({ text: 'Daily August note', type: 'note', date: '2026-08-04' });
+    create({
+      text: 'Archived collection entry',
+      type: 'task',
+      date: '2026-08-05',
+      collection: 'focus-a',
+    });
+    create({
+      text: 'Duplicate-name collection entry',
+      type: 'idea',
+      date: '2026-09-02',
+      collection: 'focus-b',
+    });
+    create({
+      text: 'August destination with a September date',
+      type: 'event',
+      date: '2026-09-03',
+      collection: 'month:2026-08',
+    });
+    const deleted = create({
+      text: 'Deleted row',
+      type: 'note',
+      date: '2026-08-06',
+      collection: 'focus-b',
+    });
+    domain.deleteEntry(deleted.id, owner);
+    domain.updateCollection('focus-a', { name: 'Earlier focus', archived: true }, owner);
+
+    const index = domain.getIndexAggregates();
+    expect(index.collections).toEqual([
+      expect.objectContaining({ id: 'focus-b', name: 'Focus', archivedAt: null, count: 1 }),
+      expect.objectContaining({
+        id: 'focus-a',
+        name: 'Earlier focus',
+        archivedAt: expect.any(String),
+        count: 1,
+      }),
+    ]);
+    expect(index.months).toEqual([
+      { month: '2026-09', count: 1 },
+      { month: '2026-08', count: 3 },
+    ]);
+    expect(Object.fromEntries(index.types.map((row) => [row.type, row.count]))).toMatchObject({
+      task: 1,
+      event: 1,
+      note: 1,
+      idea: 1,
+      habit: 0,
+    });
+  });
+
+  it('persists saved owner queries through settings export and import', () => {
+    const source = fixture();
+    const savedViews = [
+      { id: 'open-work', name: 'Open work', query: 'is:open #work' },
+      { id: 'assistant', name: 'From assistant', query: 'by:assistant' },
+    ];
+    source.domain.setSettings({ savedViews }, source.owner);
+    expect(source.domain.getSettings().savedViews).toEqual(savedViews);
+
+    const exported = source.domain.exportJournal();
+    const target = fixture();
+    target.domain.importJournal(exported);
+    expect(target.domain.getSettings().savedViews).toEqual(savedViews);
+  });
+});
+
 describe('JournalDomain summaries and credentials', () => {
   it('files one summary per week, rewrites it, and saves it to today', () => {
     const { domain, agent, owner } = fixture();
@@ -923,14 +1001,18 @@ describe('JournalDomain summaries and credentials', () => {
       source.owner,
     );
     const v2 = source.domain.exportJournal();
+    const legacySettings = { ...v2.journal.settings };
+    delete legacySettings.savedViews;
     const v1 = {
       version: 1 as const,
       exportedAt: v2.exportedAt,
       ...v2.journal,
+      settings: legacySettings,
     };
 
     const fromV1 = fixture();
     expect(fromV1.domain.importJournal(v1).inserted.entries).toBe(1);
+    expect(fromV1.domain.getSettings().savedViews).toEqual([]);
     const fromV2 = fixture();
     expect(
       fromV2.domain.importJournal({

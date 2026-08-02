@@ -483,6 +483,44 @@ describe('journal store reconciliation', () => {
     });
   });
 
+  it('loads Index from its aggregate endpoint without hydrating lifetime entries', async () => {
+    const retained = entry(1);
+    const archived = collection({
+      id: 'archive',
+      name: 'Archive',
+      archivedAt: '2026-07-30T08:00:00.000Z',
+    });
+    useJournalStore.setState({
+      entriesById: { [retained.id]: retained },
+      entryIdsByDate: { [retained.date]: [retained.id] },
+      entryIdsByCollection: {},
+      collectionsById: {},
+      index: null,
+      outbox: [],
+      outboxCount: 0,
+      networkOnline: true,
+      online: true,
+    });
+    const listEntries = vi.spyOn(journalApi, 'listEntries');
+    const getIndex = vi.spyOn(journalApi, 'getIndex').mockResolvedValue({
+      collections: [{ ...archived, count: 9 }],
+      months: [{ month: '2026-07', count: 12 }],
+      types: [{ type: 'task', count: 12 }],
+      savedViews: [],
+    });
+
+    const loaded = await journalActions.loadIndex();
+
+    expect(getIndex).toHaveBeenCalledTimes(1);
+    expect(listEntries).not.toHaveBeenCalled();
+    expect(loaded.months).toEqual([{ month: '2026-07', count: 12 }]);
+    expect(useJournalStore.getState().entriesById).toEqual({ [retained.id]: retained });
+    expect(useJournalStore.getState().collectionsById.archive).toMatchObject({
+      id: 'archive',
+      archivedAt: archived.archivedAt,
+    });
+  });
+
   it('refreshes MCP connectivity together with token metadata', async () => {
     useJournalStore.setState({ online: true, networkOnline: true, agentTokens: [], settings });
     vi.spyOn(journalApi, 'listTokens').mockResolvedValue({ tokens: [] });

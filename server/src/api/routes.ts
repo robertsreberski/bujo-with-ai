@@ -47,6 +47,7 @@ export interface MutationContext {
 export interface ApiJournalOperations extends DeviceAuthenticator {
   bootstrap(actor: OwnerActor): unknown | Promise<unknown>;
   timeline(query: Record<string, unknown>, actor: OwnerActor): unknown | Promise<unknown>;
+  getIndex(actor: OwnerActor): unknown | Promise<unknown>;
   listEntries(query: Record<string, unknown>, actor: OwnerActor): unknown | Promise<unknown>;
   createEntry(
     input: Record<string, unknown>,
@@ -293,6 +294,10 @@ export function createApiRouter(options: ApiRouterOptions): Router {
   router.get(
     '/entries',
     asyncRoute((request) => options.operations.listEntries(entryQuery(request), actor(request))),
+  );
+  router.get(
+    '/index',
+    asyncRoute((request) => options.operations.getIndex(actor(request))),
   );
   router.post(
     '/entries',

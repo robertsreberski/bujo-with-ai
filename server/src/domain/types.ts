@@ -53,6 +53,8 @@ export type AgentTokenRecord = AgentToken;
 export type SearchEntriesInput = Omit<SearchInput, 'limit'> & {
   readonly limit?: number;
   readonly includeDeleted?: boolean;
+  /** Internal retrieval option: monthly planning destinations are not Timeline rows. */
+  readonly excludeMonthlyCollections?: boolean;
   readonly offset?: number;
 };
 

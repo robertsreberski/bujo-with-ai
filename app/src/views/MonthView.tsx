@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { ArrangedEntryList } from '../components/ArrangedEntryList';
 import { ArrangeMenu } from '../components/ArrangeMenu';
+import { EntryRow } from '../components/EntryRow';
 import { Icon } from '../components/Icon';
 import { Button } from '../components/ui/button';
 import { daysInMonth, formatLongDate, formatMonth, mondayStartOffset } from '../components/dates';
@@ -17,12 +18,18 @@ import {
   SECTION_HEADING,
   SECTION_TITLE,
 } from './view-classes';
-import type { DisplayPreferences, JournalEntry, JournalSummary } from '../components/types';
+import type {
+  DisplayPreferences,
+  JournalCollection,
+  JournalEntry,
+  JournalSummary,
+} from '../components/types';
 
 interface MonthViewProps {
   month: string;
   today: string;
   entries: JournalEntry[];
+  collections?: JournalCollection[];
   summary: JournalSummary | null;
   preferences: DisplayPreferences;
   logView: LogViewConfig;
@@ -47,6 +54,7 @@ export function MonthView({
   month,
   today,
   entries,
+  collections = [],
   summary,
   preferences,
   logView,
@@ -58,14 +66,41 @@ export function MonthView({
   onRewriteSummary,
   onLogViewChange,
 }: MonthViewProps) {
+  const datedEntries = useMemo(
+    () =>
+      entries
+        .filter(
+          (entry) =>
+            entry.date.startsWith(`${month}-`) && entry.collection?.startsWith('month:') !== true,
+        )
+        .sort(
+          (left, right) =>
+            right.date.localeCompare(left.date) ||
+            right.createdAt.localeCompare(left.createdAt) ||
+            right.id.localeCompare(left.id),
+        ),
+    [entries, month],
+  );
+  const datedGroups = useMemo(() => {
+    const groups = new Map<string, JournalEntry[]>();
+    for (const entry of datedEntries) {
+      const group = groups.get(entry.date) ?? [];
+      group.push(entry);
+      groups.set(entry.date, group);
+    }
+    return [...groups.entries()];
+  }, [datedEntries]);
+  const collectionsById = useMemo(
+    () => new Map(collections.map((collection) => [collection.id, collection])),
+    [collections],
+  );
   const dayCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const entry of entries) {
-      if (entry.collection !== null) continue;
+    for (const entry of datedEntries) {
       counts.set(entry.date, (counts.get(entry.date) ?? 0) + 1);
     }
     return counts;
-  }, [entries]);
+  }, [datedEntries]);
   const cells = useMemo(() => {
     const result: Array<{ date: string; day: number } | null> = Array.from(
       { length: mondayStartOffset(month) },
@@ -94,6 +129,7 @@ export function MonthView({
       ...new Set(
         entries
           .filter((entry) => entry.type === 'habit' && entry.collection === null)
+          .filter((entry) => entry.date.startsWith(`${month}-`))
           .map((entry) => entry.text),
       ),
     ];
@@ -183,6 +219,58 @@ export function MonthView({
           )}
         </div>
       </div>
+
+      <section className={SECTION} aria-labelledby="month-timeline-title">
+        <header className={SECTION_HEADING}>
+          <div>
+            <h2 className={SECTION_TITLE} id="month-timeline-title">
+              Month timeline
+            </h2>
+            <p className={SECTION_COPY}>
+              Every dated entry, including entries filed into collections.
+            </p>
+          </div>
+          <span className={SECTION_COUNT}>
+            {datedEntries.length} {datedEntries.length === 1 ? 'entry' : 'entries'}
+          </span>
+        </header>
+        {datedGroups.length > 0 ? (
+          <div className={CARD}>
+            {datedGroups.map(([date, dateEntries]) => (
+              <div key={date}>
+                <h3 className="border-b border-bg-line bg-bg-hover px-4 py-1.5 text-xs font-medium text-fg-mute">
+                  {formatLongDate(date)} · {dateEntries.length}
+                </h3>
+                {dateEntries.map((entry) => {
+                  const destination =
+                    entry.collection === null ? null : collectionsById.get(entry.collection);
+                  return (
+                    <div key={entry.id}>
+                      {entry.collection !== null ? (
+                        <p className="border-b border-bg-line px-4 pt-2 text-2xs text-fg-mute">
+                          Filed in{' '}
+                          <span className="font-medium text-fg-mid">
+                            {destination?.name ?? `/${entry.collection}`}
+                          </span>
+                          {destination?.archivedAt ? ' · archived' : ''}
+                        </p>
+                      ) : null}
+                      <EntryRow
+                        entry={entry}
+                        preferences={preferences}
+                        onOpen={onOpenEntry}
+                        onToggle={onToggleEntry}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className={SECTION_EMPTY}>No dated entries in {formatMonth(month)} yet.</div>
+        )}
+      </section>
 
       <section className={SECTION} aria-labelledby="monthly-log-title">
         <header className={SECTION_HEADING}>

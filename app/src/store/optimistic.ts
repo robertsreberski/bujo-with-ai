@@ -197,13 +197,7 @@ export function applyOptimisticCommand(mirror: MirrorData, command: QueueableCom
     }
 
     case 'collection.create':
-      return {
-        ...mirror,
-        collectionsById: {
-          ...mirror.collectionsById,
-          [command.collection.id]: command.collection,
-        },
-      };
+      return upsertServerCollection(mirror, command.collection);
 
     case 'collection.update': {
       const current = mirror.collectionsById[command.id];
@@ -216,10 +210,7 @@ export function applyOptimisticCommand(mirror: MirrorData, command: QueueableCom
           ? {}
           : { archivedAt: command.patch.archived ? command.at : null }),
       };
-      return {
-        ...mirror,
-        collectionsById: { ...mirror.collectionsById, [updated.id]: updated },
-      };
+      return upsertServerCollection(mirror, updated);
     }
   }
 }
@@ -256,17 +247,36 @@ export function removeServerEntry(mirror: MirrorData, id: string): MirrorData {
 }
 
 export function upsertServerCollection(mirror: MirrorData, collection: Collection): MirrorData {
-  return {
+  const base: MirrorData = {
     ...mirror,
     collectionsById: { ...mirror.collectionsById, [collection.id]: collection },
   };
+  if (!mirror.index || collection.id.startsWith('month:')) return base;
+  const existingIndexRow = mirror.index.collections.find((row) => row.id === collection.id);
+  const collections = existingIndexRow
+    ? mirror.index.collections.map((row) =>
+        row.id === collection.id ? { ...collection, count: row.count } : row,
+      )
+    : [...mirror.index.collections, { ...collection, count: 0 }];
+  return { ...base, index: { ...mirror.index, collections } };
 }
 
 export function removeServerCollection(mirror: MirrorData, id: string): MirrorData {
   if (!(id in mirror.collectionsById)) return mirror;
   const collectionsById = { ...mirror.collectionsById };
   delete collectionsById[id];
-  return { ...mirror, collectionsById };
+  return {
+    ...mirror,
+    collectionsById,
+    ...(mirror.index
+      ? {
+          index: {
+            ...mirror.index,
+            collections: mirror.index.collections.filter((collection) => collection.id !== id),
+          },
+        }
+      : {}),
+  };
 }
 
 /** Keeps both the global-greatest summary and each loaded month projection coherent. */

@@ -115,6 +115,13 @@ describe('TimelineView', () => {
     expect(selected).toHaveTextContent('No entries yet');
   });
 
+  it('shows collection-filed entries when opening a counted calendar day', () => {
+    const filed = { ...entry, text: 'Filed on this day', collection: 'project-atlas' };
+    render(<TimelineView entries={[filed]} {...props} />);
+
+    expect(screen.getByText('Filed on this day')).toBeInTheDocument();
+  });
+
   it('does not steal focus after the selected day receives an update', () => {
     const originalScrollIntoView = Element.prototype.scrollIntoView;
     const scrollIntoView = vi.fn();

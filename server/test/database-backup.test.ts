@@ -19,9 +19,12 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BackupAbortedError, JournalDatabase } from '../src/db/database.js';
+import { migrations } from '../src/db/migrations.js';
 import { BackupManager } from '../src/jobs/backups.js';
 
 const roots: string[] = [];
+const migrationVersions = migrations.map((migration) => migration.version);
+const futureMigrationVersion = migrationVersions.length + 1;
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -38,7 +41,7 @@ describe('JournalDatabase and backups', () => {
     expect(database.raw.pragma('journal_mode', { simple: true })).toBe('wal');
     expect(
       database.raw.prepare('SELECT version FROM schema_migrations ORDER BY version').pluck().all(),
-    ).toEqual([1, 2, 3]);
+    ).toEqual(migrationVersions);
     database.quickCheck();
     const manager = new BackupManager({
       database,
@@ -336,8 +339,13 @@ describe('JournalDatabase and backups', () => {
       'CREATE TABLE optional_future_projection (entry_id TEXT PRIMARY KEY, value TEXT)',
     );
     additive
-      .prepare('INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (4,?,?,?)')
-      .run('optional-future-projection', 'a'.repeat(64), '2026-08-02T10:00:00.000Z');
+      .prepare('INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (?,?,?,?)')
+      .run(
+        futureMigrationVersion,
+        'optional-future-projection',
+        'a'.repeat(64),
+        '2026-08-02T10:00:00.000Z',
+      );
     additive.close();
 
     const rollbackRuntime = new JournalDatabase({ path });
@@ -367,8 +375,8 @@ describe('JournalDatabase and backups', () => {
     initial.close();
     const raw = new Database(path);
     raw
-      .prepare('INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (4,?,?,?)')
-      .run('future', 'not-a-checksum', '2026-08-02T10:00:00.000Z');
+      .prepare('INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (?,?,?,?)')
+      .run(futureMigrationVersion, 'future', 'not-a-checksum', '2026-08-02T10:00:00.000Z');
     raw.close();
     expect(() => new JournalDatabase({ path })).toThrow(/invalid integrity metadata/i);
   });
@@ -388,8 +396,13 @@ describe('JournalDatabase and backups', () => {
       "CREATE TABLE optional_future_projection (entry_id TEXT PRIMARY KEY, value TEXT); INSERT INTO optional_future_projection VALUES ('01K1A2B3C4D5E6F7G8H9J0K1M2','derived')",
     );
     additive
-      .prepare('INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (4,?,?,?)')
-      .run('optional-future-projection', 'c'.repeat(64), '2026-08-02T10:05:00.000Z');
+      .prepare('INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (?,?,?,?)')
+      .run(
+        futureMigrationVersion,
+        'optional-future-projection',
+        'c'.repeat(64),
+        '2026-08-02T10:05:00.000Z',
+      );
     additive.close();
 
     const rollback = new JournalDatabase({ path, backupDir: join(root, 'backups') });
@@ -416,7 +429,7 @@ describe('JournalDatabase and backups', () => {
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .pluck()
         .all(),
-    ).toEqual([1, 2, 3, 4]);
+    ).toEqual([...migrationVersions, futureMigrationVersion]);
     upgradedAgain.close();
   });
 
@@ -446,10 +459,8 @@ describe('JournalDatabase and backups', () => {
       },
     );
     expect(output).toBe('ok\n');
-    expect(readdirSync(join(repository, 'server/dist/db/migrations')).sort()).toEqual([
-      '001_core.sql',
-      '002_fts.sql',
-      '003_entry_page.sql',
-    ]);
+    expect(readdirSync(join(repository, 'server/dist/db/migrations')).sort()).toEqual(
+      migrations.map((migration) => migration.filename).sort(),
+    );
   });
 });
