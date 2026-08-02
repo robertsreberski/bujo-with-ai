@@ -222,17 +222,26 @@ export function Composer({
 
   useEffect(() => {
     if (!focused) return;
-    const collapseOutside = (event: globalThis.PointerEvent) => {
+    let cancelled = false;
+    const collapseOutside = (event: globalThis.MouseEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (shellRef.current?.contains(target)) return;
       // Composer popovers are portalled, so they still count as engagement even
       // though they are not DOM descendants of the capture row.
       if (target.closest('.destination-menu, .capture-help')) return;
-      setFocused(false);
+      // Wait until the click has finished dispatching. Collapsing on pointerdown
+      // can move an outside target before its click lands, swallowing the user's
+      // first attempt to open a sheet or toggle an entry.
+      queueMicrotask(() => {
+        if (!cancelled) setFocused(false);
+      });
     };
-    document.addEventListener('pointerdown', collapseOutside, true);
-    return () => document.removeEventListener('pointerdown', collapseOutside, true);
+    document.addEventListener('click', collapseOutside, true);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('click', collapseOutside, true);
+    };
   }, [focused]);
 
   useEffect(() => {
