@@ -482,72 +482,77 @@ test('an installed offline deep link survives a full page restart', async ({ con
   }
 });
 
-test('an offline tomorrow capture after browser midnight replays to its intended date', async ({
-  baseURL,
-  context,
-  page,
-}) => {
-  const paired = await context.request.post('/api/pair', {
-    data: {},
-    headers: { Origin: baseURL! },
-  });
-  expect(paired.status()).toBe(201);
-  const bootstrapResponse = await context.request.get('/api/bootstrap');
-  expect(bootstrapResponse.ok()).toBeTruthy();
-  const bootstrap = (await bootstrapResponse.json()) as { today: string; timezone: string };
-  const browserTomorrow = addCalendarDays(bootstrap.today, 1);
-  const intendedDate = addCalendarDays(bootstrap.today, 2);
-  await page.clock.install({
-    time: instantForLocalTime(bootstrap.today, '23:59:30', bootstrap.timezone),
-  });
-  const initialTimelineLoaded = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return (
-      url.pathname === '/api/bootstrap' &&
-      response.request().method() === 'GET' &&
-      response.status() === 200
-    );
-  });
-  await openJournal(page);
-  await initialTimelineLoaded;
-  await expect(page.locator(`[data-day="${bootstrap.today}"]`)).toBeVisible();
+test.describe('journal-timezone midnight rollover', () => {
+  test.use({ timezoneId: 'UTC' });
 
-  await context.setOffline(true);
-  await expect(page.locator('.status-strip')).toContainText(
-    /Offline ready — showing what is saved on this device|Offline — showing what is available on this device/,
-  );
-  await page.clock.runFor(60_000);
-  await expect(page.locator(`[data-day="${browserTomorrow}"]`)).toBeVisible();
-
-  const text = uniqueText('Midnight offline tomorrow');
-  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text} >tomorrow`);
-  await page.getByRole('button', { name: 'Add entry' }).click();
-  await expect(page.locator(`[data-day="${intendedDate}"]`)).toContainText(text);
-  await expect(page.locator('.status-strip')).toContainText(/\d+ changes? saved on this device/);
-
-  const replayed = page.waitForResponse(
-    (response) =>
-      response.url().endsWith('/api/entries') &&
-      response.request().method() === 'POST' &&
-      response.status() === 201,
-  );
-  await context.setOffline(false);
-  await replayed;
-  await expect(
-    page.locator('.status-strip').filter({ hasText: /Offline|Journal server unavailable/ }),
-  ).toHaveCount(0);
-
-  await expect
-    .poll(async () => {
-      const response = await context.request.get(
-        `/api/entries?from=${intendedDate}&to=${intendedDate}&q=${encodeURIComponent(text)}`,
+  test('an offline tomorrow capture after browser midnight replays to its intended date', async ({
+    baseURL,
+    context,
+    page,
+  }) => {
+    const paired = await context.request.post('/api/pair', {
+      data: {},
+      headers: { Origin: baseURL! },
+    });
+    expect(paired.status()).toBe(201);
+    const bootstrapResponse = await context.request.get('/api/bootstrap');
+    expect(bootstrapResponse.ok()).toBeTruthy();
+    const bootstrap = (await bootstrapResponse.json()) as { today: string; timezone: string };
+    const browserTomorrow = addCalendarDays(bootstrap.today, 1);
+    const intendedDate = addCalendarDays(bootstrap.today, 2);
+    await page.clock.install({
+      time: instantForLocalTime(bootstrap.today, '23:55:00', bootstrap.timezone),
+    });
+    const initialTimelineLoaded = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname === '/api/bootstrap' &&
+        response.request().method() === 'GET' &&
+        response.status() === 200
       );
-      if (!response.ok()) return null;
-      const body = (await response.json()) as {
-        items?: Array<{ date?: string; text?: string }>;
-      };
-      return body.items?.find((entry) => entry.text === text)?.date ?? null;
-    })
-    .toBe(intendedDate);
-  await expect(page.getByRole('button', { name: /changes? need attention/i })).toHaveCount(0);
+    });
+    await openJournal(page);
+    await initialTimelineLoaded;
+    await expect(page.locator(`[data-day="${bootstrap.today}"]`)).toBeVisible();
+    await page.clock.pauseAt(instantForLocalTime(bootstrap.today, '23:59:30', bootstrap.timezone));
+
+    await context.setOffline(true);
+    await expect(page.locator('.status-strip')).toContainText(
+      /Offline ready — showing what is saved on this device|Offline — showing what is available on this device/,
+    );
+    await page.clock.runFor(60_000);
+    await expect(page.locator(`[data-day="${browserTomorrow}"]`)).toBeVisible();
+
+    const text = uniqueText('Midnight offline tomorrow');
+    await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text} >tomorrow`);
+    await page.getByRole('button', { name: 'Add entry' }).click();
+    await expect(page.locator(`[data-day="${intendedDate}"]`)).toContainText(text);
+    await expect(page.locator('.status-strip')).toContainText(/\d+ changes? saved on this device/);
+
+    const replayed = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/api/entries') &&
+        response.request().method() === 'POST' &&
+        response.status() === 201,
+    );
+    await context.setOffline(false);
+    await replayed;
+    await expect(
+      page.locator('.status-strip').filter({ hasText: /Offline|Journal server unavailable/ }),
+    ).toHaveCount(0);
+
+    await expect
+      .poll(async () => {
+        const response = await context.request.get(
+          `/api/entries?from=${intendedDate}&to=${intendedDate}&q=${encodeURIComponent(text)}`,
+        );
+        if (!response.ok()) return null;
+        const body = (await response.json()) as {
+          items?: Array<{ date?: string; text?: string }>;
+        };
+        return body.items?.find((entry) => entry.text === text)?.date ?? null;
+      })
+      .toBe(intendedDate);
+    await expect(page.getByRole('button', { name: /changes? need attention/i })).toHaveCount(0);
+  });
 });

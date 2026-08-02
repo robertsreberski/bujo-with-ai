@@ -747,6 +747,7 @@ async function prepareBootstrapReconciliation(
 export async function reconcileFromBootstrap(options: ReconcileOptions = {}): Promise<boolean> {
   const prepared = await prepareBootstrapReconciliation(options);
   if (!prepared) return false;
+  const priorTimezone = useJournalStore.getState().timezone;
   useJournalStore.setState({
     ...prepared.mirror,
     ...(prepared.timeline ?? {}),
@@ -759,6 +760,7 @@ export async function reconcileFromBootstrap(options: ReconcileOptions = {}): Pr
     activityHasMore: prepared.activityHasMore,
     activityNextCursor: prepared.activityNextCursor,
   });
+  if (prepared.mirror.timezone !== priorTimezone) midnightScheduler?.reschedule();
   if (options.persist !== false) await persistNow();
   return true;
 }
@@ -1037,7 +1039,8 @@ async function reconnectJournal(
         ) {
           return;
         }
-        let mirror = mirrorFromState(useJournalStore.getState());
+        const stateBeforePageApply = useJournalStore.getState();
+        let mirror = mirrorFromState(stateBeforePageApply);
         for (const entry of page.items) mirror = upsertServerEntry(mirror, entry);
         mirror = recomputeActivityRevertEligibility(
           applyPendingCommands(mirror, useJournalStore.getState().outbox),
@@ -1049,6 +1052,7 @@ async function reconnectJournal(
           timezone: page.timezone,
           online: liveReplayIsReady(sseClient, replayGeneration, expectedGeneration),
         });
+        if (page.timezone !== stateBeforePageApply.timezone) midnightScheduler?.reschedule();
         await persistNow();
       }
       if (!liveReplayIsReady(sseClient, replayGeneration, expectedGeneration)) return;
