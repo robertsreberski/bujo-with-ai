@@ -48,11 +48,13 @@ test('all primary surfaces and an open dialog pass the WCAG 2.2 A/AA smoke', asy
     const dialog = page.getByRole('dialog', { name: 'Settings' });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS('opacity', '1');
+    await settle(page, '.dialog-overlay');
     await expectNoAxeViolations(page, `${viewport.label} Settings dialog`);
     await dialog.getByRole('button', { name: 'Open recovery' }).click();
     const recovery = page.getByRole('dialog', { name: 'Recovery' });
     await expect(recovery).toBeVisible();
     await expect(recovery).toHaveCSS('opacity', '1');
+    await settle(page, '.dialog-overlay');
     await expectNoAxeViolations(page, `${viewport.label} Recovery dialog`);
     await page.keyboard.press('Escape');
   }

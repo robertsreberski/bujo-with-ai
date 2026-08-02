@@ -185,6 +185,27 @@ describe('Composer', () => {
     expect(await screen.findByRole('button', { name: 'Capture help' })).toBeInTheDocument();
   });
 
+  it('lets an outside click finish before collapsing the expanded composer', async () => {
+    const user = userEvent.setup();
+    const onOutsideClick = vi.fn();
+    const { container } = render(
+      <>
+        <Harness />
+        <button type="button" onClick={onOutsideClick}>
+          Open another surface
+        </button>
+      </>,
+    );
+
+    await user.click(input());
+    expect(container.querySelector('.composer-shell')).toHaveAttribute('data-expanded', 'true');
+
+    await user.click(screen.getByRole('button', { name: 'Open another surface' }));
+
+    expect(onOutsideClick).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('.composer-shell')).toHaveAttribute('data-expanded', 'false');
+  });
+
   it('previews inferred grammar from a restored draft before focus', () => {
     const { container } = render(<Harness initialDraft="- Standup #work @9:15" />);
     expect(container.querySelector('.composer-shell')).toHaveAttribute('data-expanded', 'true');

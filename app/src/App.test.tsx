@@ -255,6 +255,22 @@ describe('App capture', () => {
     expect(screen.getAllByText('Timeline').length).toBeGreaterThan(0);
   });
 
+  it('returns from Month to canonical Today with the day section focused', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await goTo(user, 'Month');
+    const today = await waitFor(() => {
+      const button = document.querySelector<HTMLButtonElement>('[aria-current="date"]');
+      expect(button).not.toBeNull();
+      return button!;
+    });
+    await user.click(today);
+
+    expect(window.location.pathname).toBe('/');
+    await waitFor(() => expect(document.querySelector(`[data-day="${TODAY}"]`)).toHaveFocus());
+  });
+
   it('stays on the screen the capture was typed on', async () => {
     const user = userEvent.setup();
     render(<App />);

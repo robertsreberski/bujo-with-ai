@@ -132,6 +132,7 @@ export default function App() {
     key: number;
   } | null>(null);
   const timelineFocusRequestRef = useRef<{ date: string; key: number } | null>(null);
+  const timelineFocusReleaseFrameRef = useRef<number | null>(null);
   const timelineFocusSequenceRef = useRef(0);
   const latestNoticeRef = useRef<string | null>(null);
   const activityTokensLoadedRef = useRef(false);
@@ -475,9 +476,29 @@ export default function App() {
 
   const finishTimelineFocusRequest = useCallback((key: number) => {
     if (timelineFocusRequestRef.current?.key !== key) return;
-    timelineFocusRequestRef.current = null;
     setTimelineFocusRequest((request) => (request?.key === key ? null : request));
+    if (timelineFocusReleaseFrameRef.current !== null) {
+      window.cancelAnimationFrame(timelineFocusReleaseFrameRef.current);
+    }
+    // Keep the ownership guard through this passive-effect turn. The App route
+    // focus effect runs after TimelineView's effect and would otherwise replace
+    // the intentionally focused day with the generic journal surface.
+    timelineFocusReleaseFrameRef.current = window.requestAnimationFrame(() => {
+      if (timelineFocusRequestRef.current?.key === key) {
+        timelineFocusRequestRef.current = null;
+      }
+      timelineFocusReleaseFrameRef.current = null;
+    });
   }, []);
+
+  useEffect(
+    () => () => {
+      if (timelineFocusReleaseFrameRef.current !== null) {
+        window.cancelAnimationFrame(timelineFocusReleaseFrameRef.current);
+      }
+    },
+    [],
+  );
 
   const refreshTokens = useCallback(() => {
     run(() => journalActions.refreshTokens());
