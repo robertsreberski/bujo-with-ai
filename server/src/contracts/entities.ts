@@ -38,74 +38,97 @@ export const ActionableEntryStateSchema = z.enum([
   'cancelled',
 ]);
 
-export const EntrySchema = z
-  .strictObject({
-    id: UlidSchema,
-    date: CalendarDateSchema,
-    type: EntryTypeSchema,
-    text: EntryTextSchema,
-    state: EntryStateSchema,
-    time: LocalTimeSchema.nullable(),
-    tags: TagsSchema,
-    author: EntryAuthorSchema,
-    source: SourceSchema.nullable(),
-    migrations: z.number().int().nonnegative(),
-    collection: CollectionIdSchema.nullable(),
-    dateStated: z
-      .boolean()
-      .describe('True when the day on this entry was chosen rather than defaulted.'),
-    createdAt: IsoTimestampSchema,
-    updatedAt: IsoTimestampSchema,
-    revision: z.number().int().positive(),
-    deletedAt: IsoTimestampSchema.nullable(),
-  })
-  .superRefine((entry, context) => {
-    const actionable = isActionableEntryType(entry.type);
-    // A daily-log entry's day is the log it sits in, so it is always stated.
-    // Only a filing can be undated: "sometime this month" has no day to name.
-    if (entry.collection === null && !entry.dateStated) {
-      context.addIssue({
-        code: 'custom',
-        path: ['dateStated'],
-        message: 'A daily-log entry always states its day.',
-      });
-    }
-    if (actionable && entry.state === 'logged') {
-      context.addIssue({
-        code: 'custom',
-        path: ['state'],
-        message: `${entry.type} entries cannot use the logged state.`,
-      });
-    }
-    if (!actionable && entry.state !== 'logged') {
-      context.addIssue({
-        code: 'custom',
-        path: ['state'],
-        message: `${entry.type} entries must use the logged state.`,
-      });
-    }
-    if (entry.author === 'ai' && entry.source === null) {
-      context.addIssue({
-        code: 'custom',
-        path: ['source'],
-        message: 'AI-authored entries require human-readable provenance.',
-      });
-    }
-    if (Date.parse(entry.updatedAt) < Date.parse(entry.createdAt)) {
-      context.addIssue({
-        code: 'custom',
-        path: ['updatedAt'],
-        message: 'updatedAt cannot precede createdAt.',
-      });
-    }
-    if (entry.deletedAt !== null && Date.parse(entry.deletedAt) < Date.parse(entry.createdAt)) {
-      context.addIssue({
-        code: 'custom',
-        path: ['deletedAt'],
-        message: 'deletedAt cannot precede createdAt.',
-      });
-    }
-  });
+/**
+ * Fills `dateStated` for an entry image written before the field existed.
+ *
+ * Migration 008 only adds a column to the `entries` table; it cannot reach the
+ * entry rows serialized inside historical activity pre/post images, which stay
+ * exactly as they were written. Those images are parsed with this schema on
+ * every Activity read, revert, and export, so a strictly required field would
+ * make the entire existing audit trail unreadable after an upgrade.
+ *
+ * The value resolves the same way the startup backfill healed live rows — a
+ * daily entry states its day, a filing does not — so a historical image agrees
+ * with the row it mirrors. A present value always wins.
+ */
+const withHistoricalDateStated = (value: unknown): unknown => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
+  const entry = value as Record<string, unknown>;
+  if ('dateStated' in entry) return entry;
+  return { ...entry, dateStated: entry.collection === null || entry.collection === undefined };
+};
+
+export const EntrySchema = z.preprocess(
+  withHistoricalDateStated,
+  z
+    .strictObject({
+      id: UlidSchema,
+      date: CalendarDateSchema,
+      type: EntryTypeSchema,
+      text: EntryTextSchema,
+      state: EntryStateSchema,
+      time: LocalTimeSchema.nullable(),
+      tags: TagsSchema,
+      author: EntryAuthorSchema,
+      source: SourceSchema.nullable(),
+      migrations: z.number().int().nonnegative(),
+      collection: CollectionIdSchema.nullable(),
+      dateStated: z
+        .boolean()
+        .describe('True when the day on this entry was chosen rather than defaulted.'),
+      createdAt: IsoTimestampSchema,
+      updatedAt: IsoTimestampSchema,
+      revision: z.number().int().positive(),
+      deletedAt: IsoTimestampSchema.nullable(),
+    })
+    .superRefine((entry, context) => {
+      const actionable = isActionableEntryType(entry.type);
+      // A daily-log entry's day is the log it sits in, so it is always stated.
+      // Only a filing can be undated: "sometime this month" has no day to name.
+      if (entry.collection === null && !entry.dateStated) {
+        context.addIssue({
+          code: 'custom',
+          path: ['dateStated'],
+          message: 'A daily-log entry always states its day.',
+        });
+      }
+      if (actionable && entry.state === 'logged') {
+        context.addIssue({
+          code: 'custom',
+          path: ['state'],
+          message: `${entry.type} entries cannot use the logged state.`,
+        });
+      }
+      if (!actionable && entry.state !== 'logged') {
+        context.addIssue({
+          code: 'custom',
+          path: ['state'],
+          message: `${entry.type} entries must use the logged state.`,
+        });
+      }
+      if (entry.author === 'ai' && entry.source === null) {
+        context.addIssue({
+          code: 'custom',
+          path: ['source'],
+          message: 'AI-authored entries require human-readable provenance.',
+        });
+      }
+      if (Date.parse(entry.updatedAt) < Date.parse(entry.createdAt)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['updatedAt'],
+          message: 'updatedAt cannot precede createdAt.',
+        });
+      }
+      if (entry.deletedAt !== null && Date.parse(entry.deletedAt) < Date.parse(entry.createdAt)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['deletedAt'],
+          message: 'deletedAt cannot precede createdAt.',
+        });
+      }
+    }),
+);
 
 export const CollectionSchema = z.strictObject({
   id: CollectionIdSchema,

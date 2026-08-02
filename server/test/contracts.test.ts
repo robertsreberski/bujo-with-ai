@@ -77,6 +77,13 @@ const entry = {
   deletedAt: null,
 };
 
+/** The entry shape an activity image written before migration 008 still holds. */
+function historicalEntryImage(): Record<string, unknown> {
+  const image: Record<string, unknown> = { ...entry };
+  delete image.dateStated;
+  return image;
+}
+
 function reflection(
   id = REFLECTION_ID,
   versionId = REFLECTION_VERSION_ID,
@@ -150,6 +157,42 @@ describe('journal entity contracts', () => {
     expect(EntrySchema.safeParse({ ...entry, type: 'note', state: 'open' }).success).toBe(false);
     expect(EntrySchema.safeParse({ ...entry, type: 'task', state: 'logged' }).success).toBe(false);
     expect(EntrySchema.safeParse({ ...entry, type: 'note', state: 'logged' }).success).toBe(true);
+  });
+
+  it('reads an entry image written before dateStated existed', () => {
+    // Migration 008 adds a column to the entries table; it cannot reach the
+    // entry rows serialized inside historical activity images. Requiring the
+    // field strictly would make the whole existing audit trail unreadable.
+    const historical = historicalEntryImage();
+
+    expect(EntrySchema.parse(historical)).toEqual({ ...historical, dateStated: true });
+    expect(EntrySchema.parse({ ...historical, collection: 'month:2026-07' })).toMatchObject({
+      collection: 'month:2026-07',
+      dateStated: false,
+    });
+    // A stored value always wins over the historical default.
+    expect(
+      EntrySchema.parse({ ...historical, collection: 'month:2026-07', dateStated: true }),
+    ).toMatchObject({ dateStated: true });
+  });
+
+  it('reads a historical activity image without its entry dateStated', () => {
+    const snapshot = { entity: 'entry' as const, id: entry.id, row: historicalEntryImage() };
+
+    const parsed = ActivityItemSchema.parse({
+      id: '01K1H0000000000000000000A1',
+      at: '2026-07-31T10:00:00.000Z',
+      kind: 'agent-add',
+      text: 'Added an entry',
+      origin: { actor: 'mcp' },
+      refs: { entryIds: [entry.id] },
+      preImages: [{ entity: 'entry', id: entry.id, row: null }],
+      postImages: [snapshot],
+      revertedAt: null,
+      revertedByActivityId: null,
+    });
+
+    expect(parsed.postImages[0]).toMatchObject({ row: { dateStated: true } });
   });
 
   it('requires provenance for AI-authored entries', () => {
