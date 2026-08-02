@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -318,10 +319,120 @@ describe('JournalDatabase and backups', () => {
       )
       .run(new Date().toISOString());
     raw.close();
-    expect(() => new JournalDatabase({ path })).toThrow(/unknown migration version.*999/i);
+    expect(() => new JournalDatabase({ path })).toThrow(/not a contiguous prefix/i);
     expect(() => new JournalDatabase({ path, applyMigrations: false })).toThrow(
-      /unknown migration version.*999/i,
+      /not a contiguous prefix/i,
     );
+  });
+
+  it('reopens a database after a valid contiguous 004-006 additive suffix', () => {
+    const root = mkdtempSync(join(tmpdir(), 'journal-future-migration-test-'));
+    roots.push(root);
+    const path = join(root, 'journal.db');
+    const initial = new JournalDatabase({ path });
+    initial.close();
+
+    const future = [
+      {
+        version: 4,
+        name: 'optional-future-projection',
+        sql: 'CREATE TABLE optional_future_projection (entry_id TEXT PRIMARY KEY, value TEXT)',
+      },
+      {
+        version: 5,
+        name: 'optional-future-index',
+        sql: 'CREATE INDEX optional_future_projection_value ON optional_future_projection(value)',
+      },
+      {
+        version: 6,
+        name: 'optional-future-note',
+        sql: 'ALTER TABLE optional_future_projection ADD COLUMN note TEXT',
+      },
+    ] as const;
+    const additive = new Database(path);
+    const record = additive.prepare(
+      'INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (?,?,?,?)',
+    );
+    for (const migration of future) {
+      additive.exec(migration.sql);
+      const checksum = createHash('sha256')
+        .update(`${migration.version}\0${migration.name}\0${migration.sql}`)
+        .digest('hex');
+      record.run(migration.version, migration.name, checksum, '2026-08-02T10:00:00.000Z');
+    }
+    additive.close();
+
+    const rollbackRuntime = new JournalDatabase({ path });
+    expect(
+      rollbackRuntime.raw
+        .prepare('SELECT version FROM schema_migrations ORDER BY version')
+        .pluck()
+        .all(),
+    ).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(
+      rollbackRuntime.raw
+        .prepare("SELECT type FROM sqlite_master WHERE name = 'optional_future_projection_value'")
+        .pluck()
+        .get(),
+    ).toBe('index');
+    rollbackRuntime.close();
+
+    const readonlyRollback = new JournalDatabase({ path, applyMigrations: false, readonly: true });
+    readonlyRollback.close();
+  });
+
+  it('rejects gapped or malformed future migration history', () => {
+    const createDatabase = (prefix: string): string => {
+      const root = mkdtempSync(join(tmpdir(), prefix));
+      roots.push(root);
+      const path = join(root, 'journal.db');
+      const initial = new JournalDatabase({ path });
+      initial.close();
+      return path;
+    };
+
+    const gappedPath = createDatabase('journal-gapped-migration-test-');
+    const gapped = new Database(gappedPath);
+    gapped
+      .prepare('INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (5,?,?,?)')
+      .run('future-gap', 'a'.repeat(64), '2026-08-02T10:00:00.000Z');
+    gapped.close();
+    expect(() => new JournalDatabase({ path: gappedPath })).toThrow(/not a contiguous prefix/i);
+
+    const malformedPath = createDatabase('journal-malformed-migration-test-');
+    const malformed = new Database(malformedPath);
+    malformed
+      .prepare('INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (4,?,?,?)')
+      .run('future-metadata', 'not-a-checksum', '2026-08-02T10:00:00.000Z');
+    malformed.close();
+    expect(() => new JournalDatabase({ path: malformedPath })).toThrow(
+      /invalid integrity metadata/i,
+    );
+  });
+
+  it('still rejects renamed or changed known migration history', () => {
+    const createDatabase = (prefix: string): string => {
+      const root = mkdtempSync(join(tmpdir(), prefix));
+      roots.push(root);
+      const path = join(root, 'journal.db');
+      const initial = new JournalDatabase({ path });
+      initial.close();
+      return path;
+    };
+
+    const renamedPath = createDatabase('journal-renamed-migration-test-');
+    const renamed = new Database(renamedPath);
+    renamed.prepare('UPDATE schema_migrations SET name = ? WHERE version = 1').run('renamed-core');
+    renamed.close();
+    expect(() => new JournalDatabase({ path: renamedPath })).toThrow(/migration 1.*renamed/i);
+
+    const changedPath = createDatabase('journal-changed-migration-test-');
+    const changed = new Database(changedPath);
+    changed
+      .prepare('UPDATE schema_migrations SET checksum = ? WHERE version = 2')
+      .run('b'.repeat(64));
+    changed.close();
+    expect(() => new JournalDatabase({ path: changedPath })).toThrow(/migration 2.*changed/i);
   });
 
   it('starts the compiled CLI with only its copied migration assets', () => {

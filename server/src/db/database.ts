@@ -48,7 +48,9 @@ export class BackupAbortedError extends Error {
 
 interface MigrationRow {
   readonly version: number;
+  readonly name: string;
   readonly checksum: string;
+  readonly applied_at: string;
 }
 
 interface SchemaObjectRow {
@@ -160,42 +162,43 @@ export class JournalDatabase {
       }
       return new Map();
     }
+    validateMigrationDefinitions();
     const applied = this.raw
-      .prepare('SELECT version, checksum FROM schema_migrations ORDER BY version')
+      .prepare('SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version')
       .all() as MigrationRow[];
     const byVersion = new Map(applied.map((row) => [row.version, row.checksum]));
-    const knownVersions = new Set(migrations.map((migration) => migration.version));
-    const unknownVersions = applied
-      .map((row) => row.version)
-      .filter((version) => !knownVersions.has(version));
-    if (unknownVersions.length > 0) {
+    if (applied.length === 0 && requireJournalSchema) {
       throw new DomainError(
         'INTEGRITY_ERROR',
-        `Database contains unknown migration version(s): ${unknownVersions.join(', ')}`,
+        'Journal migration history is not a contiguous known prefix',
       );
     }
-    if (
-      applied.length === 0 ||
-      applied.some((row, index) => migrations[index]?.version !== row.version)
-    ) {
-      if (applied.length > 0 || requireJournalSchema) {
-        throw new DomainError(
-          'INTEGRITY_ERROR',
-          'Journal migration history is not a contiguous known prefix',
-        );
-      }
+    if (applied.some((row, index) => row.version !== index + 1)) {
+      throw new DomainError(
+        'INTEGRITY_ERROR',
+        'Journal migration history is not a contiguous prefix',
+      );
     }
 
-    for (const migration of migrations) {
+    for (const [index, migration] of migrations.entries()) {
+      const row = applied[index];
+      if (row === undefined) break;
       const checksum = migrationChecksum(migration);
-      const previousChecksum = byVersion.get(migration.version);
-      if (previousChecksum !== undefined && previousChecksum !== checksum) {
+      if (row.name !== migration.name) {
+        throw new DomainError(
+          'INTEGRITY_ERROR',
+          `Migration ${migration.version} was renamed after it was applied`,
+        );
+      }
+      if (row.checksum !== checksum) {
         throw new DomainError(
           'INTEGRITY_ERROR',
           `Migration ${migration.version} (${migration.name}) was changed after it was applied`,
         );
       }
     }
+
+    for (const row of applied) validateMigrationRow(row);
 
     if (requireJournalSchema) this.validateAppliedSchema(byVersion);
 
@@ -484,6 +487,44 @@ async function cleanupSidecars(path: string): Promise<void> {
 
 export function openJournalDatabase(options: JournalDatabaseOptions): JournalDatabase {
   return new JournalDatabase(options);
+}
+
+const MIGRATION_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const MIGRATION_CHECKSUM_PATTERN = /^[a-f0-9]{64}$/;
+
+function validateMigrationDefinitions(): void {
+  for (const [index, migration] of migrations.entries()) {
+    const expectedVersion = index + 1;
+    const expectedFilename = `${String(expectedVersion).padStart(3, '0')}_${migration.name.replaceAll('-', '_')}.sql`;
+    if (
+      migration.version !== expectedVersion ||
+      !MIGRATION_NAME_PATTERN.test(migration.name) ||
+      migration.filename !== expectedFilename ||
+      migration.sql.trim().length === 0
+    ) {
+      throw new DomainError(
+        'INTEGRITY_ERROR',
+        `Runtime migration ${migration.version} has an invalid append-only definition`,
+      );
+    }
+  }
+}
+
+function validateMigrationRow(row: MigrationRow): void {
+  const appliedAt = new Date(row.applied_at);
+  if (
+    !Number.isSafeInteger(row.version) ||
+    row.version < 1 ||
+    !MIGRATION_NAME_PATTERN.test(row.name) ||
+    !MIGRATION_CHECKSUM_PATTERN.test(row.checksum) ||
+    !Number.isFinite(appliedAt.getTime()) ||
+    appliedAt.toISOString() !== row.applied_at
+  ) {
+    throw new DomainError(
+      'INTEGRITY_ERROR',
+      `Migration ${row.version} has invalid integrity metadata`,
+    );
+  }
 }
 
 function migrationChecksum(migration: Migration): string {
