@@ -37,7 +37,6 @@ import {
   journalActions,
   selectActiveCollections,
   selectJournalStatus,
-  selectOpenTodayCount,
   selectTimelineEntries,
   selectUnseenReviewCount,
   useJournalStore,
@@ -112,10 +111,7 @@ export default function App() {
   // `useJournalStore(selector)` would hand React a new snapshot every render.
   const activeCollections = useMemo(() => selectActiveCollections(store), [store]);
   const chipOverride = chipState?.key === routeFocusKey ? chipState.destination : null;
-  const counts = useMemo(
-    () => ({ today: selectOpenTodayCount(store), review: selectUnseenReviewCount(store) }),
-    [store],
-  );
+  const counts = useMemo(() => ({ review: selectUnseenReviewCount(store) }), [store]);
 
   const say = useCallback(
     (message: string, tone: 'success' | 'error' = 'success', action?: ToastAction) => {
@@ -580,9 +576,6 @@ export default function App() {
         return 'Activity';
     }
   })();
-  const dayCount = new Set(
-    entries.filter((entry) => entry.collection === null).map((entry) => entry.date),
-  ).size;
   const routeSubtitle = (() => {
     switch (route.name) {
       case 'today':
@@ -590,9 +583,9 @@ export default function App() {
           ? route.date > store.today
             ? 'Future log'
             : 'Daily log in your Timeline'
-          : `${formatLongDate(store.today)} · ${dayCount} ${dayCount === 1 ? 'day' : 'days'} logged`;
+          : formatLongDate(store.today);
       case 'month':
-        return `${dayCount} ${dayCount === 1 ? 'day' : 'days'} logged in Timeline`;
+        return 'Monthly log';
       case 'index':
         return `${activeCollections.length} active ${activeCollections.length === 1 ? 'collection' : 'collections'}`;
       case 'collection':

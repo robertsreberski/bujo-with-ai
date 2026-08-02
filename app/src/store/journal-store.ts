@@ -614,10 +614,19 @@ export async function applyChangeBatch(
       }
     } else if (change.kind === 'entry.deleted') {
       timelineEntryIds.delete(change.payload.id);
-    } else if (change.kind === 'entry.updated' && timelineEntryIds.has(change.payload.id)) {
+    } else if (change.kind === 'entry.updated') {
+      const previous = before.entriesById[change.payload.id];
+      const fitsTimeline =
+        before.timelineAnchorDate === null || change.payload.date <= before.timelineAnchorDate;
       if (
-        change.payload.deletedAt !== null ||
-        (before.timelineAnchorDate !== null && change.payload.date > before.timelineAnchorDate)
+        previous !== undefined &&
+        previous.deletedAt !== null &&
+        change.payload.deletedAt === null
+      ) {
+        if (fitsTimeline) timelineEntryIds.add(change.payload.id);
+      } else if (
+        timelineEntryIds.has(change.payload.id) &&
+        (change.payload.deletedAt !== null || !fitsTimeline)
       ) {
         timelineEntryIds.delete(change.payload.id);
       }
@@ -2019,6 +2028,16 @@ function mergeIds(...groups: readonly (readonly string[])[]): string[] {
   return [...new Set(groups.flatMap((group) => [...group]))];
 }
 
+function timelineIdsWithRestoredEntry(
+  state: Pick<JournalState, 'timelineEntryIds' | 'timelineAnchorDate'>,
+  entry: Entry,
+): string[] {
+  return entry.deletedAt === null &&
+    (state.timelineAnchorDate === null || entry.date <= state.timelineAnchorDate)
+    ? mergeIds(state.timelineEntryIds, [entry.id])
+    : state.timelineEntryIds;
+}
+
 function commandCreatedEntries(command: QueueableCommand): Entry[] {
   switch (command.kind) {
     case 'entry.create':
@@ -2770,6 +2789,7 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
           );
           return {
             ...mirror,
+            timelineEntryIds: timelineIdsWithRestoredEntry(current, original),
             outbox,
             outboxCount: outbox.length,
             recentlyDeleted: current.recentlyDeleted.filter((item) => item.entry.id !== id),
@@ -2798,6 +2818,7 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
           const mirror = upsertServerEntry(mirrorFromState(get()), response.entry);
           set((current) => ({
             ...mirror,
+            timelineEntryIds: timelineIdsWithRestoredEntry(current, response.entry),
             recentlyDeleted: current.recentlyDeleted.filter((item) => item.entry.id !== id),
           }));
           await persistNow();
@@ -2827,6 +2848,7 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
       const mirror = upsertServerEntry(mirrorFromState(get()), response.entry);
       set((current) => ({
         ...mirror,
+        timelineEntryIds: timelineIdsWithRestoredEntry(current, response.entry),
         recentlyDeleted: current.recentlyDeleted.filter((item) => item.entry.id !== id),
       }));
       await persistNow();
