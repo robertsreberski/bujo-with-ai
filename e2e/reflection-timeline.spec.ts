@@ -128,7 +128,7 @@ function reflectionResult(result: unknown, status: ReflectionState['status']): R
 }
 
 async function expectReflectionControlsAreTouchSafe(card: Locator): Promise<void> {
-  const controls = card.getByRole('button');
+  const controls = card.locator('button, summary');
   const count = await controls.count();
   expect(count).toBeGreaterThan(0);
   for (const control of await controls.all()) {
