@@ -1,30 +1,11 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { ulid } from 'ulid';
-import { openJournal, uniqueText } from './helpers';
+import { expectTouchTargets, openJournal, uniqueText } from './helpers';
 
 function addCalendarDays(date: string, amount: number): string {
   const parsed = new Date(`${date}T12:00:00Z`);
   parsed.setUTCDate(parsed.getUTCDate() + amount);
   return parsed.toISOString().slice(0, 10);
-}
-
-async function expectTouchTargets(page: Page, surface: string): Promise<void> {
-  const targets = page.locator(
-    'button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, a[href]',
-  );
-  for (const target of await targets.all()) {
-    if (!(await target.isVisible())) continue;
-    const box = await target.boundingBox();
-    const label = await target.evaluate(
-      (element) =>
-        element.getAttribute('aria-label') ??
-        element.getAttribute('placeholder') ??
-        element.textContent?.trim().replace(/\s+/g, ' ').slice(0, 60) ??
-        element.tagName.toLowerCase(),
-    );
-    expect(box?.width, `${surface}: ${label} width`).toBeGreaterThanOrEqual(40);
-    expect(box?.height, `${surface}: ${label} height`).toBeGreaterThanOrEqual(40);
-  }
 }
 
 test('the shell uses the approved narrow, mid, and wide layout at each breakpoint', async ({
@@ -231,8 +212,9 @@ test('mobile controls keep named touch targets and primary actions reach 44px', 
   await openJournal(page);
 
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
-  await expectTouchTargets(page, 'Settings');
+  const settings = page.getByRole('dialog', { name: 'Settings' });
+  await expect(settings).toBeVisible();
+  await expectTouchTargets(settings, 'Settings');
   for (const primary of [
     page.getByRole('button', { name: 'Close dialog' }),
     page.getByRole('button', { name: 'Create token' }),
@@ -246,8 +228,9 @@ test('mobile controls keep named touch targets and primary actions reach 44px', 
 
   await page.getByRole('button', { name: 'Index', exact: true }).click();
   await page.getByRole('button', { name: /New/ }).click();
-  await expect(page.getByRole('dialog', { name: 'New collection' })).toBeVisible();
-  await expectTouchTargets(page, 'New collection');
+  const newCollection = page.getByRole('dialog', { name: 'New collection' });
+  await expect(newCollection).toBeVisible();
+  await expectTouchTargets(newCollection, 'New collection');
   await page.keyboard.press('Escape');
 
   await page.getByRole('button', { name: 'Timeline', exact: true }).click();
@@ -256,15 +239,16 @@ test('mobile controls keep named touch targets and primary actions reach 44px', 
   await page.getByRole('button', { name: 'Add entry' }).click();
   await page.getByRole('button', { name: entryText, exact: true }).click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await expectTouchTargets(page, 'Edit entry');
+  await expectTouchTargets(page.locator('.entry-sheet'), 'Edit entry');
   await page.keyboard.press('Escape');
 
   await page.getByRole('button', { name: 'Search entries', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Search journal' })).toBeVisible();
+  const searchDialog = page.getByRole('dialog', { name: 'Search journal' });
+  await expect(searchDialog).toBeVisible();
   const searchInput = page.getByRole('searchbox', { name: 'Search entries and tags' });
   await searchInput.fill('#work');
   await expect(page.getByRole('button', { name: 'Clear search', exact: true })).toHaveCount(1);
-  await expectTouchTargets(page, 'Search journal');
+  await expectTouchTargets(searchDialog, 'Search journal');
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Search journal' })).toBeHidden();
 
@@ -283,7 +267,7 @@ test('mobile controls keep named touch targets and primary actions reach 44px', 
   await expect(page.getByRole('button', { name: 'Remove time at 09:15' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Remove tag #work' })).toBeVisible();
   await expect(page.locator('.composer-shell [role="listbox"]')).toBeHidden();
-  await expectTouchTargets(page, 'Composer with draft');
+  await expectTouchTargets(page.locator('.composer-shell'), 'Composer with draft');
 });
 
 test('route navigation restores the content scroller to the top', async ({ page }, testInfo) => {
