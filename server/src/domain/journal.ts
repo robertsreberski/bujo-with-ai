@@ -34,6 +34,7 @@ import {
   mapCollection,
   mapEntry,
   mapSummary,
+  matchesAutomaticStaleDelta,
   mondayOf,
   normalizeSource,
   normalizeText,
@@ -1468,7 +1469,10 @@ export class JournalDomain {
           .prepare('SELECT * FROM summaries WHERE id = ?')
           .get(summary.id) as SummaryRow | undefined;
         if (existingRow !== undefined) {
-          assertImportMatch('summary', summary.id, mapSummary(existingRow), summary);
+          const existing = mapSummary(existingRow);
+          if (!matchesAutomaticStaleDelta(existing, summary)) {
+            assertImportMatch('summary', summary.id, existing, summary);
+          }
           skipped.summaries++;
           continue;
         }

@@ -530,6 +530,32 @@ export function stableJson(value: unknown): string {
     .join(',')}}`;
 }
 
+export function monotonicTimestamp(current: string, candidate: string): string {
+  return Date.parse(current) >= Date.parse(candidate) ? current : candidate;
+}
+
+/** Matches only the state transition performed by source-set reconciliation. */
+export function matchesAutomaticStaleDelta<
+  T extends { readonly status: string; readonly revision: number; readonly updatedAt: string },
+>(existing: T, incoming: T): boolean {
+  if (
+    incoming.status !== 'current' ||
+    existing.status !== 'stale' ||
+    existing.revision !== incoming.revision + 1 ||
+    Date.parse(existing.updatedAt) < Date.parse(incoming.updatedAt)
+  ) {
+    return false;
+  }
+  return (
+    stableJson({
+      ...existing,
+      status: incoming.status,
+      revision: incoming.revision,
+      updatedAt: incoming.updatedAt,
+    }) === stableJson(incoming)
+  );
+}
+
 export function mondayOf(dateString: string): string {
   const date = new Date(`${validateDate(dateString)}T00:00:00Z`);
   const weekday = date.getUTCDay();
