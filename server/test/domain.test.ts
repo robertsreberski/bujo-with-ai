@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ulid } from 'ulid';
 import { JournalDatabase } from '../src/db/database.js';
@@ -1142,6 +1143,343 @@ describe('JournalDomain weekly Reflections', () => {
 });
 
 describe('JournalDomain summaries and credentials', () => {
+  it('reverts v2 Summary filings together with their exact Reflection aggregate', () => {
+    const { domain, database, agent, owner, advance } = fixture();
+    const created = domain.fileSummary(
+      {
+        weekStart: '2026-07-20',
+        text: 'First reversible Reflection.',
+        source: 'Initial reversible filing.',
+      },
+      agent,
+    );
+    const createdReflection = domain.getReflection(created.summary.id);
+    expect(createdReflection?.versions).toHaveLength(1);
+    const deletionBatches: ChangeBatch[] = [];
+    const unsubscribeDeletion = domain.subscribe((batch) => deletionBatches.push(batch));
+    domain.revertActivity(created.activityId, owner);
+    unsubscribeDeletion();
+    expect(domain.getSummary(created.summary.id)).toBeNull();
+    expect(domain.getReflection(created.summary.id)).toBeNull();
+    expect(
+      deletionBatches
+        .flatMap((batch) => batch.changes)
+        .find((change) => change.kind === 'reflection.changed' && !('status' in change.payload)),
+    ).toEqual({
+      kind: 'reflection.changed',
+      payload: { id: created.summary.id, weekStart: created.summary.weekStart },
+    });
+
+    const original = domain.fileSummary(
+      {
+        weekStart: '2026-07-27',
+        text: 'Original Reflection version.',
+        source: 'Original reversible source.',
+      },
+      agent,
+    );
+    const reflectionBefore = domain.getReflection(original.summary.id);
+    if (reflectionBefore === null) throw new Error('Expected original Reflection');
+    advance(60_000);
+    const updated = domain.fileSummary(
+      {
+        weekStart: '2026-07-27',
+        text: 'Superseding Reflection version.',
+        source: 'Superseding reversible source.',
+      },
+      agent,
+    );
+    const reflectionAfter = domain.getReflection(original.summary.id);
+    if (reflectionAfter === null) throw new Error('Expected updated Reflection');
+    expect(reflectionAfter.versions).toHaveLength(2);
+
+    const reverted = domain.revertActivity(updated.activityId, owner);
+    expect(reverted.reverted).toMatchObject([{ entity: 'summary', id: original.summary.id }]);
+    expect(domain.getSummary(original.summary.id)).toMatchObject({
+      text: original.summary.text,
+      source: original.summary.source,
+      revision: updated.summary.revision + 1,
+    });
+    expect(domain.getReflection(original.summary.id)).toMatchObject({
+      status: reflectionBefore.status,
+      currentVersionId: reflectionBefore.currentVersionId,
+      versions: reflectionBefore.versions,
+      revision: reflectionAfter.revision + 1,
+    });
+
+    const next = domain.fileSummary(
+      {
+        weekStart: '2026-07-27',
+        text: 'A conflicting later Reflection.',
+        source: 'Conflict fixture source.',
+      },
+      agent,
+    );
+    database.raw
+      .prepare("UPDATE reflection_slots SET status='stale',revision=revision+1 WHERE id=?")
+      .run(original.summary.id);
+    expect(domain.activityView(next.activityId).revert.reason).toBe('post_image_mismatch');
+    expect(() => domain.revertActivity(next.activityId, owner)).toThrowError(/Reflection changed/i);
+    expect(domain.getSummary(original.summary.id)?.text).toBe(next.summary.text);
+  });
+
+  it('makes Summary filing provenance portable, idempotent, and mandatory for reversal', () => {
+    const source = fixture();
+    const original = source.domain.fileSummary(
+      {
+        weekStart: '2026-07-27',
+        text: 'Portable original Reflection.',
+        source: 'Portable provenance fixture.',
+      },
+      source.agent,
+    );
+    source.advance(1_000);
+    const updated = source.domain.fileSummary(
+      {
+        weekStart: '2026-07-27',
+        text: 'Portable updated Reflection.',
+        source: 'Portable updated provenance fixture.',
+      },
+      source.agent,
+    );
+    const exported = source.domain.exportJournal();
+    expect(exported.derived.summaryReflectionReverts.items).toHaveLength(2);
+
+    const target = fixture();
+    const first = target.domain.importJournal(exported);
+    expect(first.inserted.summaryReflectionReverts).toBe(2);
+    expect(target.domain.exportJournal()).toMatchObject({
+      journal: exported.journal,
+      derived: exported.derived,
+    });
+    const second = target.domain.importJournal(exported);
+    expect(second.skipped.summaryReflectionReverts).toBe(2);
+    target.domain.revertActivity(updated.activityId, target.owner);
+    expect(target.domain.getSummary(original.summary.id)?.text).toBe(original.summary.text);
+
+    const withoutProvenance = fixture();
+    const legacy = withoutProvenance.domain.fileSummary(
+      {
+        weekStart: '2026-07-27',
+        text: 'No longer safely reversible.',
+        source: 'Missing provenance fixture.',
+      },
+      withoutProvenance.agent,
+    );
+    withoutProvenance.database.raw
+      .prepare('DELETE FROM summary_reflection_reverts WHERE activity_id=?')
+      .run(legacy.activityId);
+    expect(withoutProvenance.domain.activityView(legacy.activityId).revert.reason).toBe(
+      'not_reversible',
+    );
+    expect(() => withoutProvenance.domain.revertActivity(legacy.activityId, target.owner)).toThrow(
+      /no Reflection revert provenance/i,
+    );
+
+    const forged = structuredClone(exported);
+    const forgedUpdate = forged.derived.summaryReflectionReverts.items.find(
+      (item) => item.before !== null,
+    );
+    if (forgedUpdate?.before === null || forgedUpdate === undefined) {
+      throw new Error('Expected portable update provenance');
+    }
+    forgedUpdate.before.versions[0]!.text = 'Forged undo payload';
+    const forgedTarget = fixture();
+    expect(() => forgedTarget.domain.importJournal(forged)).toThrow(
+      /currentVersion|filing transition/i,
+    );
+    expect(forgedTarget.domain.listSummaries()).toEqual([]);
+  });
+
+  it('converges a protocol-1 Summary revert from private provenance on v2 reopen', () => {
+    const source = fixture();
+    const path = join(source.root, 'journal.db');
+    const filed = source.domain.fileSummary(
+      {
+        weekStart: '2026-07-27',
+        text: 'Created before compatibility rollback.',
+        source: 'Cross-runtime Activity revert fixture.',
+      },
+      source.agent,
+    );
+    const original = source.domain.fileSummary(
+      {
+        weekStart: '2026-07-20',
+        text: 'Original before compatibility update revert.',
+        source: 'Cross-runtime update base.',
+      },
+      source.agent,
+    );
+    const originalReflection = source.domain.getReflection(original.summary.id);
+    if (originalReflection === null) throw new Error('Expected original Reflection');
+    source.advance(1_000);
+    const updated = source.domain.fileSummary(
+      {
+        weekStart: '2026-07-20',
+        text: 'Updated before compatibility rollback.',
+        source: 'Cross-runtime update post-state.',
+      },
+      source.agent,
+    );
+    const updatedReflection = source.domain.getReflection(original.summary.id);
+    if (updatedReflection === null) throw new Error('Expected updated Reflection');
+    source.domain.close();
+
+    const rollback = new Database(path);
+    rollback.prepare('DELETE FROM summaries WHERE id=?').run(filed.summary.id);
+    rollback
+      .prepare('UPDATE activity SET reverted_at=?,reverted_by_activity_id=? WHERE id=?')
+      .run('2026-08-01T08:00:00.000Z', ulid(), filed.activityId);
+    rollback
+      .prepare(
+        `UPDATE summaries SET text=?,status=?,source=?,token_id=?,updated_at=?,
+           saved_entry_id=?,revision=? WHERE id=?`,
+      )
+      .run(
+        original.summary.text,
+        original.summary.status,
+        original.summary.source,
+        original.summary.tokenId,
+        '2026-08-01T08:01:00.000Z',
+        original.summary.savedEntryId,
+        updated.summary.revision + 1,
+        original.summary.id,
+      );
+    rollback
+      .prepare('UPDATE activity SET reverted_at=?,reverted_by_activity_id=? WHERE id=?')
+      .run('2026-08-01T08:01:00.000Z', ulid(), updated.activityId);
+    rollback.close();
+
+    const upgradedDatabase = new JournalDatabase({
+      path,
+      now: () => new Date('2026-08-02T09:00:00.000Z'),
+    });
+    const upgraded = new JournalDomain({
+      database: upgradedDatabase,
+      config: { timezone: 'UTC', dayBoundaryOffsetMin: 0, deviceCredentialTtlDays: 365 },
+      now: () => new Date('2026-08-02T09:00:00.000Z'),
+    });
+    open.push(upgraded);
+    expect(upgraded.getSummary(filed.summary.id)).toBeNull();
+    expect(upgraded.getReflection(filed.summary.id)).toBeNull();
+    expect(upgraded.getSummary(original.summary.id)).toMatchObject({
+      text: original.summary.text,
+      revision: updated.summary.revision + 1,
+    });
+    expect(upgraded.getReflection(original.summary.id)).toMatchObject({
+      currentVersionId: originalReflection.currentVersionId,
+      versions: expect.arrayContaining([expect.objectContaining({ text: original.summary.text })]),
+      revision: updatedReflection.revision + 1,
+    });
+  });
+
+  it('restores an abandoned running Reflection as queued locally and after provenance import', () => {
+    const source = fixture();
+    source.domain.createEntry(
+      {
+        id: ulid(),
+        date: '2026-07-22',
+        type: 'note',
+        text: 'Source row for the running Reflection.',
+      },
+      source.owner,
+    );
+    const slot = source.domain.listReflections('2026-07-20', '2026-07-26')[0];
+    if (slot === undefined) throw new Error('Expected materialized Reflection slot');
+    const requested = source.domain.requestReflection(slot.id, source.owner, {
+      expectedRevision: slot.revision,
+    }).reflection;
+    const running = source.domain.claimReflection(
+      slot.weekStart,
+      requested.requestId!,
+      source.agent,
+    ).reflection;
+    expect(running.status).toBe('running');
+    const filed = source.domain.fileSummary(
+      {
+        weekStart: slot.weekStart,
+        text: 'A filing that supersedes a running claim.',
+        source: 'Running claim revert fixture.',
+      },
+      source.agent,
+    );
+    const portable = source.domain.exportJournal();
+    const target = fixture();
+    target.domain.importJournal(portable);
+
+    source.domain.revertActivity(filed.activityId, source.owner);
+    expect(source.domain.getReflection(slot.id)).toMatchObject({
+      status: 'queued',
+      requestId: requested.requestId,
+      claimedAt: null,
+      claimedBy: null,
+      claimedSourceEntries: null,
+    });
+    target.domain.revertActivity(filed.activityId, target.owner);
+    expect(target.domain.getReflection(slot.id)).toMatchObject({
+      status: 'queued',
+      requestId: requested.requestId,
+      claimedAt: null,
+      claimedBy: null,
+      claimedSourceEntries: null,
+    });
+  });
+
+  it('keeps provenance capture and restore atomic and fails closed on malformed state', () => {
+    const capture = fixture();
+    capture.database.raw.exec(`
+      CREATE TRIGGER fail_summary_reflection_provenance
+      BEFORE INSERT ON summary_reflection_reverts
+      BEGIN SELECT RAISE(ABORT, 'provenance capture failed'); END;
+    `);
+    expect(() =>
+      capture.domain.fileSummary(
+        {
+          weekStart: '2026-07-27',
+          text: 'This entire filing must roll back.',
+          source: 'Atomic provenance capture fixture.',
+        },
+        capture.agent,
+      ),
+    ).toThrow(/provenance capture failed/i);
+    expect(capture.domain.listSummaries()).toEqual([]);
+    expect(capture.domain.listActivity()).toEqual([]);
+    expect(
+      capture.database.raw.prepare('SELECT count(*) FROM reflection_slots').pluck().get(),
+    ).toBe(0);
+
+    const restore = fixture();
+    const filed = restore.domain.fileSummary(
+      {
+        weekStart: '2026-07-27',
+        text: 'This filing remains when restore aborts.',
+        source: 'Atomic provenance restore fixture.',
+      },
+      restore.agent,
+    );
+    const reflectionBeforeFailedRestore = restore.domain.getReflection(filed.summary.id);
+    const activityCountBeforeFailedRestore = restore.domain.listActivity().length;
+    restore.database.raw.exec(`
+      CREATE TRIGGER fail_summary_reflection_restore
+      BEFORE DELETE ON reflection_versions
+      BEGIN SELECT RAISE(ABORT, 'provenance restore failed'); END;
+    `);
+    expect(() => restore.domain.revertActivity(filed.activityId, restore.owner)).toThrow(
+      /provenance restore failed/i,
+    );
+    expect(restore.domain.getSummary(filed.summary.id)).toEqual(filed.summary);
+    expect(restore.domain.getReflection(filed.summary.id)).toEqual(reflectionBeforeFailedRestore);
+    expect(restore.domain.getActivity(filed.activityId)?.revertedAt).toBeNull();
+    expect(restore.domain.listActivity()).toHaveLength(activityCountBeforeFailedRestore);
+    restore.database.raw.exec('DROP TRIGGER fail_summary_reflection_restore');
+    restore.database.raw
+      .prepare("UPDATE summary_reflection_reverts SET post_state='{}' WHERE activity_id=?")
+      .run(filed.activityId);
+    expect(() => restore.domain.revertActivity(filed.activityId, restore.owner)).toThrow(
+      /provenance.*invalid/i,
+    );
+  });
+
   it('files one summary per week, rewrites it, and saves it to today', () => {
     const { domain, agent, owner } = fixture();
     const filed = domain.createEntry(

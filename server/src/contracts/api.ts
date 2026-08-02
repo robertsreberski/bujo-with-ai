@@ -375,7 +375,13 @@ export const ChangeSchema = z.discriminatedUnion('kind', [
     kind: z.literal('summary.changed'),
     payload: z.union([SummarySchema, z.strictObject({ id: UlidSchema })]),
   }),
-  z.strictObject({ kind: z.literal('reflection.changed'), payload: ReflectionSchema }),
+  z.strictObject({
+    kind: z.literal('reflection.changed'),
+    payload: z.union([
+      ReflectionSchema,
+      z.strictObject({ id: UlidSchema, weekStart: CalendarDateSchema }),
+    ]),
+  }),
   z.strictObject({
     kind: z.literal('collection.changed'),
     payload: z.union([CollectionSchema, z.strictObject({ id: CollectionIdSchema })]),
@@ -539,10 +545,47 @@ const ReflectionExportProjectionSchema = z
     });
   });
 
+export const SummaryReflectionRevertSchema = z.strictObject({
+  activityId: UlidSchema,
+  reflectionId: UlidSchema,
+  before: ReflectionSchema.nullable(),
+  after: ReflectionSchema,
+});
+
+const SummaryReflectionRevertProjectionSchema = z
+  .strictObject({
+    version: z.literal(1),
+    items: z.array(SummaryReflectionRevertSchema),
+  })
+  .superRefine((projection, context) => {
+    const activityIds = new Set<string>();
+    projection.items.forEach((item, index) => {
+      if (activityIds.has(item.activityId)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['items', index, 'activityId'],
+          message: 'Summary Reflection revert activity ids must be unique.',
+        });
+      }
+      activityIds.add(item.activityId);
+      if (
+        item.after.id !== item.reflectionId ||
+        (item.before !== null && item.before.id !== item.reflectionId)
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['items', index, 'reflectionId'],
+          message: 'Summary Reflection revert states must belong to the recorded Reflection.',
+        });
+      }
+    });
+  });
+
 const JournalDerivedSchema = z
   .object({
     /** Added after v2 shipped; absence means an older portable document. */
     reflections: ReflectionExportProjectionSchema.optional(),
+    summaryReflectionReverts: SummaryReflectionRevertProjectionSchema.optional(),
   })
   .catchall(z.unknown());
 
@@ -578,6 +621,7 @@ const ImportEntityCountsSchema = z.strictObject({
   activity: z.number().int().nonnegative(),
   summaries: z.number().int().nonnegative(),
   reflections: z.number().int().nonnegative(),
+  summaryReflectionReverts: z.number().int().nonnegative(),
   settings: z.number().int().min(0).max(1),
 });
 
@@ -621,4 +665,5 @@ export type ChangeBatch = z.infer<typeof ChangeBatchSchema>;
 export type JournalExport = z.infer<typeof JournalExportSchema>;
 export type JournalExportV1 = z.infer<typeof JournalExportV1Schema>;
 export type JournalExportV2 = z.infer<typeof JournalExportV2Schema>;
+export type SummaryReflectionRevert = z.infer<typeof SummaryReflectionRevertSchema>;
 export type ImportReport = z.infer<typeof ImportReportSchema>;

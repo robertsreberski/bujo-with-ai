@@ -31,4 +31,5 @@ export const migrations: readonly Migration[] = [
   migration(4, 'saved-views', '004_saved_views.sql'),
   migration(5, 'reflections', '005_reflections.sql'),
   migration(6, 'reflection-source-bindings', '006_reflection_source_bindings.sql'),
+  migration(7, 'legacy-summary-provenance', '007_legacy_summary_provenance.sql'),
 ];

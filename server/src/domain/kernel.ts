@@ -511,8 +511,16 @@ export function summaryChange(summary: Summary | null, id?: string): EntityChang
   return { kind: 'summary.changed', payload: { id } };
 }
 
-export function reflectionChange(reflection: Reflection): EntityChange {
-  return { kind: 'reflection.changed', payload: reflection };
+export function reflectionChange(
+  reflection: Reflection | null,
+  id?: string,
+  weekStart?: string,
+): EntityChange {
+  if (reflection !== null) return { kind: 'reflection.changed', payload: reflection };
+  if (id === undefined || weekStart === undefined) {
+    throw new Error('Removed Reflection changes require an id and weekStart');
+  }
+  return { kind: 'reflection.changed', payload: { id, weekStart } };
 }
 
 export function activityChange(activity: ActivityItem): EntityChange {

@@ -277,7 +277,7 @@ describe('JournalDatabase and backups', () => {
     ]);
     expect(JSON.stringify(repairedActivity)).not.toContain('Legacy orphan content');
     expect(migrated.raw.prepare('SELECT max(version) FROM schema_migrations').pluck().get()).toBe(
-      6,
+      migrationVersions.at(-1),
     );
     migrated.close();
   });
@@ -395,6 +395,347 @@ describe('JournalDatabase and backups', () => {
         .get('2026-07-20'),
     ).toBe(3);
     idempotent.close();
+  });
+
+  it('reconciles rollback-runtime Summary updates, reverts, removals, and refiles without touching native history', () => {
+    const root = mkdtempSync(join(tmpdir(), 'journal-summary-rollback-reconcile-test-'));
+    roots.push(root);
+    const path = join(root, 'journal.db');
+    const initial = new JournalDatabase({ path });
+    const insertSummary = initial.raw.prepare(
+      `INSERT INTO summaries(
+        id,week_start,text,status,source,token_id,created_at,updated_at,saved_entry_id,revision
+       ) VALUES (?,?,?,?,?,?,?,?,NULL,?)`,
+    );
+    const tokenId = '01K1A2B3C4D5E6F7G8H9J0K2A1';
+    insertSummary.run(
+      '01K1A2B3C4D5E6F7G8H9J0K2A2',
+      '2026-06-01',
+      'Original update projection',
+      'current',
+      'Original update source.',
+      tokenId,
+      '2026-06-08T08:00:00.000Z',
+      '2026-06-08T08:00:00.000Z',
+      4,
+    );
+    insertSummary.run(
+      '01K1A2B3C4D5E6F7G8H9J0K2A3',
+      '2026-06-08',
+      'Remove this projection',
+      'current',
+      'Removal source.',
+      tokenId,
+      '2026-06-15T08:00:00.000Z',
+      '2026-06-15T08:00:00.000Z',
+      2,
+    );
+    insertSummary.run(
+      '01K1A2B3C4D5E6F7G8H9J0K2A4',
+      '2026-06-15',
+      'Replace this projection',
+      'current',
+      'Replacement source.',
+      tokenId,
+      '2026-06-22T08:00:00.000Z',
+      '2026-06-22T08:00:00.000Z',
+      3,
+    );
+    insertSummary.run(
+      '01K1A2B3C4D5E6F7G8H9J0K2A5',
+      '2026-06-22',
+      'Native history base',
+      'current',
+      'Native base source.',
+      tokenId,
+      '2026-06-29T08:00:00.000Z',
+      '2026-06-29T08:00:00.000Z',
+      6,
+    );
+    initial.close();
+
+    const backfilled = new JournalDatabase({
+      path,
+      now: () => new Date('2026-07-01T09:00:00.000Z'),
+    });
+    expect(
+      backfilled.raw
+        .prepare('SELECT count(*) FROM reflection_slots WHERE legacy_summary_id IS NOT NULL')
+        .pluck()
+        .get(),
+    ).toBe(4);
+    backfilled.raw
+      .prepare(
+        `INSERT INTO reflection_versions(
+          id,reflection_id,version_number,text,source_from,source_to,generator_token_id,
+          generator_label,generator_tool,source,generated_at,source_entries
+         ) VALUES (?,?,2,?,?,?,?,?,?,?,?,'[]')`,
+      )
+      .run(
+        '01K1A2B3C4D5E6F7G8H9J0K2A6',
+        '01K1A2B3C4D5E6F7G8H9J0K2A5',
+        'Native Reflection history',
+        '2026-06-22',
+        '2026-06-28',
+        tokenId,
+        'Native assistant',
+        'file_summary',
+        'Native Reflection source.',
+        '2026-07-01T10:00:00.000Z',
+      );
+    backfilled.raw
+      .prepare(
+        `UPDATE reflection_slots SET current_version_id=?,status='current',
+           updated_at='2026-07-01T10:00:00.000Z',revision=revision+1 WHERE week_start=?`,
+      )
+      .run('01K1A2B3C4D5E6F7G8H9J0K2A6', '2026-06-22');
+
+    // These are the exact canonical writes the protocol-1 runtime can make
+    // while the additive Reflection tables remain dormant.
+    backfilled.raw
+      .prepare(
+        `UPDATE summaries SET text=?,status='stale',source=?,updated_at=?,revision=revision+1
+         WHERE week_start='2026-06-01'`,
+      )
+      .run(
+        'Compatibility runtime update',
+        'Compatibility update source.',
+        '2026-07-02T08:00:00.000Z',
+      );
+    backfilled.raw.prepare("DELETE FROM summaries WHERE week_start='2026-06-08'").run();
+    backfilled.raw.prepare("DELETE FROM summaries WHERE week_start='2026-06-15'").run();
+    backfilled.raw
+      .prepare(
+        `INSERT INTO summaries(
+          id,week_start,text,status,source,token_id,created_at,updated_at,saved_entry_id,revision
+         ) VALUES (?,?,?,?,?,?,?,?,NULL,?)`,
+      )
+      .run(
+        '01K1A2B3C4D5E6F7G8H9J0K2A7',
+        '2026-06-15',
+        'Compatibility refile',
+        'current',
+        'Compatibility refile source.',
+        tokenId,
+        '2026-07-02T08:05:00.000Z',
+        '2026-07-02T08:05:00.000Z',
+        1,
+      );
+    backfilled.raw
+      .prepare(
+        `UPDATE summaries SET text=?,source=?,updated_at=?,revision=revision+1
+         WHERE week_start='2026-06-22'`,
+      )
+      .run(
+        'Compatibility must not replace native history',
+        'Compatibility divergent source.',
+        '2026-07-02T08:10:00.000Z',
+      );
+    backfilled.close();
+
+    const upgraded = new JournalDatabase({
+      path,
+      now: () => new Date('2026-07-03T09:00:00.000Z'),
+    });
+    expect(
+      upgraded.raw
+        .prepare(
+          `SELECT reflection.status,reflection.current_version_id,reflection.revision,
+                  version.text,version.source,version.generated_at
+           FROM reflection_slots AS reflection
+           JOIN reflection_versions AS version ON version.id=reflection.current_version_id
+           WHERE reflection.week_start='2026-06-01'`,
+        )
+        .get(),
+    ).toEqual({
+      status: 'stale',
+      current_version_id: '01K1A2B3C4D5E6F7G8H9J0K2A2',
+      revision: 5,
+      text: 'Compatibility runtime update',
+      source: 'Compatibility update source.',
+      generated_at: '2026-07-02T08:00:00.000Z',
+    });
+    expect(
+      upgraded.raw
+        .prepare("SELECT count(*) FROM reflection_slots WHERE week_start='2026-06-08'")
+        .pluck()
+        .get(),
+    ).toBe(0);
+    expect(
+      upgraded.raw
+        .prepare(
+          `SELECT id,legacy_summary_id,current_version_id,revision
+           FROM reflection_slots WHERE week_start='2026-06-15'`,
+        )
+        .get(),
+    ).toEqual({
+      id: '01K1A2B3C4D5E6F7G8H9J0K2A7',
+      legacy_summary_id: '01K1A2B3C4D5E6F7G8H9J0K2A7',
+      current_version_id: '01K1A2B3C4D5E6F7G8H9J0K2A7',
+      revision: 1,
+    });
+    expect(
+      upgraded.raw
+        .prepare(
+          `SELECT status,current_version_id,revision FROM reflection_slots
+           WHERE week_start='2026-06-22'`,
+        )
+        .get(),
+    ).toEqual({
+      status: 'current',
+      current_version_id: '01K1A2B3C4D5E6F7G8H9J0K2A6',
+      revision: 7,
+    });
+    expect(
+      upgraded.raw
+        .prepare(
+          `SELECT id,text,version_number FROM reflection_versions
+           WHERE reflection_id='01K1A2B3C4D5E6F7G8H9J0K2A5' ORDER BY version_number`,
+        )
+        .all(),
+    ).toEqual([
+      {
+        id: '01K1A2B3C4D5E6F7G8H9J0K2A5',
+        text: 'Native history base',
+        version_number: 1,
+      },
+      {
+        id: '01K1A2B3C4D5E6F7G8H9J0K2A6',
+        text: 'Native Reflection history',
+        version_number: 2,
+      },
+    ]);
+    upgraded.close();
+
+    const compatibilityRevert = new Database(path);
+    compatibilityRevert
+      .prepare(
+        `UPDATE summaries SET text=?,status='current',source=?,updated_at=?,revision=revision+1
+         WHERE week_start='2026-06-01'`,
+      )
+      .run('Original update projection', 'Original update source.', '2026-07-01T07:00:00.000Z');
+    compatibilityRevert.close();
+    const reverted = new JournalDatabase({
+      path,
+      now: () => new Date('2026-07-05T09:00:00.000Z'),
+    });
+    expect(
+      reverted.raw
+        .prepare(
+          `SELECT reflection.status,reflection.revision,version.text,version.source
+           FROM reflection_slots AS reflection
+           JOIN reflection_versions AS version ON version.id=reflection.current_version_id
+           WHERE reflection.week_start='2026-06-01'`,
+        )
+        .get(),
+    ).toEqual({
+      status: 'current',
+      revision: 6,
+      text: 'Original update projection',
+      source: 'Original update source.',
+    });
+    reverted.close();
+    const beforeIdempotentOpen = readFileSync(path);
+    const idempotent = new JournalDatabase({
+      path,
+      now: () => new Date('2026-07-06T09:00:00.000Z'),
+    });
+    idempotent.close();
+    expect(readFileSync(path)).toEqual(beforeIdempotentOpen);
+  });
+
+  it('retro-identifies a v6 synthetic backfill after compatibility writes and the v7 upgrade', () => {
+    const root = mkdtempSync(join(tmpdir(), 'journal-v6-summary-reconcile-test-'));
+    roots.push(root);
+    const path = join(root, 'journal.db');
+    const v6 = new Database(path);
+    v6.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        checksum TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      );
+    `);
+    const record = v6.prepare(
+      'INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES (?,?,?,?)',
+    );
+    for (const migration of migrations.filter(({ version }) => version <= 6)) {
+      v6.exec(migration.sql);
+      record.run(
+        migration.version,
+        migration.name,
+        createHash('sha256')
+          .update(`${migration.version}\0${migration.name}\0${migration.sql}`)
+          .digest('hex'),
+        `2026-07-${String(10 + migration.version).padStart(2, '0')}T08:00:00.000Z`,
+      );
+    }
+    v6.exec(`
+      INSERT INTO summaries(
+        id,week_start,text,status,source,token_id,created_at,updated_at,saved_entry_id,revision
+      ) VALUES
+        ('01K1A2B3C4D5E6F7G8H9J0K2B1','2026-05-18','v6 update base','current',
+         'v6 update source.','01K1A2B3C4D5E6F7G8H9J0K2B2',
+         '2026-05-25T08:00:00.000Z','2026-05-25T08:00:00.000Z',NULL,2),
+        ('01K1A2B3C4D5E6F7G8H9J0K2B3','2026-05-25','v6 delete base','current',
+         'v6 delete source.','01K1A2B3C4D5E6F7G8H9J0K2B2',
+         '2026-06-01T08:00:00.000Z','2026-06-01T08:00:00.000Z',NULL,3);
+
+      INSERT INTO reflection_slots(
+        id,week_start,week_end,status,request_id,requested_at,claimed_at,claimed_token_id,
+        claimed_label,claimed_tool,claimed_source_entries,failure,current_version_id,
+        created_at,updated_at,revision
+      )
+      SELECT id,week_start,date(week_start,'+6 days'),'current',NULL,NULL,NULL,NULL,NULL,NULL,
+             NULL,NULL,id,created_at,updated_at,revision
+      FROM summaries;
+
+      INSERT INTO reflection_versions(
+        id,reflection_id,version_number,text,source_from,source_to,generator_token_id,
+        generator_label,generator_tool,source,generated_at,source_entries
+      )
+      SELECT id,id,1,text,week_start,date(week_start,'+6 days'),token_id,
+             'Legacy assistant',NULL,source,updated_at,'[]'
+      FROM summaries;
+
+      UPDATE summaries SET text='compat updated v6 projection',source='compat v6 source.',
+        updated_at='2026-07-20T08:00:00.000Z',revision=revision+1
+      WHERE id='01K1A2B3C4D5E6F7G8H9J0K2B1';
+      DELETE FROM summaries WHERE id='01K1A2B3C4D5E6F7G8H9J0K2B3';
+    `);
+    v6.close();
+    chmodSync(path, 0o600);
+
+    const upgraded = new JournalDatabase({
+      path,
+      now: () => new Date('2026-07-21T09:00:00.000Z'),
+    });
+    expect(upgraded.raw.prepare('SELECT max(version) FROM schema_migrations').pluck().get()).toBe(
+      7,
+    );
+    expect(
+      upgraded.raw
+        .prepare(
+          `SELECT reflection.legacy_summary_id,reflection.revision,version.text,version.source
+           FROM reflection_slots AS reflection
+           JOIN reflection_versions AS version ON version.id=reflection.current_version_id
+           WHERE reflection.id='01K1A2B3C4D5E6F7G8H9J0K2B1'`,
+        )
+        .get(),
+    ).toEqual({
+      legacy_summary_id: '01K1A2B3C4D5E6F7G8H9J0K2B1',
+      revision: 3,
+      text: 'compat updated v6 projection',
+      source: 'compat v6 source.',
+    });
+    expect(
+      upgraded.raw
+        .prepare("SELECT count(*) FROM reflection_slots WHERE id='01K1A2B3C4D5E6F7G8H9J0K2B3'")
+        .pluck()
+        .get(),
+    ).toBe(0);
+    upgraded.close();
   });
 
   it('verifies an existing named snapshot before reusing it', async () => {

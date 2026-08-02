@@ -231,6 +231,8 @@ export class JournalDatabase {
       { version: 5, type: 'table', name: 'reflection_versions' },
       { version: 5, type: 'index', name: 'idx_reflection_slots_week' },
       { version: 5, type: 'index', name: 'idx_reflection_versions_slot' },
+      { version: 7, type: 'table', name: 'summary_reflection_reverts' },
+      { version: 7, type: 'table', name: 'legacy_summary_reconciliation_state' },
     ] as const;
     const lookup = this.raw.prepare('SELECT type FROM sqlite_master WHERE name = ?');
     for (const object of required) {
@@ -261,43 +263,16 @@ export class JournalDatabase {
       .pluck()
       .get() as number | null;
     if ((appliedVersion ?? 0) < 6) return;
+    const hasLegacySummaryProvenance = (appliedVersion ?? 0) >= 7;
+    const legacyProjectionReconciliationPending =
+      hasLegacySummaryProvenance &&
+      this.raw.prepare('SELECT 1 FROM legacy_summary_reconciliation_state WHERE id=1').get() ===
+        undefined;
     const now = this.now().toISOString();
     const reconcile = this.raw.transaction(() => {
-      this.raw.exec(`
-        INSERT INTO reflection_slots(
-          id, week_start, week_end, status, request_id, requested_at, claimed_at,
-          claimed_token_id, claimed_label, claimed_tool, claimed_source_entries,
-          failure, current_version_id, created_at, updated_at, revision
-        )
-        SELECT
-          summary.id,
-          summary.week_start,
-          date(summary.week_start, '+6 days'),
-          CASE summary.status WHEN 'stale' THEN 'stale' ELSE 'current' END,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, summary.id,
-          summary.created_at, summary.updated_at, summary.revision
-        FROM summaries AS summary
-        WHERE NOT EXISTS (
-          SELECT 1 FROM reflection_slots AS reflection
-          WHERE reflection.week_start = summary.week_start
-        );
-
-        INSERT INTO reflection_versions(
-          id, reflection_id, version_number, text, source_from, source_to,
-          generator_token_id, generator_label, generator_tool, source, generated_at,
-          source_entries
-        )
-        SELECT
-          summary.id, summary.id, 1, summary.text, summary.week_start,
-          date(summary.week_start, '+6 days'), summary.token_id, 'Legacy assistant',
-          NULL, summary.source, summary.updated_at, '[]'
-        FROM summaries AS summary
-        JOIN reflection_slots AS reflection ON reflection.id = summary.id
-        WHERE reflection.current_version_id = summary.id
-          AND NOT EXISTS (
-            SELECT 1 FROM reflection_versions AS version WHERE version.id = summary.id
-          );
-      `);
+      if (hasLegacySummaryProvenance)
+        this.reconcileLegacySummaryProjections(now, legacyProjectionReconciliationPending);
+      else this.backfillLegacySummaryProjections(false);
 
       this.raw
         .prepare(
@@ -395,8 +370,216 @@ export class JournalDatabase {
               )
           );
       `);
+      if (legacyProjectionReconciliationPending) {
+        this.raw
+          .prepare(
+            'INSERT OR IGNORE INTO legacy_summary_reconciliation_state(id,completed_at) VALUES (1,?)',
+          )
+          .run(now);
+      }
     });
     reconcile();
+  }
+
+  /**
+   * A v1-compatible runtime can keep writing the canonical summaries table
+   * while the additive Reflection tables are dormant. Only the deliberately
+   * synthetic one-version mirror may be rewritten or removed on re-upgrade;
+   * workflow state or any native version makes the Reflection authoritative.
+   */
+  private reconcileLegacySummaryProjections(now: string, retroIdentify: boolean): void {
+    if (retroIdentify)
+      this.raw.exec(`
+      UPDATE reflection_slots AS reflection
+      SET legacy_summary_id = reflection.id
+      WHERE reflection.legacy_summary_id IS NULL
+        AND reflection.current_version_id = reflection.id
+        AND reflection.status IN ('current', 'stale')
+        AND reflection.request_id IS NULL
+        AND reflection.requested_at IS NULL
+        AND reflection.claimed_at IS NULL
+        AND reflection.claimed_token_id IS NULL
+        AND reflection.claimed_label IS NULL
+        AND reflection.claimed_tool IS NULL
+        AND reflection.claimed_source_entries IS NULL
+        AND reflection.failure IS NULL
+        AND (SELECT count(*) FROM reflection_versions AS candidate
+             WHERE candidate.reflection_id = reflection.id) = 1
+        AND EXISTS (
+          SELECT 1 FROM reflection_versions AS version
+          WHERE version.reflection_id = reflection.id
+            AND version.id = reflection.id
+            AND version.version_number = 1
+            AND version.source_from = reflection.week_start
+            AND version.source_to = reflection.week_end
+            AND version.generator_label = 'Legacy assistant'
+            AND version.generator_tool IS NULL
+            AND json_array_length(version.source_entries) = 0
+        );
+      `);
+    this.raw.exec(`
+      DELETE FROM reflection_versions
+      WHERE id IN (
+        SELECT version.id
+        FROM reflection_slots AS reflection
+        JOIN reflection_versions AS version ON version.reflection_id = reflection.id
+        WHERE reflection.legacy_summary_id = reflection.id
+          AND reflection.current_version_id = reflection.id
+          AND reflection.status IN ('current', 'stale')
+          AND reflection.request_id IS NULL
+          AND reflection.requested_at IS NULL
+          AND reflection.claimed_at IS NULL
+          AND reflection.claimed_token_id IS NULL
+          AND reflection.claimed_label IS NULL
+          AND reflection.claimed_tool IS NULL
+          AND reflection.claimed_source_entries IS NULL
+          AND reflection.failure IS NULL
+          AND version.id = reflection.id
+          AND version.version_number = 1
+          AND version.source_from = reflection.week_start
+          AND version.source_to = reflection.week_end
+          AND version.generator_label = 'Legacy assistant'
+          AND version.generator_tool IS NULL
+          AND json_array_length(version.source_entries) = 0
+          AND (SELECT count(*) FROM reflection_versions AS candidate
+               WHERE candidate.reflection_id = reflection.id) = 1
+          AND NOT EXISTS (
+            SELECT 1 FROM summaries AS summary
+            WHERE summary.id = reflection.legacy_summary_id
+              AND summary.week_start = reflection.week_start
+          )
+      );
+
+      DELETE FROM reflection_slots AS reflection
+      WHERE reflection.legacy_summary_id = reflection.id
+        AND NOT EXISTS (
+          SELECT 1 FROM summaries AS summary
+          WHERE summary.id = reflection.legacy_summary_id
+            AND summary.week_start = reflection.week_start
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM reflection_versions AS version
+          WHERE version.reflection_id = reflection.id
+        );
+    `);
+
+    this.raw
+      .prepare(
+        `UPDATE reflection_slots AS reflection
+         SET
+           status = CASE summary.status WHEN 'stale' THEN 'stale' ELSE 'current' END,
+           updated_at = max(reflection.updated_at, summary.updated_at, ?),
+           revision = max(reflection.revision + 1, summary.revision)
+         FROM summaries AS summary
+         JOIN reflection_versions AS version ON version.id = summary.id
+         WHERE reflection.id = summary.id
+           AND reflection.legacy_summary_id = summary.id
+           AND reflection.week_start = summary.week_start
+           AND reflection.current_version_id = reflection.id
+           AND reflection.status IN ('current', 'stale')
+           AND reflection.request_id IS NULL
+           AND reflection.requested_at IS NULL
+           AND reflection.claimed_at IS NULL
+           AND reflection.claimed_token_id IS NULL
+           AND reflection.claimed_label IS NULL
+           AND reflection.claimed_tool IS NULL
+           AND reflection.claimed_source_entries IS NULL
+           AND reflection.failure IS NULL
+           AND version.reflection_id = reflection.id
+           AND version.version_number = 1
+           AND version.source_from = reflection.week_start
+           AND version.source_to = reflection.week_end
+           AND version.generator_label = 'Legacy assistant'
+           AND version.generator_tool IS NULL
+           AND json_array_length(version.source_entries) = 0
+           AND (SELECT count(*) FROM reflection_versions AS candidate
+                WHERE candidate.reflection_id = reflection.id) = 1
+           AND (
+             reflection.status != CASE summary.status WHEN 'stale' THEN 'stale' ELSE 'current' END
+             OR reflection.revision < summary.revision
+             OR version.text != summary.text
+             OR version.generator_token_id != summary.token_id
+             OR version.source != summary.source
+             OR version.generated_at != summary.updated_at
+           )`,
+      )
+      .run(now);
+
+    this.raw.exec(`
+      UPDATE reflection_versions AS version
+      SET
+        text = summary.text,
+        generator_token_id = summary.token_id,
+        source = summary.source,
+        generated_at = summary.updated_at
+      FROM reflection_slots AS reflection
+      JOIN summaries AS summary
+        ON summary.id = reflection.legacy_summary_id
+       AND summary.week_start = reflection.week_start
+      WHERE version.reflection_id = reflection.id
+        AND reflection.legacy_summary_id = reflection.id
+        AND reflection.current_version_id = reflection.id
+        AND reflection.status IN ('current', 'stale')
+        AND reflection.request_id IS NULL
+        AND reflection.requested_at IS NULL
+        AND reflection.claimed_at IS NULL
+        AND reflection.claimed_token_id IS NULL
+        AND reflection.claimed_label IS NULL
+        AND reflection.claimed_tool IS NULL
+        AND reflection.claimed_source_entries IS NULL
+        AND reflection.failure IS NULL
+        AND version.id = reflection.id
+        AND version.version_number = 1
+        AND version.source_from = reflection.week_start
+        AND version.source_to = reflection.week_end
+        AND version.generator_label = 'Legacy assistant'
+        AND version.generator_tool IS NULL
+        AND json_array_length(version.source_entries) = 0
+        AND (SELECT count(*) FROM reflection_versions AS candidate
+             WHERE candidate.reflection_id = reflection.id) = 1;
+    `);
+
+    this.backfillLegacySummaryProjections(true);
+  }
+
+  private backfillLegacySummaryProjections(withProvenance: boolean): void {
+    const provenanceColumn = withProvenance ? ', legacy_summary_id' : '';
+    const provenanceValue = withProvenance ? ', summary.id' : '';
+    this.raw.exec(`
+      INSERT INTO reflection_slots(
+        id, week_start, week_end, status, request_id, requested_at, claimed_at,
+        claimed_token_id, claimed_label, claimed_tool, claimed_source_entries,
+        failure, current_version_id, created_at, updated_at, revision${provenanceColumn}
+      )
+      SELECT
+        summary.id,
+        summary.week_start,
+        date(summary.week_start, '+6 days'),
+        CASE summary.status WHEN 'stale' THEN 'stale' ELSE 'current' END,
+        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, summary.id,
+        summary.created_at, summary.updated_at, summary.revision${provenanceValue}
+      FROM summaries AS summary
+      WHERE NOT EXISTS (
+        SELECT 1 FROM reflection_slots AS reflection
+        WHERE reflection.week_start = summary.week_start
+      );
+
+      INSERT INTO reflection_versions(
+        id, reflection_id, version_number, text, source_from, source_to,
+        generator_token_id, generator_label, generator_tool, source, generated_at,
+        source_entries
+      )
+      SELECT
+        summary.id, summary.id, 1, summary.text, summary.week_start,
+        date(summary.week_start, '+6 days'), summary.token_id, 'Legacy assistant',
+        NULL, summary.source, summary.updated_at, '[]'
+      FROM summaries AS summary
+      JOIN reflection_slots AS reflection ON reflection.id = summary.id
+      WHERE reflection.current_version_id = summary.id
+        AND NOT EXISTS (
+          SELECT 1 FROM reflection_versions AS version WHERE version.id = summary.id
+        );
+    `);
   }
 
   public quickCheck(): void {

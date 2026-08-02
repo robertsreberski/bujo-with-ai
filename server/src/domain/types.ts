@@ -27,6 +27,7 @@ import type {
   SearchInput,
   Settings,
   Summary,
+  SummaryReflectionRevert,
   TagUsage,
 } from '../contracts/index.js';
 
@@ -56,6 +57,7 @@ export type {
   ReflectionVersion,
   Settings,
   Summary,
+  SummaryReflectionRevert,
   TagUsage,
 };
 

@@ -11,7 +11,9 @@ import {
   EntrySchema,
   JournalExportSchema,
   JournalExportV2Schema,
+  ReflectionSchema,
   SettingsSchema,
+  SummaryReflectionRevertSchema,
   SummarySchema,
 } from '../contracts/index.js';
 import type { JournalDatabase } from '../db/database.js';
@@ -35,6 +37,7 @@ import {
   mapEntry,
   mapSummary,
   matchesAutomaticStaleDelta,
+  monotonicTimestamp,
   mondayOf,
   normalizeSource,
   normalizeText,
@@ -99,6 +102,7 @@ import type {
   Snapshot,
   Settings,
   Summary,
+  SummaryReflectionRevert,
   TagUsage,
 } from './types.js';
 import { TimelineQueries } from './timeline-queries.js';
@@ -129,13 +133,15 @@ function validateActivity(activity: ActivityItem): void {
 function validateExport(document: JournalExport): {
   readonly journal: JournalExportV1 | JournalExportV2['journal'];
   readonly reflections: readonly Reflection[];
+  readonly summaryReflectionReverts: readonly SummaryReflectionRevert[];
 } {
   const parsed = JournalExportSchema.parse(document);
   return parsed.version === 1
-    ? { journal: parsed, reflections: [] }
+    ? { journal: parsed, reflections: [], summaryReflectionReverts: [] }
     : {
         journal: parsed.journal,
         reflections: parsed.derived?.reflections?.items ?? [],
+        summaryReflectionReverts: parsed.derived?.summaryReflectionReverts?.items ?? [],
       };
 }
 
@@ -297,6 +303,14 @@ interface MutationRow {
   readonly result: string;
 }
 
+interface SummaryReflectionRevertRow {
+  readonly activity_id: string;
+  readonly reflection_id: string;
+  readonly pre_state: string;
+  readonly post_state: string;
+  readonly created_at: string;
+}
+
 interface MutationOutcome<T> {
   readonly result: T;
   readonly replayed: boolean;
@@ -386,6 +400,7 @@ export class JournalDomain {
       idFactory: this.idFactory,
       write,
     });
+    this.reconcileRevertedSummaryReflections();
     const entries: EntryPersistencePort = {
       select: (id, includeDeleted) => this.selectEntry(id, includeDeleted),
       requireLive: (id) => this.requireLiveEntry(id),
@@ -832,6 +847,11 @@ export class JournalDomain {
           .prepare('SELECT * FROM summaries WHERE week_start = ?')
           .get(input.weekStart) as SummaryRow | undefined;
         const before = row === undefined ? null : mapSummary(row);
+        const reflectionBeforeRow = this.db
+          .prepare('SELECT id FROM reflection_slots WHERE week_start = ?')
+          .get(input.weekStart) as { id: string } | undefined;
+        const reflectionBefore =
+          reflectionBeforeRow === undefined ? null : this.requireReflection(reflectionBeforeRow.id);
         const summary: Summary =
           before === null
             ? {
@@ -870,6 +890,15 @@ export class JournalDomain {
           },
           actor,
           context,
+        );
+        this.insertSummaryReflectionRevert(
+          {
+            activityId: activity.id,
+            reflectionId: reflection.id,
+            before: reflectionBefore,
+            after: reflection,
+          },
+          context.now,
         );
         return { kind: 'summary', summary, activityId: activity.id };
       },
@@ -958,6 +987,11 @@ export class JournalDomain {
     return this.write('rewrite-summary', { id, ...options }, actor, mutation, (context) => {
       const before = this.requireSummary(id);
       assertExpectedSummaryRevision(before, options.expectedRevision);
+      const reflectionBeforeRow = this.db
+        .prepare('SELECT id FROM reflection_slots WHERE week_start = ?')
+        .get(before.weekStart) as { id: string } | undefined;
+      const reflectionBefore =
+        reflectionBeforeRow === undefined ? null : this.requireReflection(reflectionBeforeRow.id);
       const summary: Summary = {
         ...before,
         status: 'stale',
@@ -993,6 +1027,17 @@ export class JournalDomain {
         actor,
         context,
       );
+      if (reflectionBefore !== null) {
+        this.insertSummaryReflectionRevert(
+          {
+            activityId: activity.id,
+            reflectionId: reflectionBefore.id,
+            before: reflectionBefore,
+            after: this.requireReflection(reflectionBefore.id),
+          },
+          context.now,
+        );
+      }
       return { summary, activityId: activity.id };
     });
   }
@@ -1021,6 +1066,18 @@ export class JournalDomain {
         throw new DomainError('CONFLICT', 'This activity has already been reverted');
       }
       if (original.postImages.length === 0) invalid('This activity has no reversible snapshots');
+      const summaryReflectionRevert =
+        original.kind === 'summary-filed' &&
+        original.postImages.some((snapshot) => snapshot.entity === 'summary')
+          ? this.getSummaryReflectionRevert(original.id)
+          : null;
+      if (
+        original.kind === 'summary-filed' &&
+        original.postImages.some((snapshot) => snapshot.entity === 'summary') &&
+        summaryReflectionRevert === null
+      ) {
+        invalid('This summary Activity has no Reflection revert provenance');
+      }
 
       for (const expected of original.postImages) {
         const current = this.selectSnapshot(expected.entity, expected.id);
@@ -1034,6 +1091,16 @@ export class JournalDomain {
           );
         }
       }
+      if (summaryReflectionRevert !== null) {
+        const current = this.getReflection(summaryReflectionRevert.reflectionId);
+        if (stableJson(current) !== stableJson(summaryReflectionRevert.after)) {
+          throw new DomainError(
+            'CONFLICT',
+            'The Reflection changed after this activity; reverting would overwrite newer work',
+            { details: { reflectionId: summaryReflectionRevert.reflectionId } },
+          );
+        }
+      }
 
       const beforeRevert = original.postImages.map((snapshot) => ({
         ...snapshot,
@@ -1042,6 +1109,9 @@ export class JournalDomain {
       const restored: Snapshot[] = [];
       for (const preImage of original.preImages) {
         restored.push(this.restoreSnapshot(preImage, context));
+      }
+      if (summaryReflectionRevert !== null) {
+        this.restoreSummaryReflection(summaryReflectionRevert, context);
       }
       const revertId = this.idFactory();
       this.db
@@ -1382,6 +1452,14 @@ export class JournalDomain {
             version: 1,
             items: this.activityReflection.listStoredReflections(),
           },
+          summaryReflectionReverts: {
+            version: 1,
+            items: (
+              this.db
+                .prepare('SELECT * FROM summary_reflection_reverts ORDER BY activity_id')
+                .all() as SummaryReflectionRevertRow[]
+            ).map((row) => this.parseSummaryReflectionRevert(row)),
+          },
         },
       });
     });
@@ -1389,7 +1467,7 @@ export class JournalDomain {
   }
 
   public importJournal(document: JournalExport): ImportReport {
-    const { journal, reflections } = validateExport(document);
+    const { journal, reflections, summaryReflectionReverts } = validateExport(document);
     // Imports are a write boundary too. Parsing before the transaction keeps an
     // invalid saved query from partially importing otherwise valid rows.
     validateSavedViewQueries(journal.settings.savedViews);
@@ -1399,6 +1477,7 @@ export class JournalDomain {
       activity: 0,
       summaries: 0,
       reflections: 0,
+      summaryReflectionReverts: 0,
       settings: 0,
     };
     const skipped = {
@@ -1407,6 +1486,7 @@ export class JournalDomain {
       activity: 0,
       summaries: 0,
       reflections: 0,
+      summaryReflectionReverts: 0,
       settings: 0,
     };
     const importedLiveEntryIds = new Set(
@@ -1531,6 +1611,24 @@ export class JournalDomain {
           });
         if (result.changes === 0) skipped.activity++;
         else inserted.activity++;
+      }
+      for (const provenance of summaryReflectionReverts) {
+        this.validateImportedSummaryReflectionRevert(provenance, journal.activity);
+        const existing = this.db
+          .prepare('SELECT * FROM summary_reflection_reverts WHERE activity_id = ?')
+          .get(provenance.activityId) as SummaryReflectionRevertRow | undefined;
+        if (existing !== undefined) {
+          assertImportMatch(
+            'summary Reflection revert provenance',
+            provenance.activityId,
+            this.parseSummaryReflectionRevert(existing),
+            provenance,
+          );
+          skipped.summaryReflectionReverts++;
+        } else {
+          this.insertSummaryReflectionRevert(provenance, context.now);
+          inserted.summaryReflectionReverts++;
+        }
       }
       const settingCount = (
         this.db.prepare('SELECT count(*) AS count FROM settings').get() as { count: number }
@@ -1690,6 +1788,283 @@ export class JournalDomain {
     return reflection;
   }
 
+  private insertSummaryReflectionRevert(input: SummaryReflectionRevert, createdAt: string): void {
+    const provenance = SummaryReflectionRevertSchema.parse(input);
+    this.db
+      .prepare(
+        `INSERT INTO summary_reflection_reverts(
+          activity_id, reflection_id, pre_state, post_state, created_at
+         ) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        provenance.activityId,
+        provenance.reflectionId,
+        stableJson(provenance.before),
+        stableJson(provenance.after),
+        createdAt,
+      );
+  }
+
+  private getSummaryReflectionRevert(activityId: string): SummaryReflectionRevert | null {
+    const row = this.db
+      .prepare('SELECT * FROM summary_reflection_reverts WHERE activity_id = ?')
+      .get(activityId) as SummaryReflectionRevertRow | undefined;
+    if (row === undefined) return null;
+    return this.parseSummaryReflectionRevert(row);
+  }
+
+  private parseSummaryReflectionRevert(row: SummaryReflectionRevertRow): SummaryReflectionRevert {
+    try {
+      const before = JSON.parse(row.pre_state) as unknown;
+      const after = JSON.parse(row.post_state) as unknown;
+      const provenance = SummaryReflectionRevertSchema.parse({
+        activityId: row.activity_id,
+        reflectionId: row.reflection_id,
+        before,
+        after,
+      });
+      if (stableJson(before) !== row.pre_state || stableJson(after) !== row.post_state) {
+        throw new Error('non-canonical state');
+      }
+      return provenance;
+    } catch (error) {
+      throw new DomainError(
+        'INTEGRITY_ERROR',
+        `Summary Reflection revert provenance for Activity ${row.activity_id} is invalid`,
+        { cause: error },
+      );
+    }
+  }
+
+  private validateImportedSummaryReflectionRevert(
+    provenance: SummaryReflectionRevert,
+    activities: readonly ActivityItem[],
+  ): void {
+    const activity = activities.find((candidate) => candidate.id === provenance.activityId);
+    const beforeSummary = activity?.preImages.find((snapshot) => snapshot.entity === 'summary');
+    const afterSummary = activity?.postImages.find((snapshot) => snapshot.entity === 'summary');
+    if (
+      activity?.kind !== 'summary-filed' ||
+      beforeSummary?.entity !== 'summary' ||
+      afterSummary?.entity !== 'summary' ||
+      afterSummary.row === null ||
+      activity.refs.summaryId !== afterSummary.id ||
+      provenance.after.weekStart !== afterSummary.row.weekStart ||
+      (provenance.before !== null && provenance.before.weekStart !== provenance.after.weekStart)
+    ) {
+      throw new DomainError(
+        'INTEGRITY_ERROR',
+        `Summary Reflection revert provenance for Activity ${provenance.activityId} is not linked to its Activity`,
+      );
+    }
+    const after = provenance.after;
+    const before = provenance.before;
+    const appended = after.versions.filter(
+      (version) => !before?.versions.some((candidate) => candidate.id === version.id),
+    );
+    const retainedBefore =
+      before === null
+        ? []
+        : after.versions.filter((version) =>
+            before.versions.some((candidate) => candidate.id === version.id),
+          );
+    const versionsPreserved =
+      before === null ||
+      stableJson([...retainedBefore].sort((left, right) => left.id.localeCompare(right.id))) ===
+        stableJson([...before.versions].sort((left, right) => left.id.localeCompare(right.id)));
+    const filed =
+      appended.length === 1 &&
+      after.versions.length === (before?.versions.length ?? 0) + 1 &&
+      versionsPreserved &&
+      after.currentVersionId === appended[0]!.id &&
+      after.currentVersion?.id === appended[0]!.id &&
+      appended[0]!.number ===
+        Math.max(0, ...(before?.versions.map((version) => version.number) ?? [])) + 1 &&
+      after.currentVersion.text === afterSummary.row.text &&
+      after.currentVersion.generator.tokenId === afterSummary.row.tokenId &&
+      after.currentVersion.generator.source === afterSummary.row.source &&
+      after.currentVersion.generatedAt === afterSummary.row.updatedAt &&
+      after.status === 'current' &&
+      after.requestId === null &&
+      after.requestedAt === null &&
+      after.claimedAt === null &&
+      after.claimedBy === null &&
+      after.claimedSourceEntries === null &&
+      after.failure === null &&
+      after.revision === (before?.revision ?? 1) + 1 &&
+      after.updatedAt === afterSummary.row.updatedAt &&
+      (before === null ||
+        (after.id === before.id &&
+          after.weekStart === before.weekStart &&
+          after.weekEnd === before.weekEnd &&
+          after.createdAt === before.createdAt)) &&
+      (before !== null || after.id === afterSummary.row.id);
+    const rewritten =
+      before !== null &&
+      appended.length === 0 &&
+      versionsPreserved &&
+      after.status === 'queued' &&
+      after.requestId !== null &&
+      after.requestedAt === afterSummary.row.updatedAt &&
+      after.claimedAt === null &&
+      after.claimedBy === null &&
+      after.claimedSourceEntries === null &&
+      after.failure === null &&
+      after.currentVersionId === before.currentVersionId &&
+      after.id === before.id &&
+      after.weekStart === before.weekStart &&
+      after.weekEnd === before.weekEnd &&
+      after.createdAt === before.createdAt &&
+      after.updatedAt === afterSummary.row.updatedAt &&
+      after.revision === before.revision + 1;
+    if (!filed && !rewritten) {
+      throw new DomainError(
+        'INTEGRITY_ERROR',
+        `Summary Reflection revert provenance for Activity ${provenance.activityId} is not a valid filing transition`,
+      );
+    }
+  }
+
+  private restoreSummaryReflection(
+    provenance: SummaryReflectionRevert,
+    context: WriteContext,
+  ): void {
+    const current = this.getReflection(provenance.reflectionId);
+    if (stableJson(current) !== stableJson(provenance.after)) {
+      throw new DomainError(
+        'CONFLICT',
+        'The Reflection changed after this activity; reverting would overwrite newer work',
+        { details: { reflectionId: provenance.reflectionId } },
+      );
+    }
+    if (current === null) {
+      throw new DomainError('INTEGRITY_ERROR', 'Recorded Reflection post-state is missing');
+    }
+    const marker = this.db
+      .prepare('SELECT legacy_summary_id FROM reflection_slots WHERE id = ?')
+      .pluck()
+      .get(current.id) as string | null;
+    this.db.prepare('DELETE FROM reflection_versions WHERE reflection_id = ?').run(current.id);
+    this.db.prepare('DELETE FROM reflection_slots WHERE id = ?').run(current.id);
+    if (provenance.before === null) {
+      context.changes.push(reflectionChange(null, current.id, current.weekStart));
+      return;
+    }
+
+    const safeBefore =
+      provenance.before.status === 'running'
+        ? {
+            ...provenance.before,
+            status: 'queued' as const,
+            claimedAt: null,
+            claimedBy: null,
+            claimedSourceEntries: null,
+          }
+        : provenance.before;
+    const restored = ReflectionSchema.parse({
+      ...safeBefore,
+      updatedAt: [safeBefore.updatedAt, current.updatedAt, context.now].sort(
+        (left, right) => Date.parse(right) - Date.parse(left),
+      )[0],
+      revision: current.revision + 1,
+    });
+    this.db
+      .prepare(
+        `INSERT INTO reflection_slots(
+          id,week_start,week_end,status,request_id,requested_at,claimed_at,claimed_token_id,
+          claimed_label,claimed_tool,claimed_source_entries,failure,current_version_id,
+          created_at,updated_at,revision,legacy_summary_id
+         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        restored.id,
+        restored.weekStart,
+        restored.weekEnd,
+        restored.status,
+        restored.requestId,
+        restored.requestedAt,
+        restored.claimedAt,
+        restored.claimedBy?.tokenId ?? null,
+        restored.claimedBy?.label ?? null,
+        restored.claimedBy?.tool ?? null,
+        restored.claimedSourceEntries == null
+          ? null
+          : JSON.stringify(restored.claimedSourceEntries),
+        restored.failure,
+        restored.currentVersionId,
+        restored.createdAt,
+        restored.updatedAt,
+        restored.revision,
+        marker,
+      );
+    const insertVersion = this.db.prepare(
+      `INSERT INTO reflection_versions(
+        id,reflection_id,version_number,text,source_from,source_to,generator_token_id,
+        generator_label,generator_tool,source,generated_at,source_entries
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    for (const version of restored.versions) {
+      insertVersion.run(
+        version.id,
+        restored.id,
+        version.number,
+        version.text,
+        version.sourceFrom,
+        version.sourceTo,
+        version.generator.tokenId,
+        version.generator.label,
+        version.generator.tool ?? null,
+        version.generator.source,
+        version.generatedAt,
+        JSON.stringify(version.sourceEntries),
+      );
+    }
+    context.changes.push(reflectionChange(this.requireReflection(restored.id)));
+  }
+
+  private reconcileRevertedSummaryReflections(): void {
+    const reconcile = this.db.transaction(() => {
+      const rows = this.db
+        .prepare('SELECT * FROM summary_reflection_reverts ORDER BY created_at, activity_id')
+        .all() as SummaryReflectionRevertRow[];
+      const context: WriteContext = {
+        now: this.now().toISOString(),
+        changes: [],
+        implicitSnapshots: [],
+      };
+      for (const row of rows) {
+        const provenance = this.parseSummaryReflectionRevert(row);
+        const activity = this.getActivity(provenance.activityId);
+        if (activity === null) {
+          throw new DomainError(
+            'INTEGRITY_ERROR',
+            `Summary Reflection revert provenance references missing Activity ${provenance.activityId}`,
+          );
+        }
+        this.validateImportedSummaryReflectionRevert(provenance, [activity]);
+        if (activity.revertedAt === null) continue;
+        const summaryBefore = activity.preImages.find((snapshot) => snapshot.entity === 'summary');
+        if (summaryBefore?.entity !== 'summary') continue;
+        const currentSummary = this.getSummary(summaryBefore.id);
+        const summaryWasRestored =
+          summaryBefore.row === null
+            ? currentSummary === null
+            : currentSummary !== null &&
+              stableJson({
+                ...currentSummary,
+                updatedAt: summaryBefore.row.updatedAt,
+                revision: summaryBefore.row.revision,
+              }) === stableJson(summaryBefore.row);
+        if (!summaryWasRestored) continue;
+        const currentReflection = this.getReflection(provenance.reflectionId);
+        if (stableJson(currentReflection) !== stableJson(provenance.after)) continue;
+        this.restoreSummaryReflection(provenance, context);
+      }
+      this.activityReflection.beforeCommit(context);
+    });
+    reconcile();
+  }
+
   private upsertLegacyReflection(
     summary: Summary,
     actor: Extract<ActorContext, { readonly kind: 'agent' }>,
@@ -1805,7 +2180,7 @@ export class JournalDomain {
         }
         const restored = SummarySchema.parse({
           ...snapshot.row,
-          updatedAt: context.now,
+          updatedAt: monotonicTimestamp(current?.updatedAt ?? snapshot.row.updatedAt, context.now),
           revision: (current?.revision ?? snapshot.row.revision) + 1,
         });
         if (current === null) this.insertSummary(restored);
