@@ -1354,6 +1354,11 @@ export class JournalDomain {
     const inserted = { entries: 0, collections: 0, activity: 0, summaries: 0, settings: 0 };
     const skipped = { entries: 0, collections: 0, activity: 0, summaries: 0, settings: 0 };
     const transaction = this.db.transaction(() => {
+      const context: WriteContext = {
+        now: this.now().toISOString(),
+        changes: [],
+        implicitSnapshots: [],
+      };
       for (const collection of journal.collections) {
         const existingRow = this.db
           .prepare('SELECT * FROM collections WHERE id = ?')
@@ -1394,7 +1399,10 @@ export class JournalDomain {
           )
           .run({ ...entry, tags: JSON.stringify(entry.tags) });
         if (result.changes === 0) skipped.entries++;
-        else inserted.entries++;
+        else {
+          inserted.entries++;
+          context.changes.push(entryCreatedChange(entry));
+        }
       }
       for (const summary of journal.summaries) {
         validateSummary(summary);
@@ -1460,20 +1468,24 @@ export class JournalDomain {
           savedViews: journal.settings.savedViews ?? [],
         });
         skipped.settings++;
-        return;
+      } else {
+        this.db
+          .prepare(
+            `INSERT INTO settings(id,density,show_type_badges,highlight_ai_entries,saved_views,updated_at)
+             VALUES (1,@density,@showTypeBadges,@highlightAiEntries,@savedViews,@updatedAt)`,
+          )
+          .run({
+            ...journal.settings,
+            showTypeBadges: Number(journal.settings.showTypeBadges),
+            highlightAiEntries: Number(journal.settings.highlightAiEntries),
+            savedViews: JSON.stringify(journal.settings.savedViews ?? []),
+          });
+        inserted.settings++;
       }
-      this.db
-        .prepare(
-          `INSERT INTO settings(id,density,show_type_badges,highlight_ai_entries,saved_views,updated_at)
-           VALUES (1,@density,@showTypeBadges,@highlightAiEntries,@savedViews,@updatedAt)`,
-        )
-        .run({
-          ...journal.settings,
-          showTypeBadges: Number(journal.settings.showTypeBadges),
-          highlightAiEntries: Number(journal.settings.highlightAiEntries),
-          savedViews: JSON.stringify(journal.settings.savedViews ?? []),
-        });
-      inserted.settings++;
+      // Merge imports can change the historical source set of an existing
+      // current Reflection. Reconcile it before this same transaction commits,
+      // exactly like command writes do.
+      this.activityReflection.beforeCommit(context);
     });
     transaction();
     return { inserted, skipped };

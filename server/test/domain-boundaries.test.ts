@@ -163,6 +163,57 @@ describe('JournalDomain transaction boundaries', () => {
         .all(),
     ).toEqual(beforeMutations);
   });
+
+  it('rolls a merge import back when Reflection reconciliation cannot commit', () => {
+    const target = fixture();
+    target.domain.createEntry(
+      {
+        id: ulid(),
+        date: '2026-07-21',
+        type: 'note',
+        text: 'Existing bounded import source',
+      },
+      target.owner,
+    );
+    const filed = target.domain.fileSummary(
+      {
+        weekStart: '2026-07-20',
+        text: 'Current before bounded merge import.',
+        source: 'Bounded import reconciliation fixture.',
+      },
+      target.agent,
+    );
+    const reflection = target.domain.listReflections('2026-07-20', '2026-07-26')[0];
+    if (reflection === undefined) throw new Error('Expected current Reflection');
+
+    const source = fixture();
+    const imported = source.domain.createEntry(
+      {
+        id: ulid(),
+        date: '2026-07-23',
+        type: 'note',
+        text: 'Imported bounded historical source',
+      },
+      source.owner,
+    );
+    if (imported.kind !== 'entry') throw new Error('Expected imported entry');
+    target.database.raw.exec(`
+      CREATE TRIGGER abort_import_reflection_staleness
+      BEFORE UPDATE OF status ON reflection_slots
+      WHEN NEW.status = 'stale'
+      BEGIN
+        SELECT RAISE(ABORT, 'abort import reflection staleness');
+      END
+    `);
+
+    expect(() => target.domain.importJournal(source.domain.exportJournal())).toThrowError(
+      /abort import reflection staleness/i,
+    );
+
+    expect(target.domain.getEntry(imported.entry.id, { includeDeleted: true })).toBeNull();
+    expect(target.domain.getReflection(reflection.id)).toEqual(reflection);
+    expect(target.domain.getSummary(filed.summary.id)).toEqual(filed.summary);
+  });
 });
 
 describe('server domain import graph', () => {
