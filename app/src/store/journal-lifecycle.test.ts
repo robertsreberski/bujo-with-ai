@@ -332,6 +332,48 @@ describe('journal lifecycle persistence', () => {
     );
   });
 
+  it('re-arms midnight rollover when bootstrap changes the journal timezone', async () => {
+    vi.setSystemTime(new Date('2026-08-02T21:59:30.000Z'));
+    networkOnline = true;
+    const persisted = savedRecord();
+    persistenceMocks.load.mockResolvedValue({
+      ...persisted,
+      mirror: {
+        ...persisted.mirror,
+        today: '2026-08-02',
+        serverToday: '2026-08-02',
+        timezone: 'UTC',
+        cursor: null,
+      },
+    });
+    mockCanonicalBootstrap();
+    vi.mocked(journalApi.bootstrap).mockResolvedValue({
+      today: '2026-08-02',
+      timezone: 'Europe/Amsterdam',
+      deviceId: '01K1H000000000000000000044',
+      cursor: 'new-epoch:20',
+      entries: [],
+      collections: [],
+      latestSummary: null,
+      activity: [],
+      settings,
+    });
+    autoReadyEventSources('new-epoch:20');
+
+    await journalActions.initialize();
+    expect(useJournalStore.getState()).toMatchObject({
+      today: '2026-08-02',
+      timezone: 'Europe/Amsterdam',
+      connectionStatus: 'connected',
+    });
+
+    networkOnline = false;
+    window.dispatchEvent(new Event('offline'));
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(useJournalStore.getState().today).toBe('2026-08-03');
+  });
+
   it('marks an uncached startup unavailable instead of rendering it as an empty journal', async () => {
     networkOnline = true;
     persistenceMocks.load.mockResolvedValue(undefined);
