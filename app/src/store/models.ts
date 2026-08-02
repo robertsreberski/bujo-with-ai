@@ -15,6 +15,38 @@ import type { LogViewConfig } from '../views/log-arrangement';
 
 export type ConnectionStatus = 'offline' | 'connecting' | 'connected' | 'error';
 
+/** Whether the canonical rows needed to render the journal are available. */
+export type JournalResourceStatus = 'loading' | 'ready' | 'error';
+
+/**
+ * Owner-facing availability of the Journal service. This deliberately does
+ * not include outbox state: a device can be offline and still have changes
+ * safely waiting on it.
+ */
+export type JournalConnectionState =
+  | 'initializing'
+  | 'online'
+  | 'reconnecting'
+  | 'offline'
+  | 'serverUnavailable'
+  | 'authenticationRequired';
+
+/** The independently observable state of locally queued changes. */
+export type JournalSynchronizationState = 'idle' | 'pending' | 'syncing' | 'attention';
+
+/** Whether the current local mirror and outbox survived their latest durable write. */
+export type JournalPersistenceState = 'available' | 'unavailable';
+
+/** A truthful UI projection over resource, transport, and mutation state. */
+export interface JournalStatus {
+  resource: JournalResourceStatus;
+  connection: JournalConnectionState;
+  synchronization: JournalSynchronizationState;
+  persistence: JournalPersistenceState;
+  pendingChanges: number;
+  failedChanges: number;
+}
+
 export interface EntryIndexes {
   entryIdsByDate: Record<string, string[]>;
   entryIdsByCollection: Record<string, string[]>;

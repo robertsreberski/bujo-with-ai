@@ -36,6 +36,7 @@ import { createUlid } from './store/ids';
 import {
   journalActions,
   selectActiveCollections,
+  selectJournalStatus,
   selectOpenTodayCount,
   selectUnseenReviewCount,
   useJournalStore,
@@ -62,6 +63,7 @@ export default function App() {
   useViewportLayout();
   const { route, navigate } = useJournalRoute();
   const store = useJournalStore();
+  const journalStatus = selectJournalStatus(store);
   const [overlay, setOverlay] = useState<Overlay>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -535,7 +537,7 @@ export default function App() {
     return () => window.cancelAnimationFrame(frame);
   }, [routeFocusKey, selectedTodayDate, store.hydrated]);
 
-  if (!store.hydrated && store.loading) {
+  if (journalStatus.resource === 'loading') {
     return (
       <main
         className="flex h-[var(--app-height,100vh)] w-full flex-col items-center justify-center bg-bg-page text-fg"
@@ -557,18 +559,16 @@ export default function App() {
         today={store.today}
         dayCount={dayCount}
         counts={counts}
-        online={
-          store.online && store.connectionStatus !== 'offline' && store.connectionStatus !== 'error'
-        }
-        syncing={store.syncing}
-        outboxCount={store.outboxCount}
-        deadLetterCount={store.deadLetters.length}
+        journalStatus={journalStatus}
         title={routeTitle}
         subtitle={routeSubtitle}
         onNavigate={navigate}
         onSearch={() => openSearch()}
         onSettings={() => setOverlay('settings')}
-        onDeadLetters={() => setOverlay('deadLetters')}
+        onRetryConnection={() => void journalActions.reconnect()}
+        onRetryLocalSave={() => run(() => journalActions.retryLocalSave(), 'Local journal saved')}
+        onReload={() => window.location.reload()}
+        onOpenRecovery={() => setOverlay('deadLetters')}
         composer={
           <Composer
             draft={store.draft}

@@ -58,8 +58,11 @@ beforeEach(() => {
   useJournalStore.setState({
     hydrated: true,
     loading: false,
+    resourceStatus: 'ready',
     online: false,
     connectionStatus: 'offline',
+    authenticationRequired: false,
+    persistenceStatus: 'available',
     today: TODAY,
     serverToday: TODAY,
     draft: '',
@@ -81,6 +84,24 @@ const capture = async (user: ReturnType<typeof userEvent.setup>, text: string) =
   await user.type(screen.getByLabelText('Add an entry'), text);
   await user.click(screen.getByRole('button', { name: 'Add entry' }));
 };
+
+describe('App resource loading', () => {
+  it('does not render an authoritative empty journal while canonical rows are loading', () => {
+    useJournalStore.setState({
+      hydrated: true,
+      loading: true,
+      resourceStatus: 'loading',
+      networkOnline: true,
+      online: false,
+      connectionStatus: 'connecting',
+    });
+
+    render(<App />);
+
+    expect(screen.getByText('Opening your local journal…')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Add an entry')).not.toBeInTheDocument();
+  });
+});
 
 describe('App capture', () => {
   it('stays on the screen the capture was typed on', async () => {

@@ -6,6 +6,7 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { formatLongDate } from './dates';
 import { cn } from '../lib/utils';
+import type { JournalStatus } from '../store/models';
 
 /** The two nav destinations that carry a count, and what that count means. */
 export interface ShellCounts {
@@ -19,10 +20,7 @@ interface ShellProps {
   route: JournalRoute;
   today: string;
   dayCount: number;
-  online: boolean;
-  syncing: boolean;
-  outboxCount: number;
-  deadLetterCount: number;
+  journalStatus: JournalStatus;
   counts?: ShellCounts;
   title: string;
   subtitle: string;
@@ -31,7 +29,10 @@ interface ShellProps {
   onNavigate: (route: JournalRoute) => void;
   onSearch: () => void;
   onSettings: () => void;
-  onDeadLetters: () => void;
+  onRetryConnection: () => void;
+  onRetryLocalSave: () => void;
+  onReload: () => void;
+  onOpenRecovery: () => void;
 }
 
 type NavName = 'today' | 'month' | 'index' | 'review';
@@ -69,10 +70,7 @@ export function Shell({
   route,
   today,
   dayCount,
-  online,
-  syncing,
-  outboxCount,
-  deadLetterCount,
+  journalStatus,
   counts,
   title,
   subtitle,
@@ -81,7 +79,10 @@ export function Shell({
   onNavigate,
   onSearch,
   onSettings,
-  onDeadLetters,
+  onRetryConnection,
+  onRetryLocalSave,
+  onReload,
+  onOpenRecovery,
 }: ShellProps) {
   const paneRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLElement | null>(null);
@@ -113,6 +114,62 @@ export function Shell({
   };
   const dateCaption = formatLongDate(today);
   const mobileSubtitle = `${dateCaption} · ${dayCount} ${dayCount === 1 ? 'day' : 'days'} logged`;
+  const pendingChanges = `${journalStatus.pendingChanges} change${journalStatus.pendingChanges === 1 ? '' : 's'} ${
+    journalStatus.persistence === 'available' ? 'saved on this device' : 'only in this open tab'
+  }`;
+  const pendingChangesSuffix = journalStatus.pendingChanges > 0 ? ` — ${pendingChanges}` : '';
+  const connectionNotice = (() => {
+    switch (journalStatus.connection) {
+      case 'initializing':
+        return null;
+      case 'online':
+        return null;
+      case 'reconnecting':
+        return {
+          icon: 'refresh' as const,
+          variant: 'status' as const,
+          message: `Reconnecting to Journal${pendingChangesSuffix}`,
+          action: 'Retry',
+          onAction: onRetryConnection,
+        };
+      case 'offline':
+        return {
+          icon: 'wifiOff' as const,
+          variant: 'statusOffline' as const,
+          message:
+            journalStatus.pendingChanges > 0
+              ? `Offline — ${pendingChanges}`
+              : 'Offline — showing what is available on this device',
+          action: null,
+          onAction: null,
+        };
+      case 'serverUnavailable':
+        return {
+          icon: 'warning' as const,
+          variant: 'statusError' as const,
+          message: `Journal server unavailable${pendingChangesSuffix}`,
+          action: 'Retry',
+          onAction: onRetryConnection,
+        };
+      case 'authenticationRequired':
+        return {
+          icon: 'warning' as const,
+          variant: 'statusError' as const,
+          message: `Pairing expired${pendingChangesSuffix}`,
+          action: 'Reload',
+          onAction: onReload,
+        };
+    }
+  })();
+  const showPending =
+    journalStatus.synchronization === 'pending' && journalStatus.connection === 'online';
+  const localSaveUnavailable = journalStatus.persistence === 'unavailable';
+  const showStatusStrip =
+    connectionNotice !== null ||
+    showPending ||
+    journalStatus.synchronization === 'syncing' ||
+    journalStatus.failedChanges > 0 ||
+    localSaveUnavailable;
 
   return (
     <div className="flex h-[var(--app-height,100vh)] justify-center bg-bg-page">
@@ -253,26 +310,61 @@ export function Shell({
                 </button>
               ))}
             </nav>
-            {!online || syncing || deadLetterCount > 0 ? (
+            {showStatusStrip ? (
               <div
                 className={cn(contentColumn, 'status-strip flex flex-wrap gap-1.5 px-4 pb-2')}
                 aria-live="polite"
               >
-                {!online ? (
-                  <Badge variant="statusOffline">
-                    <Icon name="wifiOff" size={12} /> Offline — changes will sync
-                  </Badge>
-                ) : syncing || outboxCount > 0 ? (
+                {connectionNotice ? (
+                  connectionNotice.action && connectionNotice.onAction ? (
+                    <Badge
+                      asChild
+                      variant={connectionNotice.variant}
+                      className="min-h-8 touch:min-h-10"
+                    >
+                      <button type="button" onClick={connectionNotice.onAction}>
+                        <Icon name={connectionNotice.icon} size={12} /> {connectionNotice.message}
+                        <span className="font-semibold underline underline-offset-2">
+                          {connectionNotice.action}
+                        </span>
+                      </button>
+                    </Badge>
+                  ) : (
+                    <Badge variant={connectionNotice.variant}>
+                      <Icon name={connectionNotice.icon} size={12} /> {connectionNotice.message}
+                    </Badge>
+                  )
+                ) : null}
+                {journalStatus.synchronization === 'syncing' ? (
                   <Badge variant="status">
-                    <Icon name="refresh" size={12} /> Syncing{' '}
-                    {outboxCount > 0 ? `${outboxCount} changes` : ''}
+                    <Icon name="refresh" size={12} /> Syncing
+                    {journalStatus.pendingChanges > 0 ? ` ${pendingChanges}` : ''}
                   </Badge>
                 ) : null}
-                {deadLetterCount > 0 ? (
+                {showPending ? (
+                  <Badge variant="status">
+                    <Icon name="refresh" size={12} /> {pendingChanges}
+                  </Badge>
+                ) : null}
+                {localSaveUnavailable ? (
                   <Badge asChild variant="statusError" className="min-h-8 touch:min-h-10">
-                    <button type="button" onClick={onDeadLetters}>
-                      <Icon name="warning" size={12} /> {deadLetterCount} change
-                      {deadLetterCount === 1 ? '' : 's'} need attention
+                    <button type="button" onClick={onRetryLocalSave}>
+                      <Icon name="warning" size={12} /> Local saving unavailable
+                      {journalStatus.pendingChanges > 0 ? ` — ${pendingChanges}` : ''}
+                      <span className="font-semibold underline underline-offset-2">
+                        Retry saving
+                      </span>
+                    </button>
+                  </Badge>
+                ) : null}
+                {journalStatus.failedChanges > 0 ? (
+                  <Badge asChild variant="statusError" className="min-h-8 touch:min-h-10">
+                    <button type="button" onClick={onOpenRecovery}>
+                      <Icon name="warning" size={12} /> {journalStatus.failedChanges} change
+                      {journalStatus.failedChanges === 1 ? '' : 's'} need attention
+                      <span className="font-semibold underline underline-offset-2">
+                        Open recovery
+                      </span>
                     </button>
                   </Badge>
                 ) : null}

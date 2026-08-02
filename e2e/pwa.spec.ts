@@ -206,15 +206,20 @@ test('the cached shell launches offline and an offline capture replays after rec
   await context.setOffline(true);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(page.locator('#journal-content')).toBeVisible();
-  await expect(page.getByText('Offline — changes will sync')).toBeVisible();
+  await expect(page.locator('.status-strip')).toContainText(
+    /Offline — showing what is available on this device|Journal server unavailable/,
+  );
 
   const text = uniqueText('Offline queued capture');
   await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text} #offline`);
   await page.getByRole('button', { name: 'Add entry' }).click();
   await expect(page.getByText(text, { exact: true })).toBeVisible();
+  await expect(page.locator('.status-strip')).toContainText(/\d+ changes? saved on this device/);
 
   await context.setOffline(false);
-  await expect(page.getByText('Offline — changes will sync')).toHaveCount(0);
+  await expect(
+    page.locator('.status-strip').filter({ hasText: /Offline|Journal server unavailable/ }),
+  ).toHaveCount(0);
   await expect
     .poll(
       () =>
@@ -248,9 +253,14 @@ test('a draft and queued capture survive page loss through the IndexedDB journal
     await expect(restoredPage.getByRole('combobox', { name: 'Add an entry' })).toHaveValue(draft);
 
     await context.setOffline(true);
-    await expect(restoredPage.getByText('Offline — changes will sync')).toBeVisible();
+    await expect(restoredPage.locator('.status-strip')).toContainText(
+      'Offline — showing what is available on this device',
+    );
     await restoredPage.getByRole('button', { name: 'Add entry' }).click();
     await expect(restoredPage.getByText(text, { exact: true })).toBeVisible();
+    await expect(restoredPage.locator('.status-strip')).toContainText(
+      /\d+ changes? saved on this device/,
+    );
     await restoredPage.waitForTimeout(250);
   } finally {
     await restoredPage.close();
@@ -268,7 +278,9 @@ test('a draft and queued capture survive page loss through the IndexedDB journal
     );
     await context.setOffline(false);
     await replayed;
-    await expect(replayPage.getByText('Offline — changes will sync')).toHaveCount(0);
+    await expect(
+      replayPage.locator('.status-strip').filter({ hasText: /Offline|Journal server unavailable/ }),
+    ).toHaveCount(0);
     await expect
       .poll(async () => {
         const response = await context.request.get(`/api/entries?q=${encodeURIComponent(text)}`);
@@ -314,7 +326,9 @@ test('an offline tomorrow capture after browser midnight replays to its intended
   await initialHistoryLoaded;
 
   await context.setOffline(true);
-  await expect(page.getByText('Offline — changes will sync')).toBeVisible();
+  await expect(page.locator('.status-strip')).toContainText(
+    'Offline — showing what is available on this device',
+  );
   await page.clock.fastForward(60_000);
   await expect(page.locator(`[data-day="${browserTomorrow}"]`)).toBeVisible();
 
@@ -322,6 +336,7 @@ test('an offline tomorrow capture after browser midnight replays to its intended
   await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text} >tomorrow`);
   await page.getByRole('button', { name: 'Add entry' }).click();
   await expect(page.locator(`[data-day="${intendedDate}"]`)).toContainText(text);
+  await expect(page.locator('.status-strip')).toContainText(/\d+ changes? saved on this device/);
 
   const replayed = page.waitForResponse(
     (response) =>
@@ -331,7 +346,9 @@ test('an offline tomorrow capture after browser midnight replays to its intended
   );
   await context.setOffline(false);
   await replayed;
-  await expect(page.getByText('Offline — changes will sync')).toHaveCount(0);
+  await expect(
+    page.locator('.status-strip').filter({ hasText: /Offline|Journal server unavailable/ }),
+  ).toHaveCount(0);
 
   await expect
     .poll(async () => {

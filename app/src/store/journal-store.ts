@@ -37,6 +37,9 @@ import type {
   DeadLetter,
   JournalClientRecord,
   JournalNotice,
+  JournalPersistenceState,
+  JournalResourceStatus,
+  JournalStatus,
   MirrorData,
   OutboxItem,
   QueueableCommand,
@@ -67,6 +70,9 @@ export type {
   CreateEntryInput,
   DeadLetter,
   JournalNotice,
+  JournalPersistenceState,
+  JournalResourceStatus,
+  JournalStatus,
   OutboxItem,
 } from './models';
 export type {
@@ -84,8 +90,7 @@ export type {
 } from '../api/types';
 
 const EPOCH = '1970-01-01T00:00:00.000Z';
-const PAIRING_EXPIRED_MESSAGE =
-  'Pairing expired. Reload Journal to reconnect; queued changes are safe.';
+const PAIRING_EXPIRED_MESSAGE = 'Pairing expired. Reload Journal to reconnect.';
 const DEFAULT_SETTINGS: Settings = {
   density: 'comfortable',
   showTypeBadges: true,
@@ -143,11 +148,17 @@ function initialMirror(): MirrorData {
 export interface JournalState extends MirrorData {
   hydrated: boolean;
   loading: boolean;
+  /** Canonical rows are kept separate from service availability. */
+  resourceStatus: JournalResourceStatus;
   /** Journal endpoint reachability, used by the UI's offline affordance. */
   online: boolean;
   /** Browser network signal, used only to decide whether retries can run. */
   networkOnline: boolean;
   connectionStatus: ConnectionStatus;
+  /** Sticky until reload after a 401; never inferred from generic reachability errors. */
+  authenticationRequired: boolean;
+  /** Latest IndexedDB write result; unavailable means state is only in this open tab. */
+  persistenceStatus: JournalPersistenceState;
   syncing: boolean;
   draft: string;
   defaultType: EntryType;
@@ -295,6 +306,18 @@ function recordFromState(
   };
 }
 
+async function saveClientRecord(record: JournalClientRecord): Promise<void> {
+  try {
+    await persistence.save(record);
+    if (useJournalStore.getState().persistenceStatus !== 'available') {
+      useJournalStore.setState({ persistenceStatus: 'available' });
+    }
+  } catch (error) {
+    useJournalStore.setState({ persistenceStatus: 'unavailable' });
+    throw error;
+  }
+}
+
 function persistNow(): Promise<void> {
   if (persistenceTimer !== undefined) window.clearTimeout(persistenceTimer);
   persistenceTimer = undefined;
@@ -304,14 +327,14 @@ function persistNow(): Promise<void> {
         applyPendingCommands(canonicalHistoryRollback.mirror, state.outbox),
       )
     : mirrorFromState(state);
-  return persistence.save(recordFromState(state, stableMirror));
+  return saveClientRecord(recordFromState(state, stableMirror));
 }
 
 function persistCurrentMirror(): Promise<void> {
   if (persistenceTimer !== undefined) window.clearTimeout(persistenceTimer);
   persistenceTimer = undefined;
   const state = useJournalStore.getState();
-  return persistence.save(recordFromState(state));
+  return saveClientRecord(recordFromState(state));
 }
 
 export function flushJournalPersistence(): Promise<void> {
@@ -477,7 +500,12 @@ async function waitForSseReplayReady(
     throw new Error('Live replay failed before Journal was ready.');
   }
   sseReplayReady = true;
-  useJournalStore.setState({ connectionStatus: 'connected', loading: false, online: true });
+  useJournalStore.setState({
+    connectionStatus: 'connected',
+    loading: false,
+    resourceStatus: 'ready',
+    online: true,
+  });
   return replayGeneration;
 }
 
@@ -705,6 +733,7 @@ export async function reconcileFromBootstrap(options: ReconcileOptions = {}): Pr
   useJournalStore.setState({
     ...prepared.mirror,
     loading: false,
+    resourceStatus: 'ready',
     online:
       sseReplayReady &&
       canonicalHistoryHydrationGeneration === null &&
@@ -747,6 +776,7 @@ function restoreCanonicalHistoryRollback(expectedGeneration?: number): boolean {
     activityHasMore: rollback.activityHasMore,
     activityNextCursor: rollback.activityNextCursor,
     loading: false,
+    resourceStatus: 'ready',
   });
   if (canonicalHistoryHydrationGeneration === rollback.generation) {
     canonicalHistoryHydrationGeneration = null;
@@ -943,7 +973,12 @@ async function reconnectJournal(
         !beforeStream.networkOnline ||
         (typeof document !== 'undefined' && document.visibilityState === 'hidden')
       ) {
-        useJournalStore.setState({ connectionStatus: 'offline', loading: false, online: false });
+        useJournalStore.setState({
+          connectionStatus: 'offline',
+          loading: false,
+          resourceStatus: 'ready',
+          online: false,
+        });
         return;
       }
       const sseClient = ensureSse();
@@ -1013,10 +1048,20 @@ async function reconnectJournal(
         !useJournalStore.getState().networkOnline ||
         (typeof document !== 'undefined' && document.visibilityState === 'hidden')
       ) {
-        useJournalStore.setState({ connectionStatus: 'offline', loading: false, online: false });
+        useJournalStore.setState({
+          connectionStatus: 'offline',
+          loading: false,
+          resourceStatus: 'ready',
+          online: false,
+        });
         return;
       }
-      useJournalStore.setState({ connectionStatus: 'error', loading: false, online: false });
+      useJournalStore.setState((current) => ({
+        connectionStatus: 'error',
+        loading: false,
+        resourceStatus: current.resourceStatus === 'loading' ? 'error' : current.resourceStatus,
+        online: false,
+      }));
       addErrorNotice('Could not reconnect to Journal.', error);
       scheduleReconnectRetry(full || !useJournalStore.getState().cursor, authoritative);
     }
@@ -1069,7 +1114,13 @@ function pauseForExpiredPairing(): void {
   if (retryTimer !== undefined) window.clearTimeout(retryTimer);
   retryTimer = undefined;
   sse?.pause('error');
-  useJournalStore.setState({ connectionStatus: 'error', loading: false, online: false });
+  useJournalStore.setState((state) => ({
+    connectionStatus: 'error',
+    loading: false,
+    resourceStatus: state.resourceStatus === 'loading' ? 'error' : state.resourceStatus,
+    online: false,
+    authenticationRequired: true,
+  }));
   if (
     !useJournalStore.getState().notices.some((notice) => notice.message === PAIRING_EXPIRED_MESSAGE)
   ) {
@@ -1142,6 +1193,8 @@ async function connectAuthenticatedJournal(expectedGeneration: number): Promise<
         networkOnline: typeof navigator === 'undefined' ? true : navigator.onLine,
         online: false,
         connectionStatus: 'offline',
+        loading: false,
+        resourceStatus: 'ready',
       });
       return;
     }
@@ -1162,6 +1215,8 @@ async function connectAuthenticatedJournal(expectedGeneration: number): Promise<
         networkOnline: typeof navigator === 'undefined' ? true : navigator.onLine,
         online: false,
         connectionStatus: 'offline',
+        loading: false,
+        resourceStatus: 'ready',
       });
       return;
     }
@@ -1194,7 +1249,12 @@ function requestAuthenticatedReconnect(expectedGeneration = lifecycleGeneration)
       return;
     }
     sseReplayReady = false;
-    useJournalStore.setState({ connectionStatus: 'error', loading: false, online: false });
+    useJournalStore.setState((state) => ({
+      connectionStatus: 'error',
+      loading: false,
+      resourceStatus: state.resourceStatus === 'loading' ? 'error' : state.resourceStatus,
+      online: false,
+    }));
     addErrorNotice('Could not authenticate Journal.', error);
     scheduleReconnectRetry(!useJournalStore.getState().cursor);
     if (useJournalStore.getState().outbox.length > 0) scheduleOutboxRetry();
@@ -1894,12 +1954,26 @@ function rebaseCommand(command: QueueableCommand): QueueableCommand {
 async function initializeJournal(): Promise<void> {
   if (initialization) return initialization;
   const generation = ++lifecycleGeneration;
+  useJournalStore.setState({
+    hydrated: false,
+    loading: true,
+    resourceStatus: 'loading',
+    authenticationRequired: false,
+  });
   sseReplayReady = false;
   replayAuthenticationGeneration = null;
   startupConnectionGeneration = generation;
   deferredStartupReconnect = false;
   const operation = (async () => {
-    const saved = await persistence.load();
+    let saved: JournalClientRecord | undefined;
+    try {
+      saved = await persistence.load();
+    } catch (error) {
+      if (generation === lifecycleGeneration) {
+        useJournalStore.setState({ persistenceStatus: 'unavailable' });
+      }
+      throw error;
+    }
     if (generation !== lifecycleGeneration) return;
     const networkAvailable = typeof navigator === 'undefined' ? true : navigator.onLine;
     if (saved?.version === 1) {
@@ -1926,9 +2000,12 @@ async function initializeJournal(): Promise<void> {
           saved.mirror.activityById[saved.mirror.activityOrder.at(-1) ?? '']?.at ?? null,
         hydrated: true,
         loading: networkAvailable,
+        resourceStatus: 'ready',
         networkOnline: networkAvailable,
         online: false,
         connectionStatus: networkAvailable ? 'connecting' : 'offline',
+        authenticationRequired: false,
+        persistenceStatus: 'available',
       });
     } else {
       useJournalStore.setState({
@@ -1946,9 +2023,12 @@ async function initializeJournal(): Promise<void> {
         activityNextCursor: null,
         hydrated: true,
         loading: networkAvailable,
+        resourceStatus: networkAvailable ? 'loading' : 'ready',
         networkOnline: networkAvailable,
         online: false,
         connectionStatus: networkAvailable ? 'connecting' : 'offline',
+        authenticationRequired: false,
+        persistenceStatus: 'available',
       });
     }
 
@@ -1964,7 +2044,11 @@ async function initializeJournal(): Promise<void> {
       await connectAuthenticatedJournal(generation);
     } else {
       sseReplayReady = false;
-      useJournalStore.setState({ loading: false, connectionStatus: 'offline' });
+      useJournalStore.setState({
+        loading: false,
+        resourceStatus: 'ready',
+        connectionStatus: 'offline',
+      });
       if (useJournalStore.getState().outbox.length > 0) scheduleOutboxRetry();
     }
   })()
@@ -1972,12 +2056,13 @@ async function initializeJournal(): Promise<void> {
       if (generation !== lifecycleGeneration) return;
       if (initialization === operation) initialization = null;
       sseReplayReady = false;
-      useJournalStore.setState({
+      useJournalStore.setState((state) => ({
         hydrated: true,
         loading: false,
+        resourceStatus: state.resourceStatus === 'loading' ? 'error' : state.resourceStatus,
         online: false,
         connectionStatus: 'error',
-      });
+      }));
       addErrorNotice('Journal could not start.', error);
       if (!pairingExpired) scheduleReconnectRetry(!useJournalStore.getState().cursor);
       if (useJournalStore.getState().outbox.length > 0) scheduleOutboxRetry();
@@ -2013,7 +2098,13 @@ function attachLifecycle(): void {
   };
   const onOffline = (): void => {
     sseReplayReady = false;
-    useJournalStore.setState({ networkOnline: false, online: false, connectionStatus: 'offline' });
+    useJournalStore.setState({
+      networkOnline: false,
+      online: false,
+      connectionStatus: 'offline',
+      loading: false,
+      resourceStatus: 'ready',
+    });
     sse?.pause('offline');
     if (useJournalStore.getState().outbox.length > 0) scheduleOutboxRetry();
   };
@@ -2100,7 +2191,12 @@ function shutdownJournal(): void {
   pendingReconnect = null;
   flushing = null;
   authenticationProbe = null;
-  useJournalStore.setState({ syncing: false, activityLoading: false, tokensLoading: false });
+  useJournalStore.setState({
+    syncing: false,
+    activityLoading: false,
+    tokensLoading: false,
+    authenticationRequired: false,
+  });
 }
 
 /** Tag suggestions refresh at most this often; the mirror covers the gap. */
@@ -2164,10 +2260,13 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
     ...initialMirror(),
     hydrated: false,
     loading: true,
+    resourceStatus: 'loading',
     online: typeof navigator === 'undefined' ? true : navigator.onLine,
     networkOnline: typeof navigator === 'undefined' ? true : navigator.onLine,
     connectionStatus:
       typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'connecting',
+    authenticationRequired: false,
+    persistenceStatus: 'available',
     syncing: false,
     draft: '',
     defaultType: 'task',
@@ -2746,6 +2845,48 @@ export const journalActions = {
     useJournalStore.getState().focusComposer(destination),
   flush: flushOutbox,
   reconnect: (): Promise<void> => reconnectJournal(),
+  retryLocalSave: async (): Promise<void> => {
+    await persistNow();
+    await flushOutbox();
+  },
+};
+
+/**
+ * Projects the independent resource, transport, and outbox facts into the
+ * owner-facing vocabulary used by the shell. Keeping this derivation pure
+ * prevents a transport callback from accidentally erasing an outstanding
+ * synchronization warning (or vice versa).
+ */
+export const selectJournalStatus = (state: JournalState): JournalStatus => {
+  const connection: JournalStatus['connection'] =
+    !state.hydrated || state.resourceStatus === 'loading'
+      ? 'initializing'
+      : state.authenticationRequired
+        ? 'authenticationRequired'
+        : !state.networkOnline || state.connectionStatus === 'offline'
+          ? 'offline'
+          : state.connectionStatus === 'error'
+            ? 'serverUnavailable'
+            : state.connectionStatus === 'connecting' || !state.online
+              ? 'reconnecting'
+              : 'online';
+  const synchronization: JournalStatus['synchronization'] =
+    state.deadLetters.length > 0 || state.persistenceStatus === 'unavailable'
+      ? 'attention'
+      : state.syncing
+        ? 'syncing'
+        : state.outboxCount > 0
+          ? 'pending'
+          : 'idle';
+
+  return {
+    resource: state.resourceStatus,
+    connection,
+    synchronization,
+    persistence: state.persistenceStatus,
+    pendingChanges: state.outboxCount,
+    failedChanges: state.deadLetters.length,
+  };
 };
 
 export const selectEntries = (state: JournalState): Entry[] =>
