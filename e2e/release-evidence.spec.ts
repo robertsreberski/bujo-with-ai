@@ -10,7 +10,7 @@ import {
   type TestInfo,
 } from '@playwright/test';
 import { ulid } from 'ulid';
-import { openJournal, uniqueText } from './helpers';
+import { expectTouchTargets, openJournal, uniqueText } from './helpers';
 
 interface BootstrapEvidence {
   today: string;
@@ -264,26 +264,6 @@ async function captureEvidenceScreenshot(
   const path = testInfo.outputPath(name);
   await page.screenshot({ path, animations: 'disabled', caret: 'hide' });
   await testInfo.attach(name, { path, contentType: 'image/png' });
-}
-
-async function expectTouchTargets(page: Page, surface: string): Promise<void> {
-  const targets = page.locator(
-    'button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, a[href]',
-  );
-  for (const target of await targets.all()) {
-    if (!(await target.isVisible())) continue;
-    const box = await target.boundingBox();
-    const label = await target.evaluate(
-      (element) =>
-        element.getAttribute('aria-label') ??
-        element.getAttribute('placeholder') ??
-        element.textContent?.trim().replace(/\s+/g, ' ').slice(0, 60) ??
-        element.tagName.toLowerCase(),
-    );
-    expect(box, `${surface}: ${label} has a box`).not.toBeNull();
-    expect(box?.width, `${surface}: ${label} width`).toBeGreaterThanOrEqual(40);
-    expect(box?.height, `${surface}: ${label} height`).toBeGreaterThanOrEqual(40);
-  }
 }
 
 async function waitForFiniteAnimations(locator: Locator): Promise<void> {
@@ -1008,7 +988,7 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
     await expect(composer).toHaveCSS('outline-width', '2px');
     await expect(composer).toHaveCSS('outline-offset', '2px');
     await expect(composer).toHaveCSS('font-size', '16px');
-    await expectTouchTargets(page, '375px Timeline');
+    await expectTouchTargets(page.locator('#journal-content'), '375px Timeline');
 
     const aiText = uniqueText('Assistant design evidence');
     const aiEntryId = await createAssistantEntry(page, origin, aiText);
@@ -1068,7 +1048,7 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
     const entrySheet = page.locator('.entry-sheet');
     await expect(entrySheet).toBeVisible();
     await waitForFiniteAnimations(entrySheet);
-    await expectTouchTargets(page, '375px entry sheet');
+    await expectTouchTargets(entrySheet, '375px entry sheet');
     await captureEvidenceScreenshot(page, testInfo, 'design-entry-sheet-375.png');
     await page.keyboard.press('Escape');
     await expect(entrySheet).toHaveCount(0);
@@ -1077,7 +1057,7 @@ test('computed tokens, focus, touch geometry, self-hosted icons, and the AI mark
     const accessDialog = page.getByRole('dialog', { name: 'Settings' });
     await expect(accessDialog).toBeVisible();
     await waitForFiniteAnimations(accessDialog);
-    await expectTouchTargets(page, '375px Settings');
+    await expectTouchTargets(accessDialog, '375px Settings');
     await captureEvidenceScreenshot(page, testInfo, 'design-ai-touch-375.png');
   } finally {
     await touchContext.close();

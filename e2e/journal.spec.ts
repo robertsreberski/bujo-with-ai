@@ -56,10 +56,11 @@ async function seedOwnerEntry(
     collection?: string | null;
     date?: string;
   },
-): Promise<void> {
+): Promise<string> {
+  const id = ulid();
   const created = await request.post('/api/entries', {
     data: {
-      id: ulid(),
+      id,
       text: entry.text,
       type: entry.type,
       time: null,
@@ -83,6 +84,7 @@ async function seedOwnerEntry(
     headers: { 'Idempotency-Key': ulid(), Origin: baseURL! },
   });
   expect(created.status()).toBe(201);
+  return id;
 }
 
 /** `humanizeSlug`, restated: the name a create-then-file capture mints. */
@@ -682,24 +684,45 @@ test('a capture on the month spread lands in the monthly log without leaving it'
   await expect(chip).toHaveAttribute('aria-label', `Destination: ${chipLabel}`);
 });
 
-test('the monthly log collapses done work and the arrange menu narrows it', async ({ page }) => {
+test('the monthly log collapses done work and the arrange menu narrows it', async ({
+  baseURL,
+  context,
+  page,
+}) => {
+  const server = await pairAndBootstrap(context, baseURL);
+  const collection = `month:${server.today.slice(0, 7)}`;
+  const keep = uniqueText('Renew passport');
+  const finish = uniqueText('Call plumber');
+  await seedOwnerEntry(context.request, baseURL, server, {
+    text: keep,
+    type: 'task',
+    collection,
+  });
+  const finishId = await seedOwnerEntry(context.request, baseURL, server, {
+    text: finish,
+    type: 'task',
+    collection,
+  });
+
   await openJournal(page);
   await page.getByRole('button', { name: 'Month', exact: true }).click();
   const monthlyLog = page.getByRole('region', { name: 'Monthly log' });
-
-  const keep = uniqueText('Renew passport');
-  const finish = uniqueText('Call plumber');
-  const input = page.getByRole('combobox', { name: 'Add an entry' });
-  for (const text of [keep, finish]) {
-    await input.fill(`. ${text}`);
-    await page.getByRole('button', { name: 'Add entry' }).click();
-    await expect(monthlyLog.getByText(text, { exact: true })).toBeVisible();
-  }
+  await expect(monthlyLog.getByText(keep, { exact: true })).toBeVisible();
+  await expect(monthlyLog.getByText(finish, { exact: true })).toBeVisible();
 
   // Finishing a task folds it into the disclosure instead of leaving a
   // dimmed row behind. The count is a pattern: the shared server means other
   // tests' entries may sit in the same bucket.
+  const toggled = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname === `/api/entries/${finishId}` &&
+      response.request().method() === 'PATCH' &&
+      response.status() === 200
+    );
+  });
   await monthlyLog.getByRole('button', { name: `Mark as done: ${finish}` }).click();
+  await toggled;
   await expect(monthlyLog.getByText(finish, { exact: true })).toBeHidden();
   await expect(monthlyLog.getByText(keep, { exact: true })).toBeVisible();
   const disclosure = monthlyLog.getByText(/^Done & moved \(\d+\)$/);

@@ -510,12 +510,13 @@ test('an offline tomorrow capture after browser midnight replays to its intended
   });
   await openJournal(page);
   await initialTimelineLoaded;
+  await expect(page.locator(`[data-day="${bootstrap.today}"]`)).toBeVisible();
 
   await context.setOffline(true);
   await expect(page.locator('.status-strip')).toContainText(
     /Offline ready — showing what is saved on this device|Offline — showing what is available on this device/,
   );
-  await page.clock.fastForward(60_000);
+  await page.clock.runFor(60_000);
   await expect(page.locator(`[data-day="${browserTomorrow}"]`)).toBeVisible();
 
   const text = uniqueText('Midnight offline tomorrow');
