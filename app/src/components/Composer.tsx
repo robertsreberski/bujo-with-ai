@@ -15,7 +15,12 @@ import { ComposerSuggestions } from './ComposerSuggestions';
 import { DestinationChip } from './DestinationChip';
 import { Icon } from './Icon';
 import { parseDraft, removeCaptureToken, type CaptureTokenKind } from './capture';
-import { resolveDestination, sameDestination, type Destination } from './destination';
+import {
+  resolveDestination,
+  sameDestination,
+  shiftBaseDate,
+  type Destination,
+} from './destination';
 import { entryIcon } from './entry-icons';
 import { SIGNIFIER_BY_TYPE, typeForSignifier } from './signifiers';
 import { Chip, ChipButton } from './ui/chip';
@@ -139,6 +144,7 @@ export function Composer({
     collections,
     tags: tagSuggestions,
     today,
+    shiftBase: shiftBaseDate(route, today),
     onLoadTags: onLoadTagSuggestions,
   });
 
@@ -311,14 +317,17 @@ export function Composer({
       ? {}
       : ({ 'aria-activedescendant': suggestions.activeOptionId } as const);
 
+  const clearDateShift = () => onDraftChange(removeCaptureToken(draft, 'date-shift'));
   const clearDestination = ((): (() => void) | null => {
     if (resolved.source === 'chip') return () => onChipOverrideChange?.(null);
-    if (resolved.source !== 'token') return null;
+    // A screen default a `>` token only re-dated: the day is the one thing
+    // taken back, and the collection was never the token's to give.
+    if (resolved.source !== 'token') return resolved.statedDate === null ? null : clearDateShift;
     const destination = resolved.destination;
-    if (destination.kind === 'collection') {
+    if (destination.kind === 'collection' && parsed.collection !== null) {
       return () => onDraftChange(removeCaptureToken(draft, 'collection', destination.id));
     }
-    return () => onDraftChange(removeCaptureToken(draft, 'date-shift'));
+    return clearDateShift;
   })();
 
   const selectDestination = (destination: Destination) => {

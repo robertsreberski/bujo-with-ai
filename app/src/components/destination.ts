@@ -14,6 +14,12 @@ export interface ResolvedDestination {
   source: DestinationSource;
   /** True when filing here would mint a collection the mirror has never seen. */
   createsCollection: boolean;
+  /**
+   * The day a `>` token named for a collection filing. Null for a date
+   * destination, which already carries its day, and null when no token was
+   * typed — where the server still stamps the filing day.
+   */
+  statedDate: string | null;
 }
 
 export interface ResolveDestinationArgs {
@@ -72,13 +78,26 @@ function nextWeekday(today: string, day: number): string {
   return shiftCalendarDate(today, ahead === 0 ? 7 : ahead);
 }
 
+export const monthOf = (date: string): string => date.slice(0, 7);
+
+/** Days in the month a date falls in; day 0 of the next month is its last. */
+function daysInMonthOf(date: string): number {
+  const [year = 0, month = 1] = date.split('-').map(Number);
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
 /**
  * Resolves a `>` token against a passed `today`. Pure and clock-free, like the
  * parser that produced the shift: every relative target is calendar arithmetic
  * on the server-synced date, and an absolute one passes through untouched —
  * a past date is a deliberate backdate, not an error.
+ *
+ * A bare day number counts within `base`'s month — the month on screen — so
+ * `>14` means the 14th you are looking at rather than the next one to come.
+ * It resolves to null on a day that month has no room for (`>31` in February),
+ * which leaves the token as inert text rather than silently landing on the 28th.
  */
-export function resolveDateShift(shift: DateShift, today: string): string {
+export function resolveDateShift(shift: DateShift, today: string, base = today): string | null {
   switch (shift.kind) {
     case 'today':
       return today;
@@ -90,9 +109,24 @@ export function resolveDateShift(shift: DateShift, today: string): string {
       return nextWeekday(today, 1);
     case 'weekend':
       return nextWeekday(today, 6);
+    case 'day-of-month':
+      return shift.day > daysInMonthOf(base)
+        ? null
+        : `${monthOf(base)}-${String(shift.day).padStart(2, '0')}`;
     case 'absolute':
       return shift.date;
   }
+}
+
+/**
+ * The day a bare `>14` counts from: the month on screen. On the daily log that
+ * is the day being viewed, so a token typed while a past day is open stays in
+ * that day's month instead of jumping to the wall calendar's.
+ */
+export function shiftBaseDate(route: JournalRoute, today: string): string {
+  if (route.name === 'today') return route.date ?? today;
+  if (route.name === 'month') return `${route.month ?? monthOf(today)}-01`;
+  return today;
 }
 
 /** Rough inverse of the index view's slugify: `project-atlas` → `Project atlas`. */
@@ -184,8 +218,14 @@ function destinationCreatesCollection(
  * Precedence: a typed `/slug` token beats a picked chip, which beats the screen.
  * A `>` shift then overrides any *date* destination — explicit grammar beats the
  * ambient viewed date, so `>today` typed while a past day is open files into
- * today — while collection destinations ignore it because the server owns the
- * entry date for filed captures.
+ * today.
+ *
+ * A collection destination keeps its collection and takes the day as the
+ * entry's own date: the server accepts a date alongside a collection, so a
+ * capture filed into a log no longer has to claim the day it was filed. The one
+ * exception is a month log, which addresses its own month — a stated day
+ * outside it belongs to the month that owns the day, not to the one being
+ * browsed, which is the same rule the MCP schema enforces for agents.
  */
 export function resolveDestination(args: ResolveDestinationArgs): ResolvedDestination {
   const { route, today, chipOverride, parsedCollection, dateShift, collectionsById } = args;
@@ -201,15 +241,33 @@ export function resolveDestination(args: ResolveDestinationArgs): ResolvedDestin
     destination = screenDestination(route, today, collectionsById);
   }
 
-  if (dateShift !== null && destination.kind === 'date') {
-    destination = { kind: 'date', date: resolveDateShift(dateShift, today) };
-    source = 'token';
+  let statedDate: string | null = null;
+  const date =
+    dateShift === null ? null : resolveDateShift(dateShift, today, shiftBaseDate(route, today));
+  if (date !== null) {
+    if (destination.kind === 'date') {
+      destination = { kind: 'date', date };
+      source = 'token';
+    } else {
+      statedDate = date;
+      // `source` stays whatever chose the collection: the token only re-dates a
+      // filing, so a chip is still the thing a clear should take back. Only a
+      // month log the day pulled to another month was truly chosen by the token.
+      if (
+        isMonthCollectionId(destination.id) &&
+        monthFromCollectionId(destination.id) !== monthOf(date)
+      ) {
+        destination = { kind: 'collection', id: monthCollectionId(monthOf(date)) };
+        source = 'token';
+      }
+    }
   }
 
   return {
     destination,
     source,
     createsCollection: destinationCreatesCollection(destination, collectionsById),
+    statedDate,
   };
 }
 

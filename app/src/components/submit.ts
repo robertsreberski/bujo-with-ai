@@ -1,10 +1,5 @@
 import type { CreateEntryInput } from '../store/models';
-import {
-  humanizeSlug,
-  nextCalendarDate,
-  type Destination,
-  type ResolvedDestination,
-} from './destination';
+import { humanizeSlug, nextCalendarDate, type ResolvedDestination } from './destination';
 import type { ParsedDraft } from './types';
 
 /** The collection a capture has to mint before it can file into it. */
@@ -31,7 +26,7 @@ export interface SubmitPlan {
  *
  * | destination                | fields                            |
  * | -------------------------- | --------------------------------- |
- * | `{collection, id}`         | `collection: id`                  |
+ * | `{collection, id}`         | `collection: id`, `date` if stated|
  * | `{date}` equal to today    | `collection: null`                |
  * | `{date}` equal to tomorrow | `collection: null, dateShift`     |
  * | `{date}` any other day     | `collection: null, date`          |
@@ -46,7 +41,7 @@ export function planSubmit(
   today: string,
 ): SubmitPlan {
   return {
-    entry: entryInput(parsed, resolved.destination, today),
+    entry: entryInput(parsed, resolved, today),
     collection:
       resolved.createsCollection && resolved.destination.kind === 'collection'
         ? { id: resolved.destination.id, name: humanizeSlug(resolved.destination.id), note: null }
@@ -56,18 +51,27 @@ export function planSubmit(
 
 function entryInput(
   parsed: ParsedDraft,
-  destination: Destination,
+  resolved: ResolvedDestination,
   today: string,
 ): Omit<CreateEntryInput, 'id'> {
+  const destination = resolved.destination;
   const base = {
     text: parsed.text,
     type: parsed.type,
     time: parsed.time,
     tags: parsed.tags,
   };
-  // The server owns the entry date for a filed capture, so a collection
-  // destination sends neither `date` nor `dateShift`.
-  if (destination.kind === 'collection') return { ...base, collection: destination.id };
+  // A filed capture states its day only when the owner named one; left unsaid,
+  // the server still stamps the filing date. `dateShift` never travels with a
+  // collection — the shift intent exists to survive a midnight rollover on the
+  // daily log, and a collection filing has no day to roll over.
+  if (destination.kind === 'collection') {
+    return {
+      ...base,
+      collection: destination.id,
+      ...(resolved.statedDate === null ? {} : { date: resolved.statedDate }),
+    };
+  }
   if (destination.date === today) return { ...base, collection: null };
   if (destination.date === nextCalendarDate(today)) {
     return { ...base, collection: null, dateShift: 'tomorrow' };

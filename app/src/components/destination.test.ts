@@ -9,6 +9,7 @@ import {
   resolveDateShift,
   resolveDestination,
   sameDestination,
+  shiftBaseDate,
   slugifyCollection,
   viewedDestination,
   type Destination,
@@ -72,6 +73,7 @@ describe('resolveDestination precedence', () => {
       destination: { kind: 'collection', id: 'errands' },
       source: 'token',
       createsCollection: true,
+      statedDate: null,
     });
   });
 
@@ -85,6 +87,7 @@ describe('resolveDestination precedence', () => {
       destination: { kind: 'date', date: '2026-07-04' },
       source: 'chip',
       createsCollection: false,
+      statedDate: null,
     });
   });
 
@@ -93,6 +96,7 @@ describe('resolveDestination precedence', () => {
       destination: { kind: 'date', date: TODAY },
       source: 'screen',
       createsCollection: false,
+      statedDate: null,
     });
   });
 });
@@ -110,6 +114,7 @@ describe('resolveDestination screen defaults', () => {
       destination: { kind: 'collection', id: 'month:2026-09' },
       source: 'screen',
       createsCollection: false,
+      statedDate: null,
     });
     expect(resolve({ route: { name: 'month', month: null } }).destination).toEqual({
       kind: 'collection',
@@ -122,6 +127,7 @@ describe('resolveDestination screen defaults', () => {
       destination: { kind: 'collection', id: 'project-atlas' },
       source: 'screen',
       createsCollection: false,
+      statedDate: null,
     });
   });
 
@@ -185,6 +191,7 @@ describe('resolveDestination date shift', () => {
       destination: { kind: 'date', date: TOMORROW },
       source: 'token',
       createsCollection: false,
+      statedDate: null,
     });
   });
 
@@ -195,6 +202,7 @@ describe('resolveDestination date shift', () => {
       destination: { kind: 'date', date: TODAY },
       source: 'token',
       createsCollection: false,
+      statedDate: null,
     });
   });
 
@@ -229,21 +237,84 @@ describe('resolveDestination date shift', () => {
       destination: { kind: 'date', date: '2026-06-01' },
       source: 'token',
       createsCollection: false,
+      statedDate: null,
     });
   });
 
-  it('is ignored for collection destinations, which take their date server-side', () => {
+  it('dates a collection filing instead of moving it', () => {
     expect(
       resolve({ parsedCollection: 'project-atlas', dateShift: { kind: 'weekday', day: 5 } }),
     ).toEqual({
       destination: { kind: 'collection', id: 'project-atlas' },
       source: 'token',
       createsCollection: false,
+      statedDate: '2026-08-07',
     });
+  });
+
+  it('leaves a chip-chosen collection the chip to clear, since the day only re-dates it', () => {
     expect(
-      resolve({ route: { name: 'month', month: '2026-09' }, dateShift: { kind: 'tomorrow' } })
-        .destination,
-    ).toEqual({ kind: 'collection', id: 'month:2026-09' });
+      resolve({
+        chipOverride: { kind: 'collection', id: 'project-atlas' },
+        dateShift: { kind: 'weekday', day: 5 },
+      }),
+    ).toMatchObject({ source: 'chip', statedDate: '2026-08-07' });
+  });
+
+  it('keeps a day inside the month log it was typed in', () => {
+    // TOMORROW is 2026-08-01, which September's log has no room for.
+    expect(
+      resolve({ route: { name: 'month', month: '2026-08' }, dateShift: { kind: 'tomorrow' } }),
+    ).toMatchObject({
+      destination: { kind: 'collection', id: 'month:2026-08' },
+      source: 'screen',
+      statedDate: TOMORROW,
+    });
+  });
+
+  it('sends a day outside the browsed month to the log that owns it', () => {
+    // A month log addresses its own month, so the day decides which one.
+    expect(
+      resolve({ route: { name: 'month', month: '2026-09' }, dateShift: { kind: 'tomorrow' } }),
+    ).toMatchObject({
+      destination: { kind: 'collection', id: 'month:2026-08' },
+      source: 'token',
+      statedDate: TOMORROW,
+    });
+  });
+});
+
+describe('resolveDateShift day-of-month', () => {
+  it('counts within the month on screen rather than the one being lived', () => {
+    expect(resolveDateShift({ kind: 'day-of-month', day: 14 }, TODAY)).toBe('2026-07-14');
+    expect(resolveDateShift({ kind: 'day-of-month', day: 14 }, TODAY, '2026-09-01')).toBe(
+      '2026-09-14',
+    );
+  });
+
+  it('reaches a day already past, the way an absolute date does', () => {
+    expect(resolveDateShift({ kind: 'day-of-month', day: 1 }, TODAY)).toBe('2026-07-01');
+  });
+
+  it('names no day a month has no room for', () => {
+    expect(resolveDateShift({ kind: 'day-of-month', day: 31 }, TODAY, '2026-09-01')).toBeNull();
+    expect(resolveDateShift({ kind: 'day-of-month', day: 30 }, TODAY, '2026-02-01')).toBeNull();
+    // 2028 is a leap year, so the 29th is real and the 30th is not.
+    expect(resolveDateShift({ kind: 'day-of-month', day: 29 }, TODAY, '2028-02-01')).toBe(
+      '2028-02-29',
+    );
+    expect(resolveDateShift({ kind: 'day-of-month', day: 30 }, TODAY, '2028-02-01')).toBeNull();
+  });
+});
+
+describe('shiftBaseDate', () => {
+  it('counts from the day or month on screen, and from today elsewhere', () => {
+    expect(shiftBaseDate({ name: 'today', date: '2026-07-12' }, TODAY)).toBe('2026-07-12');
+    expect(shiftBaseDate({ name: 'today', date: null }, TODAY)).toBe(TODAY);
+    expect(shiftBaseDate({ name: 'month', month: '2026-09' }, TODAY)).toBe('2026-09-01');
+    expect(shiftBaseDate({ name: 'month', month: null }, TODAY)).toBe('2026-07-01');
+    expect(shiftBaseDate({ name: 'index' }, TODAY)).toBe(TODAY);
+    expect(shiftBaseDate({ name: 'collection', collectionId: 'reading' }, TODAY)).toBe(TODAY);
   });
 });
 
@@ -257,6 +328,7 @@ describe('resolveDestination createsCollection', () => {
       destination: { kind: 'collection', id: 'old-sprint' },
       source: 'token',
       createsCollection: false,
+      statedDate: null,
     });
   });
 
@@ -271,6 +343,7 @@ describe('resolveDestination createsCollection', () => {
       destination: { kind: 'collection', id: 'errands' },
       source: 'chip',
       createsCollection: true,
+      statedDate: null,
     });
   });
 });

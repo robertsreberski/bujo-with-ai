@@ -349,9 +349,28 @@ describe('buildSuggestionRows', () => {
   it('waits for a typed date to finish before it says anything', () => {
     // A half-typed date closes the panel rather than guessing, the way `@4pm`
     // does: there is nothing to complete until the calendar can read it.
-    expect(rows('Call >2|')).toEqual([]);
     expect(rows('Call >2026-08|')).toEqual([]);
     expect(rows('Call >2026-08-1|')).toEqual([]);
+  });
+
+  it('reads a bare day number as a whole token, counted in the month on screen', () => {
+    expect(rows('Call >2|')).toEqual([
+      {
+        kind: 'date-shift',
+        key: 'date-shift:2026-07-02',
+        label: 'Thursday, July 2',
+        detail: '>2',
+        insert: '>2 ',
+      },
+    ]);
+    expect(rows('Call >14|')).toMatchObject([{ label: 'Tuesday, July 14', insert: '>14 ' }]);
+  });
+
+  it('offers no row for a day number the month has no room for', () => {
+    // July has 31 days, so `>31` is real and `>32` never becomes a token.
+    expect(rows('Call >31|')).toMatchObject([{ insert: '>31 ' }]);
+    expect(rows('Call >32|')).toEqual([]);
+    expect(rows('Call >0|')).toEqual([]);
   });
 
   it('offers no date shift for a word the grammar could never become', () => {
@@ -373,6 +392,7 @@ describe('buildSuggestionRows', () => {
       // Nothing of the token survives as prose: it was consumed whole.
       expect(parsed.text).toBe('x');
       const filed = resolveDateShift(shift, TODAY);
+      if (filed === null) throw new Error(`${row.insert} names no day the calendar accepts`);
       // The absolute row shows its token; the day rows show the day itself.
       expect(row.detail).toBe(
         row.detail.startsWith('>') ? `>${filed}` : formatWeekdayShortDate(filed),

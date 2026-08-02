@@ -181,7 +181,8 @@ interface ResolvedShiftWord extends DateShiftWord {
 function resolveWords(words: readonly DateShiftWord[], today: string): ResolvedShiftWord[] {
   return words.flatMap((word) => {
     const shift = parseDateShiftToken(word.token);
-    return shift === null ? [] : [{ ...word, date: resolveDateShift(shift, today) }];
+    const date = shift === null ? null : resolveDateShift(shift, today);
+    return date === null ? [] : [{ ...word, date }];
   });
 }
 
@@ -233,21 +234,27 @@ function matchedDateShiftRows(query: string, today: string): SuggestionRow[] {
 }
 
 /**
- * A typed date confirms rather than completes: one row, only once the date is
- * whole and the calendar accepts it (the parser's own reader decides that, so
+ * A typed number confirms rather than completes: one row, only once the token
+ * names a day the calendar accepts (the parser's own reader decides that, so
  * `>2026-02-30` is refused here exactly as it is refused there). A half-typed
  * date matches nothing and closes the panel, the way `@4pm` closes the time one.
+ *
+ * A bare `>14` is the same kind of row, resolved against the month on screen —
+ * and naming the day it landed on is the whole point, since that month is
+ * context the token itself does not carry.
  */
-function absoluteDateRows(query: string): SuggestionRow[] {
+function typedDateRows(query: string, base: string): SuggestionRow[] {
   const shift = parseDateShiftToken(query);
-  if (shift?.kind !== 'absolute') return [];
+  if (shift?.kind !== 'absolute' && shift?.kind !== 'day-of-month') return [];
+  const date = resolveDateShift(shift, base, base);
+  if (date === null) return [];
   return [
     {
       kind: 'date-shift',
-      key: `date-shift:${shift.date}`,
-      label: formatLongDate(shift.date),
-      detail: `>${shift.date}`,
-      insert: `>${shift.date} `,
+      key: `date-shift:${date}`,
+      label: formatLongDate(date),
+      detail: `>${query}`,
+      insert: `>${query} `,
     },
   ];
 }
@@ -295,10 +302,14 @@ export function buildSuggestionRows(
     now: Date;
     /** The server-synced calendar date every `>` row resolves against (LOG-45). */
     today: string;
+    /** The month a bare `>14` counts within; the screen's, not the clock's. */
+    shiftBase?: string;
   },
 ): SuggestionRow[] {
   if (query.mode === 'date-shift') {
-    if (DATE_SHIFT_DIGITS.test(query.query)) return absoluteDateRows(query.query);
+    if (DATE_SHIFT_DIGITS.test(query.query)) {
+      return typedDateRows(query.query, options.shiftBase ?? options.today);
+    }
     if (query.query.length === 0) return bareDateShiftRows(options.today);
     return matchedDateShiftRows(query.query, options.today);
   }

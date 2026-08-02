@@ -81,8 +81,14 @@ export function DestinationChip({
 }: DestinationChipProps) {
   const [open, setOpen] = useState(false);
   const wasOpenRef = useRef(false);
-  const label = destinationLabel(resolved.destination, collectionsById, today);
-  const active = resolved.source !== 'screen' || resolved.createsCollection;
+  const place = destinationLabel(resolved.destination, collectionsById, today);
+  // A filing that states its own day says both halves: the log it lands in, and
+  // the day it will claim there. Without the day the chip would report only
+  // half of what the typed token just decided.
+  const label =
+    resolved.statedDate === null ? place : `${place} · ${formatShortDate(resolved.statedDate)}`;
+  const active =
+    resolved.source !== 'screen' || resolved.createsCollection || resolved.statedDate !== null;
 
   /*
    * The picker steals focus to stay keyboard-operable, and the composer takes

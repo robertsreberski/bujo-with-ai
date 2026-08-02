@@ -15,6 +15,7 @@ export const DateShiftSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('weekday'), day: z.number().int().min(1).max(7) }),
   z.strictObject({ kind: z.literal('next-week') }),
   z.strictObject({ kind: z.literal('weekend') }),
+  z.strictObject({ kind: z.literal('day-of-month'), day: z.number().int().min(1).max(31) }),
   z.strictObject({ kind: z.literal('absolute'), date: CalendarDateSchema }),
 ]);
 
@@ -76,7 +77,7 @@ export const TIME_TOKEN_SOURCE = String.raw`@(\d{1,2})(?::(\d{2}))?(?:\s*(am|pm)
  * alternative is the longest one, and the trailing `\b` keeps `>tomorrowish`
  * and `>monx` inert rather than half-consumed.
  */
-export const DATE_SHIFT_TOKEN_SOURCE = String.raw`>(today|tomorrow|next-week|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun|\d{4}-\d{2}-\d{2})\b`;
+export const DATE_SHIFT_TOKEN_SOURCE = String.raw`>(today|tomorrow|next-week|weekend|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun|\d{4}-\d{2}-\d{2}|\d{1,2})\b`;
 
 const SIGNIFIER_LEAD = new RegExp(SIGNIFIER_TOKEN_SOURCE, 'i');
 const COLLECTION_TOKEN = new RegExp(COLLECTION_TOKEN_SOURCE);
@@ -115,6 +116,13 @@ export function parseDateShiftToken(token: string): DateShift | null {
   if (word === 'next-week' || word === 'weekend') return { kind: word };
   const day = WEEKDAY_NUMBERS[word];
   if (day !== undefined) return { kind: 'weekday', day };
+  // A bare day number counts within a month the parser cannot see, so it stays
+  // symbolic like every other shift; the caller supplies the month it is
+  // looking at. `>0` and `>32` name no day, so they stay text.
+  if (/^\d{1,2}$/.test(word)) {
+    const dayOfMonth = Number(word);
+    return dayOfMonth >= 1 && dayOfMonth <= 31 ? { kind: 'day-of-month', day: dayOfMonth } : null;
+  }
   const date = CalendarDateSchema.safeParse(word);
   return date.success ? { kind: 'absolute', date: date.data } : null;
 }

@@ -9,7 +9,7 @@ const GRAMMAR: Array<{ token: string; description: string }> = [
   { token: '@4pm', description: 'Time — also @11 and @23:59' },
   {
     token: '>tomorrow',
-    description: 'A later day — also >friday, >next-week, >2026-08-12',
+    description: 'Another day — also >friday, >next-week, >14, >2026-08-12',
   },
   { token: '/collection', description: 'File into a collection' },
   { token: '//literal', description: 'A slash you meant to keep' },

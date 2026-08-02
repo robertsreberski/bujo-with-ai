@@ -39,6 +39,7 @@ const resolved = (
   destination,
   source: 'screen',
   createsCollection: false,
+  statedDate: null,
   ...patch,
 });
 
@@ -188,12 +189,36 @@ describe('planSubmit over the resolver it consumes', () => {
     expect(result.entry).not.toHaveProperty('date');
   });
 
-  it('ignores `>tomorrow` when the destination is a collection', () => {
+  it('dates a collection filing from `>tomorrow` without moving it', () => {
     const result = plan({
       route: { name: 'collection', collectionId: 'reading' },
       parsed: draft({ dateShift: { kind: 'tomorrow' } }),
     });
-    expect(result.entry).toMatchObject({ collection: 'reading' });
+    expect(result.entry).toMatchObject({ collection: 'reading', date: TOMORROW });
+    // The shift intent guards a midnight rollover on the daily log; a filing
+    // has no day to roll over, so it travels as the day it resolved to.
     expect(result.entry).not.toHaveProperty('dateShift');
+  });
+
+  it('files a bare `>14` on that day of the month being browsed', () => {
+    const result = plan({
+      route: { name: 'month', month: '2026-07' },
+      parsed: draft({ dateShift: { kind: 'day-of-month', day: 14 } }),
+    });
+    expect(result.entry).toMatchObject({ collection: 'month:2026-07', date: '2026-07-14' });
+  });
+
+  it('sends a day outside the browsed month to the log that owns it', () => {
+    const result = plan({
+      route: { name: 'month', month: '2026-07' },
+      parsed: draft({ dateShift: { kind: 'absolute', date: '2026-09-14' } }),
+    });
+    expect(result.entry).toMatchObject({ collection: 'month:2026-09', date: '2026-09-14' });
+  });
+
+  it('still leaves the day to the server when no token names one', () => {
+    const result = plan({ route: { name: 'month', month: '2026-07' } });
+    expect(result.entry).toMatchObject({ collection: 'month:2026-07' });
+    expect(result.entry).not.toHaveProperty('date');
   });
 });

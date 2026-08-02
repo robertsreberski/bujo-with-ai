@@ -18,6 +18,8 @@ interface UseComposerSuggestionsArgs {
   tags: readonly TagUsage[];
   /** Server-synced calendar date; the `>` rows resolve against it, not the clock. */
   today: string;
+  /** The month a bare `>14` counts within; the screen's, not the clock's. */
+  shiftBase: string;
   /** Fetched lazily, the first time a `#` token appears. */
   onLoadTags?: (() => void) | undefined;
 }
@@ -47,6 +49,7 @@ export function useComposerSuggestions({
   collections,
   tags,
   today,
+  shiftBase,
   onLoadTags,
 }: UseComposerSuggestionsArgs): ComposerSuggestionsState {
   const baseId = useId();
@@ -66,7 +69,8 @@ export function useComposerSuggestions({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- the dependency is the intent.
   const now = useMemo(() => new Date(), [mode]);
   // Cheap enough to recompute: both inputs are short, screen-sized lists.
-  const rows = query === null ? [] : buildSuggestionRows(query, { collections, tags, now, today });
+  const rows =
+    query === null ? [] : buildSuggestionRows(query, { collections, tags, now, today, shiftBase });
   const open = queryKey !== null && rows.length > 0 && dismissedKey !== queryKey;
   const navigated = active !== null && active.key === queryKey;
   const activeIndex = navigated ? Math.min(active.index, rows.length - 1) : 0;

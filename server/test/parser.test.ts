@@ -102,6 +102,13 @@ describe('capture parser date shift token', () => {
     ['- Call the bank >next-week', { kind: 'next-week' }],
     ['- Call the bank >weekend', { kind: 'weekend' }],
     ['- Call the bank >2026-08-04', { kind: 'absolute', date: '2026-08-04' }],
+    // A bare day number names no month: the caller supplies the one it is
+    // looking at, which is why the shift stays symbolic like every other.
+    ['- Call the bank >14', { kind: 'day-of-month', day: 14 }],
+    ['- Call the bank >4', { kind: 'day-of-month', day: 4 }],
+    ['- Call the bank >04', { kind: 'day-of-month', day: 4 }],
+    ['- Call the bank >1', { kind: 'day-of-month', day: 1 }],
+    ['- Call the bank >31', { kind: 'day-of-month', day: 31 }],
   ])('reads the shift %s names without resolving it to a date', (draft, expected) => {
     expect(parseCapture(draft)).toMatchObject({ text: 'Call the bank', dateShift: expected });
   });
@@ -120,6 +127,11 @@ describe('capture parser date shift token', () => {
     '- Notes > mon please',
     '- Call the bank >2026-13-40',
     '- Call the bank >2026-02-30',
+    // No month has a 0th or a 32nd, and a longer run is not a day at all.
+    '- Call the bank >0',
+    '- Call the bank >32',
+    '- Call the bank >99',
+    '- Call the bank >140',
   ])('leaves %s whole, with no shift', (draft) => {
     expect(parseCapture(draft)).toMatchObject({
       text: draft.slice(2),
