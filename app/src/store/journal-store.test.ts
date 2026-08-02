@@ -132,6 +132,8 @@ describe('journal store reconciliation', () => {
       outboxCount: 0,
       deadLetters: [],
       recentlyDeleted: [],
+      timelineEntryIds: [original.id],
+      timelineAnchorDate: null,
       networkOnline: false,
       online: false,
       connectionStatus: 'offline',
@@ -140,6 +142,7 @@ describe('journal store reconciliation', () => {
     await journalActions.deleteEntry(original.id);
     expect(useJournalStore.getState().entriesById[original.id]?.deletedAt).not.toBeNull();
     expect(useJournalStore.getState().recentlyDeleted).toHaveLength(1);
+    expect(useJournalStore.getState().timelineEntryIds).not.toContain(original.id);
 
     const result = await journalActions.restoreEntry(original.id);
     expect(result).toEqual({
@@ -150,6 +153,7 @@ describe('journal store reconciliation', () => {
     expect(useJournalStore.getState().entriesById[original.id]).toEqual(original);
     expect(useJournalStore.getState().outbox).toHaveLength(0);
     expect(useJournalStore.getState().recentlyDeleted).toHaveLength(0);
+    expect(useJournalStore.getState().timelineEntryIds).toContain(original.id);
     expect(restore).not.toHaveBeenCalled();
   });
 
@@ -188,6 +192,8 @@ describe('journal store reconciliation', () => {
       outbox: [],
       outboxCount: 0,
       recentlyDeleted: [],
+      timelineEntryIds: [],
+      timelineAnchorDate: null,
       networkOnline: true,
       online: true,
       connectionStatus: 'connected',
@@ -205,6 +211,7 @@ describe('journal store reconciliation', () => {
     });
     expect(useJournalStore.getState().entriesById[tombstone.id]).toEqual(recovered);
     expect(useJournalStore.getState().recentlyDeleted).toHaveLength(0);
+    expect(useJournalStore.getState().timelineEntryIds).toContain(tombstone.id);
   });
 
   it('follows an in-flight online delete with a canonical restore', async () => {
@@ -240,6 +247,8 @@ describe('journal store reconciliation', () => {
       outboxCount: 0,
       deadLetters: [],
       recentlyDeleted: [],
+      timelineEntryIds: [original.id],
+      timelineAnchorDate: null,
       networkOnline: true,
       online: true,
       connectionStatus: 'connected',
@@ -255,6 +264,7 @@ describe('journal store reconciliation', () => {
     expect(result.entry).toEqual(recovered);
     expect(useJournalStore.getState().entriesById[original.id]).toEqual(recovered);
     expect(useJournalStore.getState().outbox).toHaveLength(0);
+    expect(useJournalStore.getState().timelineEntryIds).toContain(original.id);
   });
 
   it('preserves the daily migration count when scheduling a monthly copy', async () => {

@@ -86,27 +86,6 @@ function humanizeSlug(slug: string): string {
   return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
 }
 
-/** LOG-53's Timeline-badge formula, computed from the server's own bootstrap. */
-async function openTimelineCount(
-  request: APIRequestContext,
-  server: ServerContext,
-): Promise<number> {
-  const bootstrap = await request.get('/api/bootstrap');
-  expect(bootstrap.ok()).toBeTruthy();
-  const body = (await bootstrap.json()) as {
-    entries?: Array<{ state?: string; type?: string; collection?: string | null; date?: string }>;
-  };
-  return (
-    body.entries?.filter(
-      (entry) =>
-        entry.state === 'open' &&
-        (entry.type === 'task' || entry.type === 'habit') &&
-        (entry.collection ?? null) === null &&
-        (entry.date ?? '') <= server.today,
-    ).length ?? 0
-  );
-}
-
 /** The count a nav item announces, or 0 when it carries no badge at all. */
 async function navCount(page: Page, label: 'Timeline' | 'Activity'): Promise<number> {
   const name = await page
@@ -879,25 +858,17 @@ test('every capture sigil opens its own completion panel', async ({ page }) => {
   await expect(panel).toBeHidden();
 });
 
-test('the Timeline and Activity tabs announce counts and Activity stays cleared', async ({
+test('Timeline avoids a partial count while Activity announces unseen changes', async ({
   baseURL,
   context,
   page,
 }) => {
-  const server = await pairAndBootstrap(context, baseURL);
+  await pairAndBootstrap(context, baseURL);
   await openJournal(page);
 
-  // Anchor the baseline to server truth, not to whatever the badge shows
-  // mid-hydration — the shared database already carries earlier specs' rows.
-  const openBefore = await openTimelineCount(context.request, server);
-  await expect.poll(() => navCount(page, 'Timeline')).toBe(openBefore);
-  await seedOwnerEntry(context.request, baseURL, server, {
-    text: uniqueText('Badge open task'),
-    type: 'task',
-  });
-  // The count rides the same SSE batch as the row, so it needs no reload.
-  await expect.poll(() => navCount(page, 'Timeline')).toBe(openBefore + 1);
-  await expect(page.getByRole('button', { name: /^Timeline — \d+ open items?$/ })).toBeVisible();
+  // Timeline is cursor-bounded, so it must not imply a complete task total.
+  await expect(page.getByRole('button', { name: 'Timeline', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Timeline — / })).toHaveCount(0);
 
   const unseenBefore = await navCount(page, 'Activity');
   const secret = await issueMcpSecret(page, uniqueText('Badge agent'));
