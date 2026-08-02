@@ -296,7 +296,16 @@ export const ReflectionSchema = z
         message: 'Only a failed reflection may include a failure reason.',
       });
     }
-    const hasCurrent = reflection.currentVersionId !== null && reflection.currentVersion !== null;
+    const hasCurrentId = reflection.currentVersionId !== null;
+    const hasCurrentVersion = reflection.currentVersion !== null;
+    if (hasCurrentId !== hasCurrentVersion) {
+      context.addIssue({
+        code: 'custom',
+        path: ['currentVersion'],
+        message: 'currentVersionId and currentVersion must both be null or both be selected.',
+      });
+    }
+    const hasCurrent = hasCurrentId && hasCurrentVersion;
     if (['current', 'stale'].includes(reflection.status) && !hasCurrent) {
       context.addIssue({
         code: 'custom',
