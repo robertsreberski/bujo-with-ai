@@ -1,9 +1,10 @@
 import { journalApi } from '../api/client';
 import type { Collection, Entry } from '../api/types';
+import type { JournalStatus, OutboxItem, QueueableCommand } from '../domain/contracts';
 import { createUlid } from './ids';
-import type { JournalStatus, MirrorData, OutboxItem, QueueableCommand } from './models';
+import type { MirrorData } from './models';
 import { upsertServerCollection, upsertServerEntry } from './optimistic';
-import type { JournalState } from './state';
+import type { JournalDataState } from './state';
 
 export interface ServerRows {
   entries?: Entry[];
@@ -220,7 +221,7 @@ export function applyServerRows(mirror: MirrorData, rows: ServerRows): MirrorDat
 
 export function rebaseCommand(
   command: QueueableCommand,
-  state: Pick<JournalState, 'entriesById'>,
+  state: Pick<MirrorData, 'entriesById'>,
   at = new Date().toISOString(),
 ): QueueableCommand {
   if (
@@ -239,7 +240,21 @@ export function rebaseCommand(
 }
 
 /** Projects transport and outbox facts into the shell's stable owner vocabulary. */
-export const selectJournalStatus = (state: JournalState): JournalStatus => {
+type JournalStatusState = Pick<
+  JournalDataState,
+  | 'hydrated'
+  | 'resourceStatus'
+  | 'authenticationRequired'
+  | 'networkOnline'
+  | 'connectionStatus'
+  | 'online'
+  | 'deadLetters'
+  | 'persistenceStatus'
+  | 'syncing'
+  | 'outboxCount'
+>;
+
+export const selectJournalStatus = (state: JournalStatusState): JournalStatus => {
   const connection: JournalStatus['connection'] =
     !state.hydrated || state.resourceStatus === 'loading'
       ? 'initializing'

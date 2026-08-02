@@ -4,7 +4,7 @@ import { Dialog } from './Dialog';
 import { EntryRow } from './EntryRow';
 import { Icon } from './Icon';
 import { buildSearchSnippet } from './search-snippet';
-import type { JournalSearchPage } from '../store/models';
+import type { JournalSearchPage } from '../domain/contracts';
 import { EMPTY_PANEL } from '../views/view-classes';
 import type { DisplayPreferences, JournalEntry } from './types';
 

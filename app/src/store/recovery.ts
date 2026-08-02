@@ -1,7 +1,8 @@
 import { ApiError, journalApi } from '../api/client';
 import type { Collection, Entry, RecentlyDeletedEntry } from '../api/types';
+import type { QueueableCommand } from '../domain/contracts';
 import { createUlid } from './ids';
-import type { QueueableCommand } from './models';
+import type { MirrorData } from './models';
 import {
   applyPendingCommands,
   recomputeActivityRevertEligibility,
@@ -9,23 +10,37 @@ import {
   upsertServerEntry,
 } from './optimistic';
 import { mirrorFromState, type JournalFeatureRuntime } from './runtime';
-import type { JournalState } from './state';
+import type { JournalActions, JournalDataState } from './state';
 
 const RECOVERY_WINDOW_MS = 30 * 86_400_000;
 const restoreMutationIds = new Map<string, string>();
 
+type RecoveryState = MirrorData &
+  Pick<
+    JournalDataState,
+    | 'outbox'
+    | 'outboxCount'
+    | 'recentlyDeleted'
+    | 'networkOnline'
+    | 'online'
+    | 'recoveryLoading'
+    | 'indexSource'
+    | 'timelineEntryIds'
+    | 'timelineAnchorDate'
+  >;
+
 export interface RecoveryDependencies {
-  runtime: JournalFeatureRuntime;
+  runtime: JournalFeatureRuntime<RecoveryState>;
   enqueueCommand(command: QueueableCommand): Promise<void>;
   activeOutboxMutationId(): string | null;
   flushing(): Promise<void> | null;
   timelineIdsWithRestoredEntry(
-    state: Pick<JournalState, 'timelineEntryIds' | 'timelineAnchorDate'>,
+    state: Pick<RecoveryState, 'timelineEntryIds' | 'timelineAnchorDate'>,
     entry: Entry,
   ): string[];
 }
 
-type RecoveryActions = Pick<JournalState, 'deleteEntry' | 'restoreEntry' | 'loadRecovery'>;
+type RecoveryActions = Pick<JournalActions, 'deleteEntry' | 'restoreEntry' | 'loadRecovery'>;
 
 export function clearRecoveryMutationIds(): void {
   restoreMutationIds.clear();
@@ -34,7 +49,7 @@ export function clearRecoveryMutationIds(): void {
 async function restoreEntryCanonically(
   id: string,
   expectedRevision: number,
-  runtime: JournalFeatureRuntime,
+  runtime: JournalFeatureRuntime<RecoveryState>,
 ): Promise<Awaited<ReturnType<typeof journalApi.restoreEntry>>> {
   const attempt = `${id}:${expectedRevision}`;
   const mutationId = restoreMutationIds.get(attempt) ?? createUlid();

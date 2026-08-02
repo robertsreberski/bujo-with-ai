@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Settings } from '../api/types';
-import { DEFAULT_LOG_VIEW, type LogViewConfig } from '../views/log-arrangement';
+import { DEFAULT_LOG_VIEW, type LogViewConfig } from '../domain/log-arrangement';
 import type { JournalClientRecord } from './models';
 
 const persistenceMocks = vi.hoisted(() => ({

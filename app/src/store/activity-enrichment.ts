@@ -3,6 +3,7 @@ import { ActivitySnapshotSchema } from '@journal/server/contracts/app';
 import { journalApi } from '../api/client';
 import { activityPresentation } from '../activity/presentation';
 import type { ActivityView, AgentTouch, Entry, Reflection, Summary, TagUsage } from '../api/types';
+import type { JournalActions, JournalDataState } from './state';
 import type { ActivitySeenCursor, MirrorData } from './models';
 import {
   recomputeActivityRevertEligibility,
@@ -15,12 +16,29 @@ import {
   upsertServerSummary,
 } from './optimistic';
 import { mirrorFromState, type JournalFeatureRuntime } from './runtime';
-import type { JournalState } from './state';
 
 const TAG_SUGGESTION_TTL_MS = 5 * 60 * 1000;
 
+type ActivityEnrichmentState = MirrorData &
+  Pick<
+    JournalDataState,
+    | 'activitySeenThrough'
+    | 'reflectionsByWeek'
+    | 'lastReviewSeenAt'
+    | 'seenActivityIds'
+    | 'timelineEntryIds'
+    | 'timelineAnchorDate'
+    | 'online'
+    | 'activityLoading'
+    | 'activityHasMore'
+    | 'activityNextCursor'
+    | 'tagSuggestions'
+    | 'tagsFetchedAt'
+    | 'indexSource'
+  >;
+
 export interface ActivityEnrichmentDependencies {
-  runtime: JournalFeatureRuntime;
+  runtime: JournalFeatureRuntime<ActivityEnrichmentState>;
   reconcileTimelineMembership(
     currentIds: readonly string[],
     mirror: Pick<MirrorData, 'entriesById'>,
@@ -31,7 +49,7 @@ export interface ActivityEnrichmentDependencies {
 }
 
 type ActivityEnrichmentActions = Pick<
-  JournalState,
+  JournalActions,
   | 'markActivityVisible'
   | 'markAllActivitySeen'
   | 'markReviewSeen'
@@ -52,7 +70,10 @@ function addCalendarDays(date: string, amount: number): string {
   return parsed.toISOString().slice(0, 10);
 }
 
-function summaryForAction(state: JournalState, id?: string): Summary | null {
+function summaryForAction(
+  state: Pick<MirrorData, 'latestSummary' | 'summariesByMonth'>,
+  id?: string,
+): Summary | null {
   if (id === undefined || state.latestSummary?.id === id) return state.latestSummary;
   return Object.values(state.summariesByMonth).find((summary) => summary?.id === id) ?? null;
 }
@@ -384,7 +405,11 @@ export function createActivityEnrichmentActions(
 const activityAtOrBefore = (activity: ActivityView, cursor: ActivitySeenCursor): boolean =>
   activity.at < cursor.at || (activity.at === cursor.at && activity.id <= cursor.id);
 
-export const selectUnseenActivityIds = (state: JournalState): string[] => {
+type ActivitySequenceState = Pick<JournalDataState, 'activityOrder' | 'activityById'>;
+type ActivitySeenState = ActivitySequenceState &
+  Pick<JournalDataState, 'seenActivityIds' | 'activitySeenThrough' | 'lastReviewSeenAt'>;
+
+export const selectUnseenActivityIds = (state: ActivitySeenState): string[] => {
   const individuallySeen = new Set(state.seenActivityIds);
   return state.activityOrder.filter((id) => {
     const activity = state.activityById[id];
@@ -402,10 +427,12 @@ export const selectUnseenActivityIds = (state: JournalState): string[] => {
   });
 };
 
-export const selectUnseenActivityCount = (state: JournalState): number =>
+export const selectUnseenActivityCount = (state: ActivitySeenState): number =>
   selectUnseenActivityIds(state).length;
 
-export const selectHasUnseenActivity = (state: JournalState): boolean => {
+export const selectHasUnseenActivity = (
+  state: ActivitySeenState & Pick<JournalDataState, 'activityHasMore'>,
+): boolean => {
   if (selectUnseenActivityIds(state).length > 0) return true;
   if (!state.activityHasMore) return false;
   const oldest = [...state.activityOrder]
@@ -423,7 +450,9 @@ export const selectHasUnseenActivity = (state: JournalState): boolean => {
 /** @deprecated Use selectUnseenActivityCount. */
 export const selectUnseenReviewCount = selectUnseenActivityCount;
 
-export const selectLatestAgentTouches = (state: JournalState): Record<string, AgentTouch> => {
+export const selectLatestAgentTouches = (
+  state: ActivitySequenceState & Pick<JournalDataState, 'agentTokens'>,
+): Record<string, AgentTouch> => {
   const touches: Record<string, AgentTouch> = {};
   const tokenLabels = Object.fromEntries(state.agentTokens.map((token) => [token.id, token.label]));
   for (const id of state.activityOrder) {
@@ -437,7 +466,7 @@ export const selectLatestAgentTouches = (state: JournalState): Record<string, Ag
   return touches;
 };
 
-export const selectActivity = (state: JournalState): ActivityView[] =>
+export const selectActivity = (state: ActivitySequenceState): ActivityView[] =>
   state.activityOrder.flatMap((id) => {
     const activity = state.activityById[id];
     return activity ? [activity] : [];

@@ -1,6 +1,5 @@
 import type { JournalSearchFilters as SharedJournalSearchFilters } from '@journal/server/contracts/app';
 
-import type { Destination } from '../components/destination';
 import type {
   ActivityView,
   AgentToken,
@@ -15,19 +14,20 @@ import type {
   Summary,
   TagUsage,
 } from '../api/types';
-import type { LogViewConfig } from '../views/log-arrangement';
+import type { MirrorData } from './models';
 import type {
-  ActivitySeenCursor,
   ConnectionStatus,
   CreateEntryInput,
   DeadLetter,
+  Destination,
   JournalNotice,
   JournalPersistenceState,
   JournalResourceStatus,
   JournalSearchPage,
-  MirrorData,
+  LogViewConfig,
   OutboxItem,
-} from './models';
+} from '../domain/contracts';
+import type { ActivitySeenCursor } from './models';
 
 export interface RestoreResult {
   entry: Entry;
@@ -45,7 +45,7 @@ export interface LoadEntriesQuery extends JournalSearchFilters {
  * The stable state/action contract consumed by the application. Feature modules
  * implement slices of this interface, while journal-store composes the facade.
  */
-export interface JournalState extends MirrorData {
+export interface JournalDataState extends MirrorData {
   index: IndexResponse | null;
   /** Request lifecycle is separate from the last bounded aggregate snapshot. */
   indexStatus: 'idle' | 'loading' | 'ready' | 'error';
@@ -100,15 +100,19 @@ export interface JournalState extends MirrorData {
   activitySeenThrough: ActivitySeenCursor | null;
   /** Events acknowledged by actually becoming visible, independent of the all-seen watermark. */
   seenActivityIds: string[];
+  /** Per-device monthly-log arrangement; null means the default view. */
+  monthLogView: LogViewConfig | null;
+  /** One shared per-device arrangement for every collection screen. */
+  collectionLogView: LogViewConfig | null;
+  composerPreset: { destination: Destination | null; nonce: number } | null;
+}
+
+export interface JournalActions {
   markActivityVisible(ids: readonly string[]): void;
   markAllActivitySeen(): void;
   /** @deprecated Compatibility alias for markAllActivitySeen. */
   markReviewSeen(): void;
-  /** Per-device monthly-log arrangement; null means the default view. */
-  monthLogView: LogViewConfig | null;
   setMonthLogView(config: LogViewConfig | null): void;
-  /** One shared per-device arrangement for every collection screen. */
-  collectionLogView: LogViewConfig | null;
   setCollectionLogView(config: LogViewConfig | null): void;
   initialize(): Promise<void>;
   shutdown(): void;
@@ -157,6 +161,7 @@ export interface JournalState extends MirrorData {
   createToken(label: string): Promise<{ token: AgentToken; secret: string }>;
   revokeToken(id: string): Promise<void>;
   activateUpdate(): Promise<void>;
-  composerPreset: { destination: Destination | null; nonce: number } | null;
   focusComposer(destination?: Destination): void;
 }
+
+export interface JournalState extends JournalDataState, JournalActions {}

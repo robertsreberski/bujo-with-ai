@@ -19,7 +19,8 @@ import type {
   Entry,
   Summary,
 } from '../api/types';
-import type { MirrorData, OutboxItem, QueueableCommand } from './models';
+import type { OutboxItem, QueueableCommand } from '../domain/contracts';
+import type { MirrorData } from './models';
 
 function byNewestEntry(left: Entry, right: Entry): number {
   return right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id);
