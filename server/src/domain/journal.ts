@@ -52,6 +52,7 @@ import type {
   MutationContext,
   PairedDevice,
   RateLimitResult,
+  RecentlyDeletedEntry,
   SearchEntriesInput,
   SearchEntriesResult,
   Snapshot,
@@ -837,6 +838,49 @@ export class JournalDomain {
     return { total, entries: rows.map(mapEntry) };
   }
 
+  public listRecentlyDeleted(retentionDays = 30): readonly RecentlyDeletedEntry[] {
+    if (!Number.isInteger(retentionDays) || retentionDays < 1)
+      invalid('retentionDays must be a positive integer');
+    const cutoff = new Date(this.now().getTime() - retentionDays * 86_400_000).toISOString();
+    const rows = this.db
+      .prepare(
+        `SELECT e.*, c.name AS recovery_collection_name, c.archived_at AS recovery_archived_at
+         FROM entries e
+         LEFT JOIN collections c ON c.id = e.collection
+         WHERE e.deleted_at IS NOT NULL AND e.deleted_at >= ?
+         ORDER BY e.deleted_at DESC, e.id DESC`,
+      )
+      .all(cutoff) as Array<
+      EntryRow & { recovery_collection_name: string | null; recovery_archived_at: string | null }
+    >;
+    return rows.map((row) => {
+      const entry = mapEntry(row);
+      const deletedAt = entry.deletedAt;
+      if (deletedAt === null) throw new DomainError('INTEGRITY_ERROR', 'Recovery row is live');
+      const collectionId = entry.collection;
+      const destination =
+        collectionId === null
+          ? { collectionId: null, collectionName: null, status: 'daily' as const }
+          : row.recovery_collection_name === null
+            ? {
+                collectionId,
+                collectionName: null,
+                status: 'missing' as const,
+              }
+            : {
+                collectionId,
+                collectionName: row.recovery_collection_name,
+                status:
+                  row.recovery_archived_at === null ? ('active' as const) : ('archived' as const),
+              };
+      return {
+        entry,
+        expiresAt: new Date(Date.parse(deletedAt) + retentionDays * 86_400_000).toISOString(),
+        destination,
+      };
+    });
+  }
+
   public pageEntries(
     input: Omit<SearchEntriesInput, 'limit' | 'offset'> & { readonly limit: number },
     before?: EntryPageBoundary,
@@ -1046,7 +1090,11 @@ export class JournalDomain {
     return activities.map((activity) => {
       let reason: 'already_reverted' | 'post_image_mismatch' | 'not_reversible' | null = null;
       if (activity.revertedAt !== null) reason = 'already_reverted';
-      else if (activity.kind === 'revert' || activity.postImages.length === 0)
+      else if (
+        activity.kind === 'revert' ||
+        activity.postImages.length === 0 ||
+        activity.text.endsWith('(content expired)')
+      )
         reason = 'not_reversible';
       else if (
         activity.postImages.some(
@@ -1400,7 +1448,11 @@ export class JournalDomain {
     actor: ActorContext,
     mutation?: MutationContext,
     options: { readonly expectedRevision?: number } = {},
-  ): { readonly entry: Entry; readonly activityId?: string } {
+  ): {
+    readonly entry: Entry;
+    readonly activityId?: string;
+    readonly fallbackFromCollection?: string;
+  } {
     validateId(id);
     return this.write('restore-entry', { id, ...options }, actor, mutation, (context) => {
       const before = this.selectEntry(id, true);
@@ -1412,9 +1464,18 @@ export class JournalDomain {
         throw new DomainError('CONFLICT', 'The 30-day recovery window for this entry has expired');
       }
       assertExpectedRevision(before, options.expectedRevision);
-      if (before.collection !== null)
-        this.ensureCollection(before.collection, context.now, context);
-      const entry = this.replaceEntry({ ...before, deletedAt: null }, context.now);
+      let collection = before.collection;
+      let fallbackFromCollection: string | undefined;
+      if (collection !== null) {
+        const existingCollection = this.getCollection(collection);
+        if (existingCollection === null && !collection.startsWith('month:')) {
+          fallbackFromCollection = collection;
+          collection = null;
+        } else {
+          this.ensureCollection(collection, context.now, context);
+        }
+      }
+      const entry = this.replaceEntry({ ...before, collection, deletedAt: null }, context.now);
       context.changes.push(upsertChange('entry', entry));
       const activity = this.maybeRecordEntryActivity(
         actor,
@@ -1424,7 +1485,11 @@ export class JournalDomain {
         entry,
         context,
       );
-      return activity === null ? { entry } : { entry, activityId: activity.id };
+      return {
+        entry,
+        ...(activity === null ? {} : { activityId: activity.id }),
+        ...(fallbackFromCollection === undefined ? {} : { fallbackFromCollection }),
+      };
     });
   }
 
@@ -1865,6 +1930,8 @@ export class JournalDomain {
       const original = this.getActivity(id);
       if (original === null) throw new DomainError('NOT_FOUND', `Activity ${id} was not found`);
       if (original.kind === 'revert') invalid('A revert activity cannot itself be reverted');
+      if (original.text.endsWith('(content expired)'))
+        invalid('Expired entry content cannot be restored from activity history');
       if (original.revertedAt !== null) {
         throw new DomainError('CONFLICT', 'This activity has already been reverted');
       }
@@ -2356,17 +2423,71 @@ export class JournalDomain {
       invalid('retentionDays must be a positive integer');
     const cutoff = new Date(this.now().getTime() - retentionDays * 86_400_000).toISOString();
     const now = this.now().toISOString();
-    const transaction = this.db.transaction(() => ({
-      entries: this.db
-        .prepare('DELETE FROM entries WHERE deleted_at IS NOT NULL AND deleted_at < ?')
-        .run(cutoff).changes,
-      // Idempotency records are durable: DM-11/API-4 define no expiry after which a
-      // caller key may silently execute again.
-      mutations: 0,
-      devices: this.db
-        .prepare('DELETE FROM device_tokens WHERE expires_at < ? OR revoked_at < ?')
-        .run(now, cutoff).changes,
-    }));
+    const transaction = this.db.transaction(() => {
+      const expiredIds = (
+        this.db
+          .prepare('SELECT id FROM entries WHERE deleted_at IS NOT NULL AND deleted_at < ?')
+          .all(cutoff) as Array<{ id: string }>
+      ).map(({ id }) => id);
+      if (expiredIds.length > 0) {
+        const expired = new Set(expiredIds);
+        const rows = this.db
+          .prepare(
+            `SELECT id, kind, pre_images, post_images FROM activity
+             WHERE EXISTS (
+               SELECT 1 FROM json_each(activity.refs, '$.entryIds')
+               WHERE value IN (SELECT value FROM json_each(?))
+             )`,
+          )
+          .all(JSON.stringify(expiredIds)) as Array<{
+          id: string;
+          kind: ActivityKind;
+          pre_images: string;
+          post_images: string;
+        }>;
+        const redact = (json: string): string => {
+          const snapshots = JSON.parse(json) as Snapshot[];
+          return JSON.stringify(
+            snapshots.map((snapshot) =>
+              snapshot.entity === 'entry' && expired.has(snapshot.id)
+                ? { ...snapshot, row: null }
+                : snapshot,
+            ),
+          );
+        };
+        const activityLabel: Record<ActivityKind, string> = {
+          'agent-add': 'Added an entry (content expired)',
+          'agent-update': 'Updated an entry (content expired)',
+          'agent-delete': 'Deleted an entry (content expired)',
+          'agent-migration': 'Migrated entries (content expired)',
+          'summary-filed': 'Filed a reflection (content expired)',
+          'summary-saved': 'Saved a reflection (content expired)',
+          revert: 'Reverted a change (content expired)',
+        };
+        const update = this.db.prepare(
+          'UPDATE activity SET text = ?, pre_images = ?, post_images = ? WHERE id = ?',
+        );
+        for (const row of rows) {
+          update.run(
+            activityLabel[row.kind],
+            redact(row.pre_images),
+            redact(row.post_images),
+            row.id,
+          );
+        }
+      }
+      return {
+        entries: this.db
+          .prepare('DELETE FROM entries WHERE deleted_at IS NOT NULL AND deleted_at < ?')
+          .run(cutoff).changes,
+        // Idempotency records are durable: DM-11/API-4 define no expiry after which a
+        // caller key may silently execute again.
+        mutations: 0,
+        devices: this.db
+          .prepare('DELETE FROM device_tokens WHERE expires_at < ? OR revoked_at < ?')
+          .run(now, cutoff).changes,
+      };
+    });
     return transaction();
   }
 

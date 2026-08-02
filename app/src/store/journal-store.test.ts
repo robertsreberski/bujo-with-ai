@@ -120,6 +120,143 @@ afterEach(() => {
 });
 
 describe('journal store reconciliation', () => {
+  it('undoes an offline delete exactly without sending a restore request', async () => {
+    const original = entry(90, { text: 'Undo this offline delete' });
+    const restore = vi.spyOn(journalApi, 'restoreEntry');
+    useJournalStore.setState({
+      entriesById: { [original.id]: original },
+      entryIdsByDate: { [original.date]: [original.id] },
+      entryIdsByCollection: {},
+      collectionsById: {},
+      outbox: [],
+      outboxCount: 0,
+      deadLetters: [],
+      recentlyDeleted: [],
+      networkOnline: false,
+      online: false,
+      connectionStatus: 'offline',
+    });
+
+    await journalActions.deleteEntry(original.id);
+    expect(useJournalStore.getState().entriesById[original.id]?.deletedAt).not.toBeNull();
+    expect(useJournalStore.getState().recentlyDeleted).toHaveLength(1);
+
+    const result = await journalActions.restoreEntry(original.id);
+    expect(result).toEqual({
+      entry: original,
+      outcome: 'cancelled_offline_delete',
+      originalCollectionId: null,
+    });
+    expect(useJournalStore.getState().entriesById[original.id]).toEqual(original);
+    expect(useJournalStore.getState().outbox).toHaveLength(0);
+    expect(useJournalStore.getState().recentlyDeleted).toHaveLength(0);
+    expect(restore).not.toHaveBeenCalled();
+  });
+
+  it('loads canonical recovery rows and explains a server-side daily-log fallback', async () => {
+    const tombstone = entry(91, {
+      collection: 'missing-project',
+      revision: 2,
+      deletedAt: '2026-07-31T10:00:00.000Z',
+    });
+    const recovered = { ...tombstone, collection: null, revision: 3, deletedAt: null };
+    vi.spyOn(journalApi, 'listRecentlyDeleted').mockResolvedValue({
+      items: [
+        {
+          entry: tombstone,
+          expiresAt: '2026-08-30T10:00:00.000Z',
+          destination: {
+            collectionId: 'missing-project',
+            collectionName: null,
+            status: 'missing',
+          },
+        },
+      ],
+    });
+    const restore = vi.spyOn(journalApi, 'restoreEntry').mockResolvedValue({
+      entry: recovered,
+      destination: {
+        outcome: 'daily_fallback',
+        originalCollectionId: 'missing-project',
+      },
+    });
+    useJournalStore.setState({
+      entriesById: { [tombstone.id]: tombstone },
+      entryIdsByDate: {},
+      entryIdsByCollection: {},
+      collectionsById: {},
+      outbox: [],
+      outboxCount: 0,
+      recentlyDeleted: [],
+      networkOnline: true,
+      online: true,
+      connectionStatus: 'connected',
+    });
+
+    await journalActions.loadRecovery();
+    expect(useJournalStore.getState().recentlyDeleted[0]?.destination.status).toBe('missing');
+    const result = await journalActions.restoreEntry(tombstone.id);
+
+    expect(restore).toHaveBeenCalledWith(tombstone.id, tombstone.revision);
+    expect(result).toMatchObject({
+      entry: { collection: null, deletedAt: null },
+      outcome: 'daily_fallback',
+      originalCollectionId: 'missing-project',
+    });
+    expect(useJournalStore.getState().entriesById[tombstone.id]).toEqual(recovered);
+    expect(useJournalStore.getState().recentlyDeleted).toHaveLength(0);
+  });
+
+  it('follows an in-flight online delete with a canonical restore', async () => {
+    const original = entry(92, { text: 'Undo while the delete request is in flight' });
+    const tombstone = {
+      ...original,
+      updatedAt: '2026-07-31T10:01:00.000Z',
+      deletedAt: '2026-07-31T10:01:00.000Z',
+      revision: 2,
+    };
+    const recovered = {
+      ...tombstone,
+      updatedAt: '2026-07-31T10:02:00.000Z',
+      deletedAt: null,
+      revision: 3,
+    };
+    let resolveDelete!: (value: { entry: Entry }) => void;
+    const remove = vi.spyOn(journalApi, 'deleteEntry').mockReturnValue(
+      new Promise((resolve) => {
+        resolveDelete = resolve;
+      }),
+    );
+    const restore = vi.spyOn(journalApi, 'restoreEntry').mockResolvedValue({
+      entry: recovered,
+      destination: { outcome: 'original', originalCollectionId: null },
+    });
+    useJournalStore.setState({
+      entriesById: { [original.id]: original },
+      entryIdsByDate: { [original.date]: [original.id] },
+      entryIdsByCollection: {},
+      collectionsById: {},
+      outbox: [],
+      outboxCount: 0,
+      deadLetters: [],
+      recentlyDeleted: [],
+      networkOnline: true,
+      online: true,
+      connectionStatus: 'connected',
+    });
+
+    await journalActions.deleteEntry(original.id);
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
+    const undo = journalActions.restoreEntry(original.id);
+    resolveDelete({ entry: tombstone });
+    const result = await undo;
+
+    expect(restore).toHaveBeenCalledWith(original.id, tombstone.revision);
+    expect(result.entry).toEqual(recovered);
+    expect(useJournalStore.getState().entriesById[original.id]).toEqual(recovered);
+    expect(useJournalStore.getState().outbox).toHaveLength(0);
+  });
+
   it('preserves the daily migration count when scheduling a monthly copy', async () => {
     const original = entry(1, { migrations: 3 });
     useJournalStore.setState({

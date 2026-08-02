@@ -95,6 +95,7 @@ export interface ApiJournalOperations extends DeviceAuthenticator {
     expectedRevision: number | undefined,
     actor: OwnerActor,
   ): unknown | Promise<unknown>;
+  listRecentlyDeleted?(actor: OwnerActor): unknown | Promise<unknown>;
   listCollections(actor: OwnerActor): unknown | Promise<unknown>;
   listTags(actor: OwnerActor): unknown | Promise<unknown>;
   createCollection(
@@ -345,6 +346,14 @@ export function createApiRouter(options: ApiRouterOptions): Router {
         expectedRevision ?? expectedRevisionFromIfMatch(request),
         actor(request),
       );
+    }),
+  );
+  router.get(
+    '/recovery/deleted',
+    asyncRoute((request) => {
+      if (!options.operations.listRecentlyDeleted)
+        throw new HttpError(404, 'not_found', 'Deleted-entry recovery is unavailable.');
+      return options.operations.listRecentlyDeleted(actor(request));
     }),
   );
   router.post(

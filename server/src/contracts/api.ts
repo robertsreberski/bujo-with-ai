@@ -181,6 +181,34 @@ export const EntryListResponseSchema = z.strictObject({
 
 export const EntryResponseSchema = z.strictObject({ entry: EntrySchema });
 
+export const DeletedEntryDestinationSchema = z.strictObject({
+  collectionId: CollectionIdSchema.nullable(),
+  collectionName: z.string().trim().min(1).max(120).nullable(),
+  status: z.enum(['daily', 'active', 'archived', 'missing']),
+});
+
+export const RecentlyDeletedEntrySchema = z.strictObject({
+  entry: EntrySchema.refine((entry) => entry.deletedAt !== null, {
+    message: 'Recently deleted entries require deletedAt.',
+  }),
+  expiresAt: IsoTimestampSchema,
+  destination: DeletedEntryDestinationSchema,
+});
+
+export const RecentlyDeletedListResponseSchema = z.strictObject({
+  items: z.array(RecentlyDeletedEntrySchema),
+});
+
+export const RestoreEntryResponseSchema = z.strictObject({
+  entry: EntrySchema.refine((entry) => entry.deletedAt === null, {
+    message: 'Restored entries cannot remain deleted.',
+  }),
+  destination: z.strictObject({
+    outcome: z.enum(['original', 'daily_fallback']),
+    originalCollectionId: CollectionIdSchema.nullable(),
+  }),
+});
+
 export const MigratedEntryResponseSchema = z.strictObject({
   original: EntrySchema,
   copy: EntrySchema,
@@ -447,6 +475,9 @@ export type ActivityQuery = z.infer<typeof ActivityQuerySchema>;
 export type SettingsPatch = z.infer<typeof SettingsPatchSchema>;
 export type BootstrapResponse = z.infer<typeof BootstrapResponseSchema>;
 export type EntryListResponse = z.infer<typeof EntryListResponseSchema>;
+export type RecentlyDeletedEntry = z.infer<typeof RecentlyDeletedEntrySchema>;
+export type RecentlyDeletedListResponse = z.infer<typeof RecentlyDeletedListResponseSchema>;
+export type RestoreEntryResponse = z.infer<typeof RestoreEntryResponseSchema>;
 export type CollectionListResponse = z.infer<typeof CollectionListResponseSchema>;
 export type TagUsage = z.infer<typeof TagUsageSchema>;
 export type TagListResponse = z.infer<typeof TagListResponseSchema>;

@@ -16,6 +16,7 @@ import type {
   Settings,
   Summary,
   TagUsage,
+  RecentlyDeletedEntry,
 } from '../api/types';
 import {
   calendarDateInTimeZone,
@@ -87,7 +88,14 @@ export type {
   Settings,
   Summary,
   TagUsage,
+  RecentlyDeletedEntry,
 } from '../api/types';
+
+export interface RestoreResult {
+  entry: Entry;
+  outcome: 'original' | 'daily_fallback' | 'cancelled_offline_delete';
+  originalCollectionId: string | null;
+}
 
 const EPOCH = '1970-01-01T00:00:00.000Z';
 const PAIRING_EXPIRED_MESSAGE = 'Pairing expired. Reload Journal to reconnect.';
@@ -165,6 +173,8 @@ export interface JournalState extends MirrorData {
   outbox: OutboxItem[];
   outboxCount: number;
   deadLetters: DeadLetter[];
+  recentlyDeleted: RecentlyDeletedEntry[];
+  recoveryLoading: boolean;
   notices: JournalNotice[];
   updateReady: boolean;
   offlineReady: boolean;
@@ -192,6 +202,8 @@ export interface JournalState extends MirrorData {
   createEntry(input: CreateEntryInput): Promise<Entry>;
   updateEntry(id: string, patch: EntryPatch): Promise<Entry>;
   deleteEntry(id: string): Promise<void>;
+  restoreEntry(id: string): Promise<RestoreResult>;
+  loadRecovery(): Promise<void>;
   toggleEntry(id: string): Promise<Entry>;
   migrateEntry(id: string, target?: string): Promise<Entry>;
   scheduleEntry(id: string, month?: string): Promise<Entry>;
@@ -240,6 +252,7 @@ let reconnectRetryTimer: number | undefined;
 let reconnectRetryDelay = 1_000;
 let cancelReconnectDeadline: (() => void) | null = null;
 let flushing: Promise<void> | null = null;
+let activeOutboxMutationId: string | null = null;
 let retryTimer: number | undefined;
 let retryDelay = 1_000;
 let sse: JournalSseClient | null = null;
@@ -564,11 +577,23 @@ export async function applyChangeBatch(
   const agentTokens = applyAgentTokenChanges(before.agentTokens, batch);
 
   mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, remaining));
+  const recentlyDeleted = new Map(
+    before.recentlyDeleted.map((item) => [item.entry.id, item] as const),
+  );
+  for (const change of batch.changes) {
+    if (!change.kind.startsWith('entry.')) continue;
+    const entry = change.payload as Entry;
+    if (entry.deletedAt === null) recentlyDeleted.delete(entry.id);
+    else recentlyDeleted.set(entry.id, recoveryRecord(entry, mirror.collectionsById));
+  }
   useJournalStore.setState({
     ...mirror,
     outbox: remaining,
     outboxCount: remaining.length,
     agentTokens,
+    recentlyDeleted: [...recentlyDeleted.values()].filter(
+      (item) => Date.parse(item.expiresAt) > Date.now(),
+    ),
   });
   await persistNow();
   if (expectedGeneration !== lifecycleGeneration || pairingExpired) return;
@@ -1686,6 +1711,7 @@ async function flushOutbox(): Promise<void> {
     ) {
       const item = useJournalStore.getState().outbox[0];
       if (!item) break;
+      activeOutboxMutationId = item.mutationId;
       try {
         const responseGeneration = sseGeneration;
         const rows = await sendOutboxItem(item);
@@ -1737,6 +1763,8 @@ async function flushOutbox(): Promise<void> {
           continue;
         }
         break;
+      } finally {
+        if (activeOutboxMutationId === item.mutationId) activeOutboxMutationId = null;
       }
     }
   })()
@@ -1991,6 +2019,8 @@ async function initializeJournal(): Promise<void> {
         outbox: saved.outbox,
         outboxCount: saved.outbox.length,
         deadLetters: saved.deadLetters,
+        recentlyDeleted: localRecoveryRecords(mirror.entriesById, mirror.collectionsById),
+        recoveryLoading: false,
         agentTokens: saved.agentTokens ?? [],
         lastReviewSeenAt: saved.lastReviewSeenAt ?? null,
         monthLogView: hydrateLogView(saved.monthLogView),
@@ -2015,6 +2045,8 @@ async function initializeJournal(): Promise<void> {
         outbox: [],
         outboxCount: 0,
         deadLetters: [],
+        recentlyDeleted: [],
+        recoveryLoading: false,
         agentTokens: [],
         lastReviewSeenAt: null,
         monthLogView: null,
@@ -2190,12 +2222,14 @@ function shutdownJournal(): void {
   authenticatedConnecting = null;
   pendingReconnect = null;
   flushing = null;
+  activeOutboxMutationId = null;
   authenticationProbe = null;
   useJournalStore.setState({
     syncing: false,
     activityLoading: false,
     tokensLoading: false,
     authenticationRequired: false,
+    recoveryLoading: false,
   });
 }
 
@@ -2204,6 +2238,47 @@ const TAG_SUGGESTION_TTL_MS = 5 * 60 * 1000;
 
 const sortTagUsage = (usage: TagUsage[]): TagUsage[] =>
   usage.sort((left, right) => right.uses - left.uses || left.tag.localeCompare(right.tag));
+
+const RECOVERY_WINDOW_MS = 30 * 86_400_000;
+
+function recoveryRecord(
+  entry: Entry,
+  collectionsById: Record<string, Collection>,
+): RecentlyDeletedEntry {
+  if (entry.deletedAt === null) throw new Error('Only deleted entries belong in Recovery.');
+  const collection = entry.collection === null ? undefined : collectionsById[entry.collection];
+  return {
+    entry,
+    expiresAt: new Date(Date.parse(entry.deletedAt) + RECOVERY_WINDOW_MS).toISOString(),
+    destination:
+      entry.collection === null
+        ? { collectionId: null, collectionName: null, status: 'daily' }
+        : collection === undefined
+          ? { collectionId: entry.collection, collectionName: null, status: 'missing' }
+          : {
+              collectionId: entry.collection,
+              collectionName: collection.name,
+              status: collection.archivedAt === null ? 'active' : 'archived',
+            },
+  };
+}
+
+function localRecoveryRecords(
+  entriesById: Record<string, Entry>,
+  collectionsById: Record<string, Collection>,
+): RecentlyDeletedEntry[] {
+  return Object.values(entriesById)
+    .filter(
+      (entry): entry is Entry & { deletedAt: string } =>
+        entry.deletedAt !== null && Date.parse(entry.deletedAt) + RECOVERY_WINDOW_MS > Date.now(),
+    )
+    .map((entry) => recoveryRecord(entry, collectionsById))
+    .sort(
+      (left, right) =>
+        (right.entry.deletedAt ?? '').localeCompare(left.entry.deletedAt ?? '') ||
+        right.entry.id.localeCompare(left.entry.id),
+    );
+}
 
 /**
  * Counts the tag vocabulary already in the mirror. `lastUsedAt` approximates the
@@ -2273,6 +2348,8 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
     outbox: [],
     outboxCount: 0,
     deadLetters: [],
+    recentlyDeleted: [],
+    recoveryLoading: false,
     notices: [],
     updateReady: false,
     offlineReady: false,
@@ -2377,8 +2454,140 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
         kind: 'entry.delete',
         id,
         expectedRevision: entry.revision,
+        original: entry,
         at: new Date().toISOString(),
       });
+      const deleted = useJournalStore.getState().entriesById[id];
+      if (deleted?.deletedAt) {
+        set((state) => ({
+          recentlyDeleted: [
+            recoveryRecord(deleted, state.collectionsById),
+            ...state.recentlyDeleted.filter((item) => item.entry.id !== id),
+          ],
+        }));
+      }
+    },
+    restoreEntry: async (id) => {
+      const state = get();
+      const pending = state.outbox.find(
+        (item) => item.command.kind === 'entry.delete' && item.command.id === id,
+      );
+      if (pending?.command.kind === 'entry.delete') {
+        const pendingDelete = pending.command;
+        const inFlight = activeOutboxMutationId === pending.mutationId ? flushing : null;
+        const deleted =
+          state.entriesById[id] ??
+          state.recentlyDeleted.find((item) => item.entry.id === id)?.entry;
+        const original =
+          pendingDelete.original ??
+          (deleted
+            ? {
+                ...deleted,
+                deletedAt: null,
+                revision: pendingDelete.expectedRevision ?? Math.max(1, deleted.revision - 1),
+              }
+            : undefined);
+        if (!original) throw new Error('Deleted entry is no longer available locally.');
+        set((current) => {
+          const outbox = current.outbox.filter((item) => item.mutationId !== pending.mutationId);
+          const mirror = recomputeActivityRevertEligibility(
+            applyPendingCommands(
+              upsertServerEntry(removeServerEntry(mirrorFromState(current), id), original),
+              outbox,
+            ),
+          );
+          return {
+            ...mirror,
+            outbox,
+            outboxCount: outbox.length,
+            recentlyDeleted: current.recentlyDeleted.filter((item) => item.entry.id !== id),
+          };
+        });
+        await persistNow();
+        if (!inFlight) {
+          return {
+            entry: original,
+            outcome: 'cancelled_offline_delete',
+            originalCollectionId: original.collection,
+          };
+        }
+        await inFlight;
+        if (!get().networkOnline || pairingExpired) {
+          throw new ApiError(
+            0,
+            'network_error',
+            'The delete may have reached the server. Reconnect and restore it from Recovery.',
+          );
+        }
+        try {
+          const response = await authenticated(() =>
+            journalApi.restoreEntry(id, (pendingDelete.expectedRevision ?? original.revision) + 1),
+          );
+          const mirror = upsertServerEntry(mirrorFromState(get()), response.entry);
+          set((current) => ({
+            ...mirror,
+            recentlyDeleted: current.recentlyDeleted.filter((item) => item.entry.id !== id),
+          }));
+          await persistNow();
+          return {
+            entry: response.entry,
+            outcome: response.destination.outcome,
+            originalCollectionId: response.destination.originalCollectionId,
+          };
+        } catch (error) {
+          // If the cancelled item had not yet reached the server, there is no tombstone to restore.
+          if (error instanceof ApiError && error.status === 404) {
+            return {
+              entry: original,
+              outcome: 'cancelled_offline_delete',
+              originalCollectionId: original.collection,
+            };
+          }
+          throw error;
+        }
+      }
+
+      requireOnline();
+      const deleted =
+        state.recentlyDeleted.find((item) => item.entry.id === id)?.entry ?? state.entriesById[id];
+      if (!deleted?.deletedAt) throw new Error('Deleted entry is no longer recoverable.');
+      const response = await authenticated(() => journalApi.restoreEntry(id, deleted.revision));
+      const mirror = upsertServerEntry(mirrorFromState(get()), response.entry);
+      set((current) => ({
+        ...mirror,
+        recentlyDeleted: current.recentlyDeleted.filter((item) => item.entry.id !== id),
+      }));
+      await persistNow();
+      return {
+        entry: response.entry,
+        outcome: response.destination.outcome,
+        originalCollectionId: response.destination.originalCollectionId,
+      };
+    },
+    loadRecovery: async () => {
+      const state = get();
+      const local = localRecoveryRecords(state.entriesById, state.collectionsById);
+      set({ recentlyDeleted: local });
+      if (!state.online) return;
+      const lifecycle = lifecycleGeneration;
+      set({ recoveryLoading: true });
+      try {
+        const response = await authenticated(() => journalApi.listRecentlyDeleted());
+        if (lifecycle !== lifecycleGeneration) return;
+        set((current) => {
+          // The read may have raced a delete that is still queued or in flight. Keep
+          // that local tombstone visible until SSE/HTTP either confirms or rejects it.
+          const items = new Map(response.items.map((item) => [item.entry.id, item] as const));
+          for (const item of local) {
+            if (current.entriesById[item.entry.id]?.deletedAt) {
+              items.set(item.entry.id, item);
+            }
+          }
+          return { recentlyDeleted: [...items.values()] };
+        });
+      } finally {
+        if (lifecycle === lifecycleGeneration) set({ recoveryLoading: false });
+      }
     },
     toggleEntry: async (id) => {
       const entry = requireEntry(id);
@@ -2796,6 +3005,8 @@ export const journalActions = {
   updateEntry: (id: string, patch: EntryPatch): Promise<Entry> =>
     useJournalStore.getState().updateEntry(id, patch),
   deleteEntry: (id: string): Promise<void> => useJournalStore.getState().deleteEntry(id),
+  restoreEntry: (id: string): Promise<RestoreResult> => useJournalStore.getState().restoreEntry(id),
+  loadRecovery: (): Promise<void> => useJournalStore.getState().loadRecovery(),
   toggleEntry: (id: string): Promise<Entry> => useJournalStore.getState().toggleEntry(id),
   migrateEntry: (id: string, target?: string): Promise<Entry> =>
     useJournalStore.getState().migrateEntry(id, target),

@@ -5,7 +5,7 @@ import { MonthView } from './views/MonthView';
 import { ReviewView } from './views/ReviewView';
 import { TodayView } from './views/TodayView';
 import { Composer } from './components/Composer';
-import { DeadLetterDialog } from './components/DeadLetterDialog';
+import { RecoveryDialog } from './components/DeadLetterDialog';
 import { EntryDetailHost } from './components/EntryDetailHost';
 import { MigrationDialog } from './components/MigrationDialog';
 import { SearchDialog } from './components/SearchDialog';
@@ -42,7 +42,7 @@ import {
   useJournalStore,
 } from './store/journal-store';
 
-type Overlay = 'search' | 'settings' | 'deadLetters' | null;
+type Overlay = 'search' | 'settings' | 'recovery' | null;
 
 interface ToastState {
   id: number;
@@ -141,6 +141,28 @@ export default function App() {
       void perform(operation, success).catch(() => undefined);
     },
     [perform],
+  );
+
+  const openRecovery = useCallback(() => {
+    setOverlay('recovery');
+    void journalActions
+      .loadRecovery()
+      .catch((error: unknown) => say(messageFromError(error), 'error'));
+  }, [say]);
+
+  const restoreEntry = useCallback(
+    (id: string) => {
+      void perform(() => journalActions.restoreEntry(id))
+        .then((result) => {
+          say(
+            result.outcome === 'daily_fallback'
+              ? `Entry restored to ${result.entry.date}; its original collection no longer exists`
+              : 'Entry restored',
+          );
+        })
+        .catch(() => undefined);
+    },
+    [perform, say],
   );
 
   useEffect(() => {
@@ -568,7 +590,7 @@ export default function App() {
         onRetryConnection={() => void journalActions.reconnect()}
         onRetryLocalSave={() => run(() => journalActions.retryLocalSave(), 'Local journal saved')}
         onReload={() => window.location.reload()}
-        onOpenRecovery={() => setOverlay('deadLetters')}
+        onOpenRecovery={openRecovery}
         composer={
           <Composer
             draft={store.draft}
@@ -602,9 +624,16 @@ export default function App() {
           contextMonth={contextMonth}
           onClose={() => setDetailId(null)}
           onUpdate={updateEntry}
-          onDelete={(entry: JournalEntry) =>
-            run(() => journalActions.deleteEntry(entry.id), 'Entry deleted')
-          }
+          onDelete={(entry: JournalEntry) => {
+            void perform(() => journalActions.deleteEntry(entry.id))
+              .then(() =>
+                say('Entry deleted', 'success', {
+                  label: 'Undo',
+                  onAction: () => restoreEntry(entry.id),
+                }),
+              )
+              .catch(() => undefined);
+          }}
           onMigrate={migrateEntry}
           onSchedule={scheduleEntry}
         />
@@ -642,7 +671,10 @@ export default function App() {
           tokensLoading={store.tokensLoading}
           preferences={preferences}
           updateReady={store.updateReady}
+          recentlyDeletedCount={store.recentlyDeleted.length}
+          failedChangeCount={store.deadLetters.length}
           onClose={() => setOverlay(null)}
+          onOpenRecovery={openRecovery}
           onUpdatePreferences={(patch) =>
             run(() => journalActions.updateSettings(patch), 'Preferences updated')
           }
@@ -652,10 +684,20 @@ export default function App() {
           onActivateUpdate={journalActions.activateUpdate}
         />
       ) : null}
-      {overlay === 'deadLetters' ? (
-        <DeadLetterDialog
+      {overlay === 'recovery' ? (
+        <RecoveryDialog
           deadLetters={store.deadLetters}
+          recentlyDeleted={store.recentlyDeleted}
+          entriesById={store.entriesById}
+          recoveryLoading={store.recoveryLoading}
+          online={store.online}
           onClose={() => setOverlay(null)}
+          onRefresh={() => run(() => journalActions.loadRecovery())}
+          onRestore={restoreEntry}
+          onOpenEntry={(id) => {
+            setOverlay(null);
+            setDetailId(id);
+          }}
           onRetry={(id) => run(() => journalActions.retryDeadLetter(id), 'Retry queued')}
           onDiscard={(id) =>
             run(() => journalActions.discardDeadLetter(id), 'Failed change discarded')

@@ -90,6 +90,8 @@ export type QueueableCommand =
       kind: 'entry.delete';
       id: string;
       expectedRevision?: number;
+      /** Canonical pre-delete row retained so an offline delete can be undone exactly. */
+      original?: Entry;
     })
   | (CommandBase & {
       kind: 'entry.migrate';

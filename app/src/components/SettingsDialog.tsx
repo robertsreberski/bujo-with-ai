@@ -33,7 +33,10 @@ interface SettingsDialogProps {
   tokensLoading: boolean;
   preferences: DisplayPreferences;
   updateReady: boolean;
+  recentlyDeletedCount: number;
+  failedChangeCount: number;
   onClose: () => void;
+  onOpenRecovery: () => void;
   onUpdatePreferences: (patch: Partial<DisplayPreferences>) => void;
   onRefreshTokens: () => void;
   onCreateToken: (label: string) => Promise<{ token: AgentTokenView; secret: string }>;
@@ -59,7 +62,10 @@ export function SettingsDialog({
   tokensLoading,
   preferences,
   updateReady,
+  recentlyDeletedCount,
+  failedChangeCount,
   onClose,
+  onOpenRecovery,
   onUpdatePreferences,
   onRefreshTokens,
   onCreateToken,
@@ -72,6 +78,7 @@ export function SettingsDialog({
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [revoking, setRevoking] = useState<AgentTokenView | null>(null);
   const labelRef = useRef<HTMLInputElement>(null);
+  const secretRef = useRef<HTMLInputElement>(null);
   const typeBadgesLabelId = useId();
   const highlightLabelId = useId();
   const statusLabel =
@@ -85,6 +92,12 @@ export function SettingsDialog({
     onRefreshTokens();
   }, [onRefreshTokens]);
 
+  useEffect(() => {
+    if (copyState !== 'failed') return;
+    secretRef.current?.focus();
+    secretRef.current?.select();
+  }, [copyState]);
+
   const create = async (event: FormEvent) => {
     event.preventDefault();
     const normalized = label.trim();
@@ -93,6 +106,7 @@ export function SettingsDialog({
     try {
       const result = await onCreateToken(normalized);
       setSecret(result.secret);
+      setCopyState('idle');
       setLabel('');
     } catch {
       // The app-level action reports the server error without leaving an unhandled rejection.
@@ -103,6 +117,11 @@ export function SettingsDialog({
 
   const copySecret = async () => {
     if (!secret) return;
+    if (copyState === 'failed') {
+      secretRef.current?.focus();
+      secretRef.current?.select();
+      return;
+    }
     try {
       await navigator.clipboard.writeText(secret);
       setCopyState('copied');
@@ -196,9 +215,13 @@ export function SettingsDialog({
             </header>
             <p className={AI_PANEL_COPY}>This secret is shown once and cannot be recovered.</p>
             <div className="flex items-center gap-2 pt-2">
-              <code className="min-w-0 flex-1 overflow-hidden rounded-sm bg-[rgb(0_0_0/22%)] px-2 py-[7px] text-2xs text-fg text-ellipsis whitespace-nowrap">
-                {secret}
-              </code>
+              <input
+                ref={secretRef}
+                className="min-w-0 flex-1 rounded-sm border-0 bg-[rgb(0_0_0/22%)] px-2 py-[7px] font-mono text-2xs text-fg"
+                aria-label="New agent token secret"
+                readOnly
+                value={secret}
+              />
               <Button variant="secondary" size="sm" onClick={copySecret}>
                 {copyState === 'copied'
                   ? 'Copied'
@@ -323,6 +346,31 @@ export function SettingsDialog({
               onCheckedChange={(checked) => onUpdatePreferences({ highlightAiEntries: checked })}
             />
           </label>
+        </div>
+      </section>
+
+      <section className={SECTION} aria-labelledby="recovery-title">
+        <header className={SECTION_HEADING}>
+          <div>
+            <h3 className="text-base font-semibold" id="recovery-title">
+              Recovery
+            </h3>
+            <p className="pt-0.5 text-xs text-fg-mute">
+              Restore deleted entries and resolve changes that need attention.
+            </p>
+          </div>
+        </header>
+        <div className={STATUS_CARD}>
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <strong className={CARD_STRONG}>Journal recovery</strong>
+            <small className={CARD_SMALL}>
+              {recentlyDeletedCount} deleted · {failedChangeCount} failed{' '}
+              {failedChangeCount === 1 ? 'change' : 'changes'}
+            </small>
+          </div>
+          <Button variant="secondary" size="sm" onClick={onOpenRecovery}>
+            Open recovery
+          </Button>
         </div>
       </section>
 

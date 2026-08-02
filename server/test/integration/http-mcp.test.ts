@@ -183,7 +183,21 @@ class MockOperations implements ApiJournalOperations {
     return { original: entry, copy: entry, collection: { id: 'month:2026-07' } };
   }
   restoreEntry() {
-    return { entry };
+    return {
+      entry,
+      destination: { outcome: 'original', originalCollectionId: null },
+    };
+  }
+  listRecentlyDeleted() {
+    return {
+      items: [
+        {
+          entry: { ...entry, deletedAt: '2026-07-31T12:00:00.000Z', revision: 2 },
+          expiresAt: '2026-08-30T12:00:00.000Z',
+          destination: { collectionId: null, collectionName: null, status: 'daily' },
+        },
+      ],
+    };
   }
   listCollections() {
     return { collections: [] };
@@ -772,6 +786,37 @@ describe('one-origin HTTP application', () => {
     expect(response.body).toEqual({
       items: [{ tag: 'work', uses: 3, lastUsedAt: '2026-07-31T09:00:00.000Z' }],
     });
+  });
+
+  it('lists and restores recently deleted entries for a paired device', async () => {
+    const { application } = await build();
+    openApplications.push(application);
+    await request(application.app)
+      .get('/api/recovery/deleted')
+      .set('Host', 'localhost:5178')
+      .expect(401);
+    const cookie = await pair(application);
+
+    const deleted = await request(application.app)
+      .get('/api/recovery/deleted')
+      .set('Host', 'localhost:5178')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(deleted.body.items[0]).toMatchObject({
+      entry: { id: ENTRY_ID, deletedAt: '2026-07-31T12:00:00.000Z' },
+      destination: { status: 'daily' },
+    });
+
+    await request(application.app)
+      .post(`/api/entries/${ENTRY_ID}/restore`)
+      .set('Host', 'localhost:5178')
+      .set('Origin', 'http://localhost:5178')
+      .set('Cookie', cookie)
+      .send({ expectedRevision: 2 })
+      .expect(200, {
+        entry,
+        destination: { outcome: 'original', originalCollectionId: null },
+      });
   });
 
   it('surfaces a capture into an unknown collection as a 404', async () => {
