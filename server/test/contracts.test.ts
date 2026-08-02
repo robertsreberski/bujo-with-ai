@@ -433,6 +433,77 @@ describe('sync contracts', () => {
     expect(JournalExportV2Schema.safeParse(v2Export([mismatched])).success).toBe(false);
   });
 
+  it('requires the selected Reflection id and representation as an exact pair for every status', () => {
+    const aggregate = reflection();
+    const statuses = [
+      {
+        status: 'notRequested' as const,
+        requestId: null,
+        requestedAt: null,
+        claimedAt: null,
+        claimedBy: null,
+        claimedSourceEntries: null,
+        failure: null,
+      },
+      {
+        status: 'queued' as const,
+        requestId: ACTIVITY_ID,
+        requestedAt: '2026-08-03T09:10:00.000Z',
+        claimedAt: null,
+        claimedBy: null,
+        claimedSourceEntries: null,
+        failure: null,
+      },
+      {
+        status: 'running' as const,
+        requestId: ACTIVITY_ID,
+        requestedAt: '2026-08-03T09:10:00.000Z',
+        claimedAt: '2026-08-03T09:15:00.000Z',
+        claimedBy: { tokenId: TOKEN_ID, label: 'Reflection worker' },
+        claimedSourceEntries: [],
+        failure: null,
+      },
+      {
+        status: 'current' as const,
+        requestId: null,
+        requestedAt: null,
+        claimedAt: null,
+        claimedBy: null,
+        claimedSourceEntries: null,
+        failure: null,
+      },
+      {
+        status: 'stale' as const,
+        requestId: null,
+        requestedAt: null,
+        claimedAt: null,
+        claimedBy: null,
+        claimedSourceEntries: null,
+        failure: null,
+      },
+      {
+        status: 'failed' as const,
+        requestId: ACTIVITY_ID,
+        requestedAt: '2026-08-03T09:10:00.000Z',
+        claimedAt: null,
+        claimedBy: null,
+        claimedSourceEntries: null,
+        failure: 'Worker failed.',
+      },
+    ];
+    for (const state of statuses) {
+      const candidate = { ...aggregate, ...state };
+      expect(JournalExportV2Schema.safeParse(v2Export([candidate])).success).toBe(true);
+      expect(
+        JournalExportV2Schema.safeParse(v2Export([{ ...candidate, currentVersionId: null }]))
+          .success,
+      ).toBe(false);
+      expect(
+        JournalExportV2Schema.safeParse(v2Export([{ ...candidate, currentVersion: null }])).success,
+      ).toBe(false);
+    }
+  });
+
   it('rejects malformed Reflection ranges, timestamps, and duplicate source bindings', () => {
     const aggregate = reflection();
     const wrongRangeVersion = {
