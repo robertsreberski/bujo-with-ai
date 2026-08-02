@@ -1,13 +1,47 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ComponentProps } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SettingsDialog } from './SettingsDialog';
 
 afterEach(cleanup);
 
+const renderSettings = (overrides: Partial<ComponentProps<typeof SettingsDialog>> = {}) =>
+  render(
+    <SettingsDialog
+      assistantStatus="ready"
+      mcpEndpoint="https://journal.example/mcp"
+      activeSessions={0}
+      tokens={[]}
+      tokensLoading={false}
+      preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
+      updateReady={false}
+      recentlyDeletedCount={0}
+      failedChangeCount={0}
+      onClose={vi.fn()}
+      onOpenRecovery={vi.fn()}
+      onUpdatePreferences={vi.fn()}
+      onRefreshTokens={vi.fn()}
+      onCreateToken={vi.fn()}
+      onRevokeToken={vi.fn()}
+      onActivateUpdate={vi.fn()}
+      {...overrides}
+    />,
+  );
+
 describe('SettingsDialog', () => {
+  it('orders the compact settings journey from display through advanced controls', () => {
+    renderSettings();
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
+    expect(
+      screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent),
+    ).toEqual(['Display', 'Assistant access', 'Recovery', 'Advanced']);
+    expect(screen.getByText('Protocol permissions and privacy')).toBeInTheDocument();
+    expect(screen.getByLabelText('MCP tool permissions')).not.toBeVisible();
+  });
+
   it('settles a failed token request after app-level feedback handles the error', async () => {
     const user = userEvent.setup();
     const onCreateToken = vi.fn().mockRejectedValue(new Error('Offline'));
@@ -20,10 +54,7 @@ describe('SettingsDialog', () => {
         tokensLoading={false}
         preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
         updateReady={false}
-        recentlyDeletedCount={0}
-        failedChangeCount={0}
         onClose={vi.fn()}
-        onOpenRecovery={vi.fn()}
         onUpdatePreferences={vi.fn()}
         onRefreshTokens={vi.fn()}
         onCreateToken={onCreateToken}
@@ -50,10 +81,7 @@ describe('SettingsDialog', () => {
         tokensLoading={false}
         preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
         updateReady
-        recentlyDeletedCount={0}
-        failedChangeCount={0}
         onClose={vi.fn()}
-        onOpenRecovery={vi.fn()}
         onUpdatePreferences={vi.fn()}
         onRefreshTokens={vi.fn()}
         onCreateToken={vi.fn()}
@@ -65,6 +93,59 @@ describe('SettingsDialog', () => {
     expect(screen.getByText('Update ready')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Reload' }));
     expect(onActivateUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('reveals and selects the full one-time token when clipboard access fails', async () => {
+    const user = userEvent.setup();
+    const secret = 'journal_secret_01K1H000000000000000000099';
+    const previousClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error('Denied')) },
+    });
+    try {
+      renderSettings({
+        onCreateToken: vi.fn().mockResolvedValue({
+          secret,
+          token: {
+            id: '01K1H000000000000000000099',
+            label: 'Timeline helper',
+            scopes: ['journal:full'],
+            createdAt: '2026-08-02T10:00:00.000Z',
+            lastUsedAt: null,
+            revokedAt: null,
+          },
+        }),
+      });
+
+      await user.type(screen.getByLabelText('New agent token label'), 'Timeline helper');
+      await user.click(screen.getByRole('button', { name: 'Create token' }));
+      await user.click(await screen.findByRole('button', { name: 'Copy' }));
+
+      const fallback = await screen.findByLabelText('Agent token secret');
+      expect(fallback).toHaveValue(secret);
+      expect(fallback).toHaveFocus();
+      expect((fallback as HTMLInputElement).selectionStart).toBe(0);
+      expect((fallback as HTMLInputElement).selectionEnd).toBe(secret.length);
+      expect(screen.getByText(/complete token is selected/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Select token' }));
+      expect(fallback).toHaveFocus();
+      expect((fallback as HTMLInputElement).selectionEnd).toBe(secret.length);
+    } finally {
+      if (previousClipboard) Object.defineProperty(navigator, 'clipboard', previousClipboard);
+      else Reflect.deleteProperty(navigator, 'clipboard');
+    }
+  });
+
+  it('opens Recovery with truthful deleted and failed counts', async () => {
+    const user = userEvent.setup();
+    const onOpenRecovery = vi.fn();
+    renderSettings({ recentlyDeletedCount: 2, failedChangeCount: 1, onOpenRecovery });
+
+    expect(screen.getByText('2 deleted · 1 failed change')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Open recovery' }));
+    expect(onOpenRecovery).toHaveBeenCalledTimes(1);
   });
 
   it('exposes the display preferences as switches and reports each change', async () => {
@@ -79,10 +160,7 @@ describe('SettingsDialog', () => {
         tokensLoading={false}
         preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: false }}
         updateReady={false}
-        recentlyDeletedCount={0}
-        failedChangeCount={0}
         onClose={vi.fn()}
-        onOpenRecovery={vi.fn()}
         onUpdatePreferences={onUpdatePreferences}
         onRefreshTokens={vi.fn()}
         onCreateToken={vi.fn()}
@@ -104,73 +182,5 @@ describe('SettingsDialog', () => {
 
     await user.selectOptions(screen.getByRole('combobox'), 'compact');
     expect(onUpdatePreferences).toHaveBeenCalledWith({ density: 'compact' });
-  });
-
-  it('opens Recovery with truthful deleted and failed counts', async () => {
-    const user = userEvent.setup();
-    const onOpenRecovery = vi.fn();
-    render(
-      <SettingsDialog
-        assistantStatus="ready"
-        mcpEndpoint="https://journal.example/mcp"
-        activeSessions={0}
-        tokens={[]}
-        tokensLoading={false}
-        preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
-        updateReady={false}
-        recentlyDeletedCount={2}
-        failedChangeCount={1}
-        onClose={vi.fn()}
-        onOpenRecovery={onOpenRecovery}
-        onUpdatePreferences={vi.fn()}
-        onRefreshTokens={vi.fn()}
-        onCreateToken={vi.fn()}
-        onRevokeToken={vi.fn()}
-        onActivateUpdate={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByText('2 deleted · 1 failed change')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Open recovery' }));
-    expect(onOpenRecovery).toHaveBeenCalledTimes(1);
-  });
-
-  it('reveals and selects the complete one-time secret when clipboard access fails', async () => {
-    const secret = `jrn_${'s'.repeat(43)}`;
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText: vi.fn().mockRejectedValue(new Error('Denied')) },
-    });
-    render(
-      <SettingsDialog
-        assistantStatus="ready"
-        mcpEndpoint="https://journal.example/mcp"
-        activeSessions={0}
-        tokens={[]}
-        tokensLoading={false}
-        preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
-        updateReady={false}
-        recentlyDeletedCount={0}
-        failedChangeCount={0}
-        onClose={vi.fn()}
-        onOpenRecovery={vi.fn()}
-        onUpdatePreferences={vi.fn()}
-        onRefreshTokens={vi.fn()}
-        onCreateToken={vi.fn().mockResolvedValue({ token: {}, secret })}
-        onRevokeToken={vi.fn()}
-        onActivateUpdate={vi.fn()}
-      />,
-    );
-
-    const label = screen.getByLabelText('New agent token label');
-    fireEvent.change(label, { target: { value: 'Local worker' } });
-    fireEvent.submit(label.closest('form')!);
-    const field = await screen.findByRole('textbox', { name: 'New agent token secret' });
-    expect(field).toHaveValue(secret);
-    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
-    expect(await screen.findByRole('button', { name: 'Select manually' })).toBeInTheDocument();
-    expect(field).toHaveFocus();
-    expect((field as HTMLInputElement).selectionStart).toBe(0);
-    expect((field as HTMLInputElement).selectionEnd).toBe(secret.length);
   });
 });

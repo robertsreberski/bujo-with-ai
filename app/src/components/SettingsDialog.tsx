@@ -33,15 +33,15 @@ interface SettingsDialogProps {
   tokensLoading: boolean;
   preferences: DisplayPreferences;
   updateReady: boolean;
-  recentlyDeletedCount: number;
-  failedChangeCount: number;
+  recentlyDeletedCount?: number;
+  failedChangeCount?: number;
   onClose: () => void;
-  onOpenRecovery: () => void;
   onUpdatePreferences: (patch: Partial<DisplayPreferences>) => void;
   onRefreshTokens: () => void;
   onCreateToken: (label: string) => Promise<{ token: AgentTokenView; secret: string }>;
   onRevokeToken: (id: string) => void;
   onActivateUpdate: () => void;
+  onOpenRecovery?: (() => void) | undefined;
 }
 
 const tools = [
@@ -62,15 +62,15 @@ export function SettingsDialog({
   tokensLoading,
   preferences,
   updateReady,
-  recentlyDeletedCount,
-  failedChangeCount,
+  recentlyDeletedCount = 0,
+  failedChangeCount = 0,
   onClose,
-  onOpenRecovery,
   onUpdatePreferences,
   onRefreshTokens,
   onCreateToken,
   onRevokeToken,
   onActivateUpdate,
+  onOpenRecovery,
 }: SettingsDialogProps) {
   const [label, setLabel] = useState('');
   const [creating, setCreating] = useState(false);
@@ -117,17 +117,17 @@ export function SettingsDialog({
 
   const copySecret = async () => {
     if (!secret) return;
-    if (copyState === 'failed') {
-      secretRef.current?.focus();
-      secretRef.current?.select();
-      return;
-    }
     try {
       await navigator.clipboard.writeText(secret);
       setCopyState('copied');
     } catch {
       setCopyState('failed');
     }
+  };
+
+  const selectSecret = () => {
+    secretRef.current?.focus();
+    secretRef.current?.select();
   };
 
   if (revoking) {
@@ -147,147 +147,11 @@ export function SettingsDialog({
 
   return (
     <Dialog
-      title="Assistant access"
-      description="Connect trusted agents to your journal over MCP."
+      title="Settings"
+      description="Display, recovery, and trusted agent access."
       onClose={onClose}
       size="wide"
     >
-      <section className={SECTION}>
-        <div className={cn(STATUS_CARD, 'mcp-status-card')}>
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <strong className={CARD_STRONG}>MCP server</strong>
-            <code className="overflow-hidden text-tag text-fg-mute text-ellipsis whitespace-nowrap">
-              {mcpEndpoint}
-            </code>
-          </div>
-          <Badge variant="connection" className="connection-pill">
-            <i
-              className={`size-[5px] flex-none rounded-full ${
-                statusLabel === 'Offline'
-                  ? 'bg-danger'
-                  : statusLabel === 'Ready'
-                    ? 'bg-warning'
-                    : 'bg-ok'
-              }`}
-            />{' '}
-            {statusLabel}
-          </Badge>
-        </div>
-        <p className="pt-[11px] pb-2 text-sm leading-[1.55] text-fg-mute">
-          All five write tools apply immediately. Every assistant mutation is attributed,
-          snapshotted, rate-limited, and available to revert from Review.
-        </p>
-        <div className={LIST_CARD} aria-label="MCP tool permissions">
-          {tools.map(([name, mode]) => (
-            <div
-              className="flex min-h-[38px] items-center gap-2.5 border-b border-bg-line px-[11px] last:border-b-0"
-              key={name}
-            >
-              <code className="min-w-0 flex-1 overflow-hidden text-tag text-ellipsis whitespace-nowrap">
-                {name}
-              </code>
-              <Badge
-                variant={mode === 'automatic' ? 'modeAuto' : 'modeRead'}
-                className="mode-badge"
-              >
-                {mode}
-              </Badge>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className={SECTION} aria-labelledby="tokens-title">
-        <header className={SECTION_HEADING}>
-          <div>
-            <h3 className="text-base font-semibold" id="tokens-title">
-              Agent tokens
-            </h3>
-            <p className="pt-0.5 text-xs text-fg-mute">
-              Use one token per agent so access can be revoked independently.
-            </p>
-          </div>
-        </header>
-        {secret ? (
-          <aside className={cn(AI_PANEL, 'mb-2.5')} aria-live="polite">
-            <header className={AI_PANEL_HEADER}>
-              <Icon name="check" size={13} /> <strong>Token created — copy it now</strong>
-            </header>
-            <p className={AI_PANEL_COPY}>This secret is shown once and cannot be recovered.</p>
-            <div className="flex items-center gap-2 pt-2">
-              <input
-                ref={secretRef}
-                className="min-w-0 flex-1 rounded-sm border-0 bg-[rgb(0_0_0/22%)] px-2 py-[7px] font-mono text-2xs text-fg"
-                aria-label="New agent token secret"
-                readOnly
-                value={secret}
-              />
-              <Button variant="secondary" size="sm" onClick={copySecret}>
-                {copyState === 'copied'
-                  ? 'Copied'
-                  : copyState === 'failed'
-                    ? 'Select manually'
-                    : 'Copy'}
-              </Button>
-            </div>
-            <button
-              className="mt-[5px] min-h-[34px] text-xs text-ai-fg underline underline-offset-[3px] touch:min-h-10"
-              type="button"
-              onClick={() => setSecret(null)}
-            >
-              I have saved it
-            </button>
-          </aside>
-        ) : null}
-        <form className="mb-2 flex gap-2" onSubmit={create}>
-          <label className="sr-only" htmlFor="new-token-label">
-            New agent token label
-          </label>
-          <input
-            ref={labelRef}
-            id="new-token-label"
-            className="min-w-0 flex-1"
-            value={label}
-            maxLength={80}
-            placeholder="e.g. Claude Desktop"
-            onChange={(event) => setLabel(event.currentTarget.value)}
-          />
-          <Button variant="primary" type="submit" disabled={!label.trim() || creating}>
-            {creating ? 'Creating…' : 'Create token'}
-          </Button>
-        </form>
-        <div className={LIST_CARD} aria-busy={tokensLoading}>
-          {tokens.filter((token) => !token.revokedAt).length > 0 ? (
-            tokens
-              .filter((token) => !token.revokedAt)
-              .map((token) => (
-                <div
-                  className="flex min-h-[55px] items-center justify-between gap-2.5 border-b border-bg-line px-2.5 py-2 last:border-b-0"
-                  key={token.id}
-                >
-                  <div className="flex min-w-0 flex-col">
-                    <strong className="overflow-hidden text-sm font-medium text-ellipsis whitespace-nowrap">
-                      {token.label}
-                    </strong>
-                    <span className={CARD_SMALL}>
-                      {token.lastUsedAt
-                        ? `Last used ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(token.lastUsedAt))}`
-                        : 'Never used'}
-                    </span>
-                  </div>
-                  <Button variant="danger" size="sm" onClick={() => setRevoking(token)}>
-                    Revoke
-                  </Button>
-                </div>
-              ))
-          ) : (
-            <p className="p-3 text-center text-tag text-fg-mute">
-              {tokensLoading ? 'Loading tokens…' : 'No active agent tokens.'}
-            </p>
-          )}
-        </div>
-      </section>
-
       <section className={SECTION} aria-labelledby="display-title">
         <header className={SECTION_HEADING}>
           <div>
@@ -349,55 +213,223 @@ export function SettingsDialog({
         </div>
       </section>
 
+      <section className={SECTION} aria-labelledby="assistant-access-title">
+        <header className={SECTION_HEADING}>
+          <h3 className="text-base font-semibold" id="assistant-access-title">
+            Assistant access
+          </h3>
+          <p className="pt-0.5 text-xs text-fg-mute">
+            Connect trusted agents over MCP, with one revocable token per agent.
+          </p>
+        </header>
+        <div className={cn(STATUS_CARD, 'mcp-status-card mb-2.5')}>
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <strong className={CARD_STRONG}>MCP server</strong>
+            <code className="overflow-hidden text-tag text-fg-mute text-ellipsis whitespace-nowrap">
+              {mcpEndpoint}
+            </code>
+          </div>
+          <Badge variant="connection" className="connection-pill">
+            <i
+              className={`size-[5px] flex-none rounded-full ${
+                statusLabel === 'Offline'
+                  ? 'bg-danger'
+                  : statusLabel === 'Ready'
+                    ? 'bg-warning'
+                    : 'bg-ok'
+              }`}
+            />{' '}
+            {statusLabel}
+          </Badge>
+        </div>
+
+        {secret ? (
+          <aside className={cn(AI_PANEL, 'mb-2.5')} aria-live="polite">
+            <header className={AI_PANEL_HEADER}>
+              <Icon name="check" size={13} /> <strong>Token created — copy it now</strong>
+            </header>
+            <p className={AI_PANEL_COPY}>This secret is shown once and cannot be recovered.</p>
+            <div className="flex items-center gap-2 pt-2">
+              {copyState === 'failed' ? (
+                <input
+                  ref={secretRef}
+                  className="min-w-0 flex-1 bg-[rgb(0_0_0/22%)] font-mono text-2xs text-fg"
+                  aria-label="Agent token secret"
+                  readOnly
+                  value={secret}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+              ) : (
+                <code className="min-w-0 flex-1 overflow-hidden rounded-sm bg-[rgb(0_0_0/22%)] px-2 py-[7px] text-2xs text-fg text-ellipsis whitespace-nowrap">
+                  {secret}
+                </code>
+              )}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={copyState === 'failed' ? selectSecret : copySecret}
+              >
+                {copyState === 'copied'
+                  ? 'Copied'
+                  : copyState === 'failed'
+                    ? 'Select token'
+                    : 'Copy'}
+              </Button>
+            </div>
+            {copyState === 'failed' ? (
+              <p className="pt-1.5 text-xs text-ai-fg">
+                Clipboard access is unavailable. The complete token is selected for manual copy.
+              </p>
+            ) : null}
+            <button
+              className="mt-[5px] min-h-[34px] text-xs text-ai-fg underline underline-offset-[3px] touch:min-h-10"
+              type="button"
+              onClick={() => {
+                setSecret(null);
+                setCopyState('idle');
+              }}
+            >
+              I have saved it
+            </button>
+          </aside>
+        ) : null}
+        <form className="mb-2 flex gap-2" onSubmit={create}>
+          <label className="sr-only" htmlFor="new-token-label">
+            New agent token label
+          </label>
+          <input
+            ref={labelRef}
+            id="new-token-label"
+            className="min-w-0 flex-1"
+            value={label}
+            maxLength={80}
+            placeholder="e.g. Claude Desktop"
+            onChange={(event) => setLabel(event.currentTarget.value)}
+          />
+          <Button variant="primary" type="submit" disabled={!label.trim() || creating}>
+            {creating ? 'Creating…' : 'Create token'}
+          </Button>
+        </form>
+        <div className={LIST_CARD} aria-busy={tokensLoading}>
+          {tokens.filter((token) => !token.revokedAt).length > 0 ? (
+            tokens
+              .filter((token) => !token.revokedAt)
+              .map((token) => (
+                <div
+                  className="flex min-h-[55px] items-center justify-between gap-2.5 border-b border-bg-line px-2.5 py-2 last:border-b-0"
+                  key={token.id}
+                >
+                  <div className="flex min-w-0 flex-col">
+                    <strong className="overflow-hidden text-sm font-medium text-ellipsis whitespace-nowrap">
+                      {token.label}
+                    </strong>
+                    <span className={CARD_SMALL}>
+                      {token.lastUsedAt
+                        ? `Last used ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(token.lastUsedAt))}`
+                        : 'Never used'}
+                    </span>
+                  </div>
+                  <Button variant="danger" size="sm" onClick={() => setRevoking(token)}>
+                    Revoke
+                  </Button>
+                </div>
+              ))
+          ) : (
+            <p className="p-3 text-center text-tag text-fg-mute">
+              {tokensLoading ? 'Loading tokens…' : 'No active agent tokens.'}
+            </p>
+          )}
+        </div>
+      </section>
+
       <section className={SECTION} aria-labelledby="recovery-title">
         <header className={SECTION_HEADING}>
-          <div>
-            <h3 className="text-base font-semibold" id="recovery-title">
-              Recovery
-            </h3>
-            <p className="pt-0.5 text-xs text-fg-mute">
-              Restore deleted entries and resolve changes that need attention.
-            </p>
-          </div>
+          <h3 className="text-base font-semibold" id="recovery-title">
+            Recovery
+          </h3>
+          <p className="pt-0.5 text-xs text-fg-mute">
+            Restore deleted entries and resolve changes that need attention.
+          </p>
         </header>
         <div className={STATUS_CARD}>
-          <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="flex min-w-0 flex-col">
             <strong className={CARD_STRONG}>Journal recovery</strong>
             <small className={CARD_SMALL}>
               {recentlyDeletedCount} deleted · {failedChangeCount} failed{' '}
               {failedChangeCount === 1 ? 'change' : 'changes'}
             </small>
-          </div>
-          <Button variant="secondary" size="sm" onClick={onOpenRecovery}>
+          </span>
+          <Button variant="secondary" size="sm" disabled={!onOpenRecovery} onClick={onOpenRecovery}>
             Open recovery
           </Button>
         </div>
       </section>
 
-      <section className="flex gap-2 border-t border-bg-line pt-[13px] text-fg-mute">
-        <Icon name="info" size={14} className="mt-0.5 flex-none" />
-        <p className="text-tag leading-[1.5]">
-          The Journal server has no third-party data egress. An MCP client you authorize may
-          transmit retrieved content to its configured AI provider.
-        </p>
-      </section>
-
-      {updateReady ? (
-        <section className={cn(STATUS_CARD, 'border-ai-border bg-ai-bg')} aria-live="polite">
-          <div className="flex items-center gap-2">
-            <Icon name="download" size={14} />
-            <span className="flex flex-col">
-              <strong className="text-sm">Update ready</strong>
-              <small className="text-tag text-fg-mid">
-                Reload when you have finished this thought.
-              </small>
-            </span>
+      <section className={SECTION} aria-labelledby="advanced-title">
+        <header className={SECTION_HEADING}>
+          <h3 className="text-base font-semibold" id="advanced-title">
+            Advanced
+          </h3>
+        </header>
+        <details className={cn(LIST_CARD, updateReady && 'mb-2.5')}>
+          <summary className="flex min-h-10 cursor-pointer items-center px-[11px] text-sm font-medium">
+            Protocol permissions and privacy
+          </summary>
+          <div className="border-t border-bg-line p-2.5">
+            <p className="pb-2 text-sm leading-[1.55] text-fg-mute">
+              All five write tools apply immediately. Every assistant mutation is attributed,
+              snapshotted, rate-limited, and available to revert from Activity.
+            </p>
+            <div className={LIST_CARD} aria-label="MCP tool permissions">
+              {tools.map(([name, mode]) => (
+                <div
+                  className="flex min-h-[38px] items-center gap-2.5 border-b border-bg-line px-[11px] last:border-b-0"
+                  key={name}
+                >
+                  <code className="min-w-0 flex-1 overflow-hidden text-tag text-ellipsis whitespace-nowrap">
+                    {name}
+                  </code>
+                  <Badge
+                    variant={mode === 'automatic' ? 'modeAuto' : 'modeRead'}
+                    className="mode-badge"
+                  >
+                    {mode}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2.5 flex gap-2 border-t border-bg-line pt-[13px] text-fg-mute">
+              <Icon name="info" size={14} className="mt-0.5 flex-none" />
+              <p className="text-tag leading-[1.5]">
+                The Journal server has no third-party data egress. An MCP client you authorize may
+                transmit retrieved content to its configured AI provider.
+              </p>
+            </div>
           </div>
-          <Button variant="primary" onClick={onActivateUpdate}>
-            Reload
-          </Button>
-        </section>
-      ) : null}
+        </details>
+        {updateReady ? (
+          <div
+            className={cn(STATUS_CARD, 'update-card border-ai-border bg-ai-bg')}
+            aria-live="polite"
+          >
+            <div className="flex items-center gap-2">
+              <Icon name="download" size={14} />
+              <span className="flex flex-col">
+                <strong className="text-sm">Update ready</strong>
+                <small className="text-tag text-fg-mid">
+                  Reload when you have finished this thought.
+                </small>
+              </span>
+            </div>
+            <Button variant="primary" onClick={onActivateUpdate}>
+              Reload
+            </Button>
+          </div>
+        ) : null}
+      </section>
     </Dialog>
   );
 }

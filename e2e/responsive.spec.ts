@@ -45,7 +45,15 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
     await expect(tabs).toBeHidden();
     await expect(page.locator('.app-header__desktop-title').first()).toBeVisible();
   } else if (testInfo.project.name === 'chromium-mid') {
-    expect(frameBox?.width).toBe(560);
+    expect(frameBox?.width).toBe(680);
+    await expect(sidebar).toBeHidden();
+    await expect(tabs).toBeVisible();
+  } else if (testInfo.project.name === 'chromium-tablet') {
+    expect(frameBox?.width).toBe(834);
+    await expect(sidebar).toBeHidden();
+    await expect(tabs).toBeVisible();
+  } else if (testInfo.project.name === 'chromium-landscape') {
+    expect(frameBox?.width).toBe(812);
     await expect(sidebar).toBeHidden();
     await expect(tabs).toBeVisible();
   } else if (testInfo.project.name === 'webkit-iphone') {
@@ -67,29 +75,40 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
    * layout, 30px tab segments on the mid layout, and a 36px composer trio.
    */
   const isNarrow = testInfo.project.name === 'chromium-narrow';
-  const isPhone = isNarrow || testInfo.project.name === 'webkit-iphone';
+  const isPhone =
+    isNarrow ||
+    testInfo.project.name === 'chromium-short' ||
+    testInfo.project.name === 'chromium-landscape' ||
+    testInfo.project.name === 'webkit-iphone';
   const primaryMinimum = isPhone ? 40 : testInfo.project.name === 'chromium-desktop' ? 34 : 30;
   const composerMinimum = isPhone ? 40 : 36;
 
-  // Scoped to the nav landmark, not the whole page: the composer's destination
-  // chip legitimately reads `Today` too, and it is on the control ramp, not the
-  // nav one.
+  // The untouched composer is one row. Focusing it restores the full capture
+  // grammar without changing the owner's draft or filing path.
+  const composerShell = page.locator('.composer-shell');
+  await expect(composerShell).toHaveAttribute('data-expanded', 'false');
+  await expect(page.getByRole('button', { name: /^Entry type:/ })).toHaveCount(0);
+
+  // Scoped to the nav landmark, not the whole page: capture context has its own
+  // control ramp once disclosed.
   const visiblePrimaryButtons = page
     .getByRole('navigation')
     .getByRole('button')
-    .filter({ hasText: /^(Today|Month|Index|Review)\s*(\d+\+?)?$/ });
+    .filter({ hasText: /^(Timeline|Month|Index|Activity)\s*(\d+\+?)?$/ });
   await expect(visiblePrimaryButtons).toHaveCount(4);
   for (const button of await visiblePrimaryButtons.all()) {
     const box = await button.boundingBox();
     expect(box?.height).toBeGreaterThanOrEqual(primaryMinimum);
   }
 
+  const input = page.getByRole('combobox', { name: 'Add an entry' });
+  await input.focus();
+  await expect(composerShell).toHaveAttribute('data-expanded', 'true');
   for (const name of [/Task$/, 'Add entry']) {
     const box = await page.getByRole('button', { name, exact: true }).boundingBox();
     expect(box?.height).toBeGreaterThanOrEqual(composerMinimum);
   }
 
-  const input = page.getByRole('combobox', { name: 'Add an entry' });
   const inputBox = await input.boundingBox();
   expect(inputBox?.height).toBeGreaterThanOrEqual(composerMinimum);
   if (isPhone) await expect(input).toHaveCSS('font-size', '16px');
@@ -109,6 +128,14 @@ test('the shell uses the approved narrow, mid, and wide layout at each breakpoin
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
     expect(horizontalOverflow).toBeLessThanOrEqual(0);
+  }
+
+  if (
+    testInfo.project.name === 'chromium-short' ||
+    testInfo.project.name === 'chromium-landscape'
+  ) {
+    await expect(page.locator('.app-header__title')).toBeVisible();
+    await expect(page.locator('.app-header__subtitle')).toBeHidden();
   }
 });
 
@@ -171,11 +198,27 @@ test('entry previews clamp only real overflow and disclose it without nested act
 test('reduced-motion preference collapses animations', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openJournal(page);
-  await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const duration = await page
-    .getByRole('dialog', { name: 'Assistant access' })
+    .getByRole('dialog', { name: 'Settings' })
     .evaluate((element) => Number.parseFloat(getComputedStyle(element).animationDuration) || 0);
   expect(duration).toBeLessThanOrEqual(0.000_01);
+});
+
+test('mobile chrome names the route instead of repeating the app name', async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-narrow');
+  await openJournal(page);
+
+  const title = page.locator('.app-header__title');
+  await expect(title).toHaveText('Timeline');
+  await page.getByRole('button', { name: 'Month', exact: true }).click();
+  await expect(title).toHaveText(/^[A-Z][a-z]+ \d{4}$/);
+  await page.getByRole('button', { name: 'Index', exact: true }).click();
+  await expect(title).toHaveText('Index');
+  await page.getByRole('button', { name: /^Activity/ }).click();
+  await expect(title).toHaveText('Activity');
 });
 
 test('all mobile form and dialog controls keep 40px touch targets', async ({ page }, testInfo) => {
@@ -183,9 +226,9 @@ test('all mobile form and dialog controls keep 40px touch targets', async ({ pag
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openJournal(page);
 
-  await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Assistant access' })).toBeVisible();
-  await expectTouchTargets(page, 'Assistant access');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+  await expectTouchTargets(page, 'Settings');
   await page.keyboard.press('Escape');
 
   await page.getByRole('button', { name: 'Index', exact: true }).click();
@@ -194,7 +237,7 @@ test('all mobile form and dialog controls keep 40px touch targets', async ({ pag
   await expectTouchTargets(page, 'New collection');
   await page.keyboard.press('Escape');
 
-  await page.getByRole('button', { name: /^Today/ }).click();
+  await page.getByRole('button', { name: /^Timeline/ }).click();
   const entryText = uniqueText('Touch target entry');
   await page.getByRole('combobox', { name: 'Add an entry' }).fill(entryText);
   await page.getByRole('button', { name: 'Add entry' }).click();

@@ -72,7 +72,7 @@ function humanizeSlug(slug: string): string {
   return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
 }
 
-/** LOG-53's Today-badge formula, computed from the server's own bootstrap. */
+/** LOG-53's Timeline-badge formula, computed from the server's own bootstrap. */
 async function openTodayCount(request: APIRequestContext, server: ServerContext): Promise<number> {
   const bootstrap = await request.get('/api/bootstrap');
   expect(bootstrap.ok()).toBeTruthy();
@@ -91,7 +91,7 @@ async function openTodayCount(request: APIRequestContext, server: ServerContext)
 }
 
 /** The count a nav item announces, or 0 when it carries no badge at all. */
-async function navCount(page: Page, label: 'Today' | 'Review'): Promise<number> {
+async function navCount(page: Page, label: 'Timeline' | 'Activity'): Promise<number> {
   const name = await page
     .getByRole('button', { name: new RegExp(`^${label}`) })
     .first()
@@ -133,8 +133,8 @@ async function persistedReviewMark(page: Page): Promise<string | null> {
 }
 
 async function issueMcpSecret(page: Page, tokenLabel: string): Promise<string> {
-  await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Assistant access' });
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
   await dialog.getByRole('textbox', { name: 'New agent token label' }).fill(tokenLabel);
   await dialog.getByRole('button', { name: 'Create token' }).click();
   const secretPanel = dialog.locator('aside').filter({ hasText: 'Token created — copy it now' });
@@ -234,12 +234,12 @@ test('owner capture persists and the four primary views navigate by semantic con
   const routes = [
     { button: 'Month', path: '/month', landmark: /^[A-Z][a-z]+ \d{4} monthly log$/ },
     { button: 'Index', path: '/index', landmark: 'Journal index' },
-    { button: 'Review', path: '/review', landmark: 'Assistant activity' },
-    { button: 'Today', path: '/', landmark: 'Daily log' },
+    { button: 'Activity', path: '/review', landmark: 'Assistant activity' },
+    { button: 'Timeline', path: '/', landmark: 'Daily log' },
   ] as const;
 
   for (const route of routes) {
-    // Prefix match: nav names may carry a count badge suffix ("Today — 1 open task").
+    // Prefix match: nav names may carry a count badge suffix ("Timeline — 1 open item").
     await page.getByRole('button', { name: new RegExp(`^${route.button}`) }).click();
     await expect(page).toHaveURL(new RegExp(`${route.path.replace('/', '\\/')}(?:\\?|$)`));
     await expect(page.getByRole('region', { name: route.landmark })).toBeVisible();
@@ -285,9 +285,9 @@ test('owner deletion supports immediate undo and later recovery from Settings', 
   await expect(row).toBeVisible();
 
   await remove();
-  await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page
-    .getByRole('dialog', { name: 'Assistant access' })
+    .getByRole('dialog', { name: 'Settings' })
     .getByRole('button', { name: 'Open recovery' })
     .click();
   const recovery = page.getByRole('dialog', { name: 'Recovery' });
@@ -299,7 +299,7 @@ test('owner deletion supports immediate undo and later recovery from Settings', 
   await expect(page.locator('[data-entry-id]').filter({ hasText: text })).toBeVisible();
 });
 
-test('default Today downloads closed daily history beyond the bootstrap window', async ({
+test('default Timeline downloads closed daily history beyond the bootstrap window', async ({
   baseURL,
   context,
   page,
@@ -367,13 +367,13 @@ test('two paired browsers converge through SSE and notify the other device once'
   }
 });
 
-test('Assistant access exposes exactly seven tools with the approved write modes', async ({
+test('Settings exposes exactly seven assistant tools with the approved write modes', async ({
   page,
 }) => {
   await openJournal(page);
-  await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
 
-  const dialog = page.getByRole('dialog', { name: 'Assistant access' });
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
   const permissions = dialog.locator('[aria-label="MCP tool permissions"]');
   await expect(permissions.locator('code')).toHaveText([
@@ -396,7 +396,7 @@ test('Assistant access exposes exactly seven tools with the approved write modes
   ]);
 });
 
-test('Assistant access reports a live session and persists display preferences', async ({
+test('Settings reports a live assistant session and persists display preferences', async ({
   baseURL,
   page,
 }) => {
@@ -413,8 +413,8 @@ test('Assistant access reports a live session and persists display preferences',
   });
   try {
     await client.connect(transport as unknown as Transport);
-    await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Assistant access' });
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Settings' });
     await expect(dialog.locator('.connection-pill')).toContainText('Connected');
 
     const density = dialog.getByRole('combobox');
@@ -452,8 +452,8 @@ test('Assistant access reports a live session and persists display preferences',
     await expect(row).toHaveClass(new RegExp(`entry-row--${targetDensity}`));
     await expect(row.locator('.badge--type')).toHaveCount(targetBadges ? 1 : 0);
 
-    await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
-    const reopened = page.getByRole('dialog', { name: 'Assistant access' });
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const reopened = page.getByRole('dialog', { name: 'Settings' });
     await expect(reopened.getByRole('combobox')).toHaveValue(targetDensity);
     await expect(reopened.getByRole('switch', { name: /Type badges/ })).toBeChecked({
       checked: targetBadges,
@@ -494,7 +494,7 @@ test('an automatic MCP write appears in Activity and can be reverted by the owne
     await client.close();
   }
 
-  await page.getByRole('button', { name: /^Review/ }).click();
+  await page.getByRole('button', { name: /^Activity/ }).click();
   const activity = page.getByRole('article').filter({ hasText: text });
   await expect(activity).toBeVisible();
   await activity.getByRole('button', { name: 'Revert' }).click();
@@ -505,7 +505,7 @@ test('an automatic MCP write appears in Activity and can be reverted by the owne
   await expect(page.getByText('Change reverted')).toBeVisible();
   await expect(activity.getByText('Reverted', { exact: true })).toBeVisible();
 
-  await page.getByRole('button', { name: /^Today/ }).click();
+  await page.getByRole('button', { name: /^Timeline/ }).click();
   await expect(page.getByText(text, { exact: true })).toHaveCount(0);
 });
 
@@ -570,7 +570,7 @@ test('owner capture and automatic add-update-revert stay live and conflict safe'
     await client.close();
   }
 
-  await page.getByRole('button', { name: /^Review/ }).click();
+  await page.getByRole('button', { name: /^Activity/ }).click();
   const updateActivity = page.getByRole('article').filter({ hasText: updateReason });
   const addActivity = page
     .getByRole('article')
@@ -587,7 +587,7 @@ test('owner capture and automatic add-update-revert stay live and conflict safe'
   await expect(addActivity.getByText('Changed since — newer work preserved')).toBeVisible();
   await expect(addActivity.getByRole('button', { name: 'Revert' })).toHaveCount(0);
 
-  await page.getByRole('button', { name: /^Today/ }).click();
+  await page.getByRole('button', { name: /^Timeline/ }).click();
   const restoredRow = page.locator(`[data-entry-id="${added.entry.id}"]`);
   await expect(restoredRow.getByText(originalText, { exact: true })).toBeVisible();
   await expect(restoredRow.getByText(updatedText, { exact: true })).toHaveCount(0);
@@ -834,7 +834,7 @@ test('every capture sigil opens its own completion panel', async ({ page }) => {
   await expect(panel).toBeHidden();
 });
 
-test('the Today and Review tabs announce their counts and Review stays cleared', async ({
+test('the Timeline and Activity tabs announce counts and Activity stays cleared', async ({
   baseURL,
   context,
   page,
@@ -845,16 +845,16 @@ test('the Today and Review tabs announce their counts and Review stays cleared',
   // Anchor the baseline to server truth, not to whatever the badge shows
   // mid-hydration — the shared database already carries earlier specs' rows.
   const openBefore = await openTodayCount(context.request, server);
-  await expect.poll(() => navCount(page, 'Today')).toBe(openBefore);
+  await expect.poll(() => navCount(page, 'Timeline')).toBe(openBefore);
   await seedOwnerEntry(context.request, baseURL, server, {
     text: uniqueText('Badge open task'),
     type: 'task',
   });
   // The count rides the same SSE batch as the row, so it needs no reload.
-  await expect.poll(() => navCount(page, 'Today')).toBe(openBefore + 1);
-  await expect(page.getByRole('button', { name: /^Today — \d+ open tasks?$/ })).toBeVisible();
+  await expect.poll(() => navCount(page, 'Timeline')).toBe(openBefore + 1);
+  await expect(page.getByRole('button', { name: /^Timeline — \d+ open items?$/ })).toBeVisible();
 
-  const unseenBefore = await navCount(page, 'Review');
+  const unseenBefore = await navCount(page, 'Activity');
   const secret = await issueMcpSecret(page, uniqueText('Badge agent'));
   const client = new Client({ name: 'journal-badge-evidence', version: '1.0.0' });
   const transport = new StreamableHTTPClientTransport(new URL('/mcp', baseURL), {
@@ -879,17 +879,19 @@ test('the Today and Review tabs announce their counts and Review stays cleared',
     await client.close();
   }
 
-  await expect.poll(() => navCount(page, 'Review')).toBe(unseenBefore + 1);
-  await expect(page.getByRole('button', { name: /^Review — \d+ unseen changes?$/ })).toBeVisible();
+  await expect.poll(() => navCount(page, 'Activity')).toBe(unseenBefore + 1);
+  await expect(
+    page.getByRole('button', { name: /^Activity — \d+ unseen changes?$/ }),
+  ).toBeVisible();
 
-  await page.getByRole('button', { name: /^Review/ }).click();
+  await page.getByRole('button', { name: /^Activity/ }).click();
   await expect(page.getByRole('region', { name: 'Assistant activity' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Review', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Activity', exact: true })).toBeVisible();
   // The mark is local and debounced; reload only proves anything once it landed.
   await expect.poll(() => persistedReviewMark(page)).not.toBeNull();
 
   await page.reload();
   await expect(page.locator('#journal-content')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Review', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: /^Review — / })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Activity', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Activity — / })).toHaveCount(0);
 });

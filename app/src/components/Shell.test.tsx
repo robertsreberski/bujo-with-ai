@@ -32,10 +32,9 @@ const renderShell = (options: RenderOptions = {}) =>
     <Shell
       route={options.route ?? { name: 'today', date: null }}
       today="2026-07-31"
-      dayCount={3}
       journalStatus={options.journalStatus ?? onlineStatus}
       {...(options.counts ? { counts: options.counts } : {})}
-      title="Today"
+      title="Timeline"
       subtitle="Friday, July 31"
       onNavigate={vi.fn()}
       onSearch={vi.fn()}
@@ -56,16 +55,16 @@ const navPair = (name: string | RegExp) => screen.getAllByRole('button', { name 
 describe('Shell counts', () => {
   it('renders no badge and a plain label when nothing is pending', () => {
     const { container } = renderShell();
-    expect(navPair('Today')).toHaveLength(2);
-    expect(navPair('Review')).toHaveLength(2);
+    expect(navPair('Timeline')).toHaveLength(2);
+    expect(navPair('Activity')).toHaveLength(2);
     expect(container.querySelectorAll('.nav-item__count, .tab__count')).toHaveLength(0);
   });
 
   it('folds the count into the accessible name of both chromes', () => {
     renderShell({ counts: { today: 2, review: 3 } });
-    expect(navPair('Today — 2 open tasks')).toHaveLength(2);
-    expect(navPair('Review — 3 unseen changes')).toHaveLength(2);
-    expect(screen.queryByRole('button', { name: 'Today' })).not.toBeInTheDocument();
+    expect(navPair('Timeline — 2 open items')).toHaveLength(2);
+    expect(navPair('Activity — 3 unseen changes')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'Timeline' })).not.toBeInTheDocument();
   });
 
   it('keeps the badge itself out of the accessibility tree', () => {
@@ -78,13 +77,13 @@ describe('Shell counts', () => {
 
   it('says one thing in the singular', () => {
     renderShell({ counts: { today: 1, review: 1 } });
-    expect(navPair('Today — 1 open task')).toHaveLength(2);
-    expect(navPair('Review — 1 unseen change')).toHaveLength(2);
+    expect(navPair('Timeline — 1 open item')).toHaveLength(2);
+    expect(navPair('Activity — 1 unseen change')).toHaveLength(2);
   });
 
   it('caps the drawn count at 9+ while announcing the real one', () => {
     const { container } = renderShell({ counts: { today: 12 } });
-    expect(navPair('Today — 12 open tasks')).toHaveLength(2);
+    expect(navPair('Timeline — 12 open items')).toHaveLength(2);
     for (const badge of container.querySelectorAll('.nav-item__count, .tab__count')) {
       expect(badge).toHaveTextContent('9+');
     }
@@ -109,7 +108,7 @@ describe('Shell counts', () => {
     const { container } = renderShell({ counts: { today: 2 } });
     expect(navPair('Month')).toHaveLength(2);
     expect(navPair('Index')).toHaveLength(2);
-    expect(navPair('Review')).toHaveLength(2);
+    expect(navPair('Activity')).toHaveLength(2);
     expect(container.querySelectorAll('.nav-item__count, .tab__count')).toHaveLength(2);
   });
 });
@@ -217,5 +216,20 @@ describe('Shell journal status', () => {
       }),
     );
     expect(retryLocalSave).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Shell route context', () => {
+  it('uses the route title and subtitle in the responsive header', () => {
+    const { container } = renderShell();
+    expect(screen.getByRole('heading', { level: 1, name: 'Timeline' })).toBeInTheDocument();
+    expect(container.querySelector('.app-header__subtitle')).toHaveTextContent('Friday, July 31');
+    expect(screen.queryByRole('heading', { level: 1, name: 'Journal' })).not.toBeInTheDocument();
+  });
+
+  it('calls assistant configuration Settings everywhere', () => {
+    renderShell();
+    expect(navPair('Settings')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'Assistant access' })).not.toBeInTheDocument();
   });
 });

@@ -109,6 +109,7 @@ export function Composer({
   /** True once the draft is taller than the four-line cap the field grows to. */
   const [overflowing, setOverflowing] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const focusMenuOnOpenRef = useRef(false);
   const pendingCaretRef = useRef<number | null>(null);
@@ -119,6 +120,10 @@ export function Composer({
   const labelId = useId();
   const menuLabelId = useId();
   const parsed = parseDraft(draft, defaultType);
+  // Keep an untouched composer to one capture row. The rest of the grammar is
+  // progressive disclosure: it appears as soon as the owner engages the field
+  // or a restored/in-progress draft has context worth explaining.
+  const expanded = focused || menuOpen || draft.length > 0 || chipOverride !== null;
 
   const resolved = resolveDestination({
     route,
@@ -207,6 +212,21 @@ export function Composer({
     if (focusRequest === undefined) return;
     inputRef.current?.focus();
   }, [focusRequest]);
+
+  useEffect(() => {
+    if (!focused) return;
+    const collapseOutside = (event: globalThis.PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (shellRef.current?.contains(target)) return;
+      // Composer popovers are portalled, so they still count as engagement even
+      // though they are not DOM descendants of the capture row.
+      if (target.closest('.destination-menu, .capture-help')) return;
+      setFocused(false);
+    };
+    document.addEventListener('pointerdown', collapseOutside, true);
+    return () => document.removeEventListener('pointerdown', collapseOutside, true);
+  }, [focused]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -451,127 +471,145 @@ export function Composer({
   };
 
   return (
-    <div className="composer-shell relative z-(--z-composer) flex-none border-t border-border bg-bg pb-(--sab) keyboard-open:fixed keyboard-open:right-auto keyboard-open:bottom-[calc(100%_-_var(--vv-offset,0px)_-_var(--vv-height,100%))] keyboard-open:left-[var(--pane-left,var(--sal))] keyboard-open:w-[var(--pane-width,calc(100%_-_var(--sal)_-_var(--sar)))] keyboard-open:pb-0">
-      <div className="relative mx-auto w-full max-w-(--content-width) px-3 pt-2 pb-2.5">
+    <div
+      ref={shellRef}
+      className="composer-shell relative z-(--z-composer) flex-none border-t border-border bg-bg pb-(--sab) keyboard-open:fixed keyboard-open:right-auto keyboard-open:bottom-[calc(100%_-_var(--vv-offset,0px)_-_var(--vv-height,100%))] keyboard-open:left-[var(--pane-left,var(--sal))] keyboard-open:w-[var(--pane-width,calc(100%_-_var(--sal)_-_var(--sar)))] keyboard-open:pb-0"
+      data-expanded={expanded ? 'true' : 'false'}
+      onFocusCapture={() => setFocused(true)}
+    >
+      <div
+        className={cn(
+          'relative mx-auto w-full max-w-(--content-width) px-3',
+          expanded ? 'pt-2 pb-2.5' : 'py-2',
+        )}
+      >
         <ComposerSuggestions state={suggestions} onAccept={acceptSuggestion} />
         {/*
          * The context zone: the destination leads at full width, the facts the
          * parser found follow and wrap onto further lines rather than truncate,
          * and help sits at the top right so it stays put as the facts grow.
          */}
-        <div className="flex items-start gap-1.5 pb-1.5">
-          {/*
-           * `touch:gap-y-2`: each chip's 40px touch box overhangs its 24px ink
-           * by 8px top and bottom, so a wrapped row needs 8px between lines or
-           * the line below reaches back over the ink of the line above and — as
-           * the later element — takes the taps meant for it.
-           */}
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 touch:gap-y-2">
-            <DestinationChip
-              resolved={resolved}
-              route={route}
-              today={today}
-              collections={collections}
-              collectionsById={collectionsById}
-              screenDestination={screenDestination}
-              onSelect={selectDestination}
-              onClear={clearDestination}
-              onRestoreFocus={focusInput}
-            />
-            <div
-              className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 touch:gap-y-2"
-              aria-live="polite"
-            >
-              {parsed.error ? (
-                <Chip variant="error">{parsed.error}</Chip>
-              ) : draft ? (
-                <>
-                  <Chip>
-                    <Icon name={entryIcon[parsed.type]} size={11} />
-                    {TYPE_LABELS[parsed.type]}
-                  </Chip>
-                  {parsed.time ? (
-                    <ChipButton
-                      // WCAG 2.5.3: the visible `at HH:MM` is a substring of the
-                      // name, so a voice command can say what the chip reads.
-                      aria-label={`Remove time at ${parsed.time}`}
-                      onPointerDown={keepComposerFocus}
-                      onClick={() => removeToken('time', parsed.time)}
-                    >
-                      <Icon name="clock" size={11} />
-                      {/* Its own element so the chip's text is exactly the fact:
+        {expanded ? (
+          <div className="composer__context flex items-start gap-1.5 pb-1.5">
+            {/*
+             * `touch:gap-y-2`: each chip's 40px touch box overhangs its 24px ink
+             * by 8px top and bottom, so a wrapped row needs 8px between lines or
+             * the line below reaches back over the ink of the line above and — as
+             * the later element — takes the taps meant for it.
+             */}
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1 touch:gap-y-2">
+              <DestinationChip
+                resolved={resolved}
+                route={route}
+                today={today}
+                collections={collections}
+                collectionsById={collectionsById}
+                screenDestination={screenDestination}
+                onSelect={selectDestination}
+                onClear={clearDestination}
+                onRestoreFocus={focusInput}
+              />
+              <div
+                className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 touch:gap-y-2"
+                aria-live="polite"
+              >
+                {parsed.error ? (
+                  <Chip variant="error">{parsed.error}</Chip>
+                ) : draft ? (
+                  <>
+                    <Chip>
+                      <Icon name={entryIcon[parsed.type]} size={11} />
+                      {TYPE_LABELS[parsed.type]}
+                    </Chip>
+                    {parsed.time ? (
+                      <ChipButton
+                        // WCAG 2.5.3: the visible `at HH:MM` is a substring of the
+                        // name, so a voice command can say what the chip reads.
+                        aria-label={`Remove time at ${parsed.time}`}
+                        onPointerDown={keepComposerFocus}
+                        onClick={() => removeToken('time', parsed.time)}
+                      >
+                        <Icon name="clock" size={11} />
+                        {/* Its own element so the chip's text is exactly the fact:
                           the icons contribute nothing to textContent. */}
-                      <span>at {parsed.time}</span>
-                      <Icon name="close" size={10} className="opacity-60" />
-                    </ChipButton>
-                  ) : null}
-                  {parsed.tags.map((tag) => (
-                    <ChipButton
-                      aria-label={`Remove tag #${tag}`}
-                      key={tag}
-                      onPointerDown={keepComposerFocus}
-                      onClick={() => removeToken('tag', tag)}
-                    >
-                      {/* The `#` is the icon, so the label stays the bare tag. */}
-                      <Icon name="hash" size={11} />
-                      <span>{tag}</span>
-                      <Icon name="close" size={10} className="opacity-60" />
-                    </ChipButton>
-                  ))}
-                </>
-              ) : null}
+                        <span>at {parsed.time}</span>
+                        <Icon name="close" size={10} className="opacity-60" />
+                      </ChipButton>
+                    ) : null}
+                    {parsed.tags.map((tag) => (
+                      <ChipButton
+                        aria-label={`Remove tag #${tag}`}
+                        key={tag}
+                        onPointerDown={keepComposerFocus}
+                        onClick={() => removeToken('tag', tag)}
+                      >
+                        {/* The `#` is the icon, so the label stays the bare tag. */}
+                        <Icon name="hash" size={11} />
+                        <span>{tag}</span>
+                        <Icon name="close" size={10} className="opacity-60" />
+                      </ChipButton>
+                    ))}
+                  </>
+                ) : null}
+              </div>
             </div>
+            <CaptureHelp />
           </div>
-          <CaptureHelp />
-        </div>
-        <form className="composer__form flex items-center gap-2" onSubmit={submit}>
-          <button
-            className={cn(
-              // Below 480px the label is hidden, so the button stops reserving
-              // room for it and gives the draft the width instead.
-              'composer__type flex h-9 min-w-[104px] items-center gap-1.5 rounded-md border border-border-control bg-bg px-[9px] text-sm max-[480px]:min-w-[62px] max-[480px]:justify-center max-[480px]:px-2 touch:h-10',
-              parsed.signifierWon ? 'composer__type--overridden text-fg-mute' : 'text-fg-body',
-            )}
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            aria-controls={`${labelId}-menu`}
-            aria-label={
-              parsed.signifierWon
-                ? `Entry type: ${TYPE_LABELS[parsed.type]}. Type set by leading '${SIGNIFIER_BY_TYPE[parsed.type]}' — remove it to choose`
-                : `Entry type: ${TYPE_LABELS[parsed.type]}`
-            }
-            title={
-              parsed.signifierWon
-                ? `Type set by leading '${SIGNIFIER_BY_TYPE[parsed.type]}' — remove it to choose`
-                : undefined
-            }
-            onClick={() => setMenuOpen((value) => !value)}
-            onPointerDown={(event) => {
-              focusMenuOnOpenRef.current = false;
-              event.preventDefault();
-            }}
-            onKeyDown={(event) => {
-              if (
-                event.key === 'ArrowDown' ||
-                event.key === 'ArrowUp' ||
-                event.key === 'Enter' ||
-                event.key === ' '
-              ) {
-                focusMenuOnOpenRef.current = true;
+        ) : null}
+        <form
+          className="composer__form flex items-center gap-2"
+          data-expanded={expanded ? 'true' : 'false'}
+          onSubmit={submit}
+        >
+          {expanded ? (
+            <button
+              className={cn(
+                // Below 480px the label is hidden, so the button stops reserving
+                // room for it and gives the draft the width instead.
+                'composer__type flex h-9 min-w-[104px] items-center gap-1.5 rounded-md border border-border-control bg-bg px-[9px] text-sm max-[480px]:min-w-[62px] max-[480px]:justify-center max-[480px]:px-2 touch:h-10',
+                parsed.signifierWon ? 'composer__type--overridden text-fg-mute' : 'text-fg-body',
+              )}
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-controls={`${labelId}-menu`}
+              aria-label={
+                parsed.signifierWon
+                  ? `Entry type: ${TYPE_LABELS[parsed.type]}. Type set by leading '${SIGNIFIER_BY_TYPE[parsed.type]}' — remove it to choose`
+                  : `Entry type: ${TYPE_LABELS[parsed.type]}`
               }
-              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              title={
+                parsed.signifierWon
+                  ? `Type set by leading '${SIGNIFIER_BY_TYPE[parsed.type]}' — remove it to choose`
+                  : undefined
+              }
+              onClick={() => setMenuOpen((value) => !value)}
+              onPointerDown={(event) => {
+                focusMenuOnOpenRef.current = false;
                 event.preventDefault();
-                setMenuOpen(true);
-              }
-            }}
-          >
-            <Icon name={entryIcon[parsed.type]} size={14} />
-            <span className="min-w-0 flex-1 text-left max-[480px]:hidden">
-              {TYPE_LABELS[parsed.type]}
-            </span>
-            <Icon name="chevronDown" size={12} />
-          </button>
+              }}
+              onKeyDown={(event) => {
+                if (
+                  event.key === 'ArrowDown' ||
+                  event.key === 'ArrowUp' ||
+                  event.key === 'Enter' ||
+                  event.key === ' '
+                ) {
+                  focusMenuOnOpenRef.current = true;
+                }
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  setMenuOpen(true);
+                }
+              }}
+            >
+              <Icon name={entryIcon[parsed.type]} size={14} />
+              <span className="min-w-0 flex-1 text-left max-[480px]:hidden">
+                {TYPE_LABELS[parsed.type]}
+              </span>
+              <Icon name="chevronDown" size={12} />
+            </button>
+          ) : null}
           <label className="sr-only" id={labelId} htmlFor={`${labelId}-input`}>
             Add an entry
           </label>
@@ -605,7 +643,11 @@ export function Composer({
                 trackCaret(event.currentTarget);
                 onInputFocus?.();
               }}
-              onBlur={() => setFocused(false)}
+              onBlur={(event) => {
+                const next = event.relatedTarget;
+                if (next instanceof Node && shellRef.current?.contains(next)) return;
+                setFocused(false);
+              }}
               onClick={(event) => trackCaret(event.currentTarget)}
               onKeyUp={(event) => trackCaret(event.currentTarget)}
               onKeyDown={handleInputKeyDown}

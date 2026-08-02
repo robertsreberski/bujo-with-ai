@@ -167,6 +167,32 @@ describe('parseDraft', () => {
 });
 
 describe('Composer', () => {
+  it('keeps an untouched capture to one row and discloses context on focus', () => {
+    const { container } = render(<Harness />);
+    const shell = container.querySelector('.composer-shell');
+
+    expect(shell).toHaveAttribute('data-expanded', 'false');
+    expect(screen.getByLabelText('Add an entry')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add entry' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Destination: Today' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Entry type: Task' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Capture help' })).not.toBeInTheDocument();
+
+    fireEvent.focus(input());
+    expect(shell).toHaveAttribute('data-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'Destination: Today' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Entry type: Task' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Capture help' })).toBeInTheDocument();
+  });
+
+  it('previews inferred grammar from a restored draft before focus', () => {
+    const { container } = render(<Harness initialDraft="- Standup #work @9:15" />);
+    expect(container.querySelector('.composer-shell')).toHaveAttribute('data-expanded', 'true');
+    expect(screen.getByRole('button', { name: /^Entry type: Note/ })).toBeInTheDocument();
+    expect(screen.getByText('at 09:15')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove tag #work' })).toBeInTheDocument();
+  });
+
   it('renders live facts and submits the parsed draft', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn<(parsed: ParsedDraft) => void>();
@@ -189,6 +215,7 @@ describe('Composer', () => {
   it('moves keyboard focus into the type menu', async () => {
     const user = userEvent.setup();
     render(<Harness />);
+    await user.click(input());
     const trigger = screen.getByRole('button', { name: 'Entry type: Task' });
     trigger.focus();
     await user.keyboard('{ArrowDown}');
@@ -198,6 +225,7 @@ describe('Composer', () => {
   it('picks a type from its signifier key while the menu is open', async () => {
     const user = userEvent.setup();
     render(<Harness />);
+    await user.click(input());
     const trigger = screen.getByRole('button', { name: 'Entry type: Task' });
     trigger.focus();
     await user.keyboard('{ArrowDown}');
@@ -384,12 +412,14 @@ describe('Composer field', () => {
 describe('Composer destination chip', () => {
   it('names the screen default without offering to clear it', () => {
     render(<Harness />);
+    fireEvent.focus(input());
     expect(screen.getByRole('button', { name: 'Destination: Today' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Clear destination' })).not.toBeInTheDocument();
   });
 
   it('follows the viewed day when a past date is open', () => {
     render(<Harness route={{ name: 'today', date: '2026-07-12' }} />);
+    fireEvent.focus(input());
     expect(screen.getByRole('button', { name: /^Destination: Jul 12/ })).toBeInTheDocument();
   });
 
@@ -467,6 +497,7 @@ describe('Composer destination chip', () => {
     const user = userEvent.setup();
     const onChipOverrideChange = vi.fn<(destination: Destination | null) => void>();
     render(<Harness onChipOverrideChange={onChipOverrideChange} />);
+    await user.click(input());
     await user.click(screen.getByRole('button', { name: 'Destination: Today' }));
     await user.click(await screen.findByRole('button', { name: /^Reading/ }));
     expect(onChipOverrideChange).toHaveBeenCalledWith({ kind: 'collection', id: 'reading' });
@@ -479,6 +510,7 @@ describe('Composer destination chip', () => {
   it('warns that review captures land in the daily log', async () => {
     const user = userEvent.setup();
     render(<Harness route={{ name: 'review' }} />);
+    await user.click(input());
     await user.click(screen.getByRole('button', { name: 'Destination: Today' }));
     expect(await screen.findByText(/Review is an audit screen/)).toBeInTheDocument();
   });
@@ -779,9 +811,13 @@ describe('Composer suggestions', () => {
 });
 
 describe('Composer capture bar', () => {
-  it('leads with the destination and drops the legend that used to crowd it', () => {
+  it('keeps destination and grammar out of the idle row, then leads with destination', () => {
     render(<Harness />);
+    expect(screen.queryByRole('button', { name: 'Destination: Today' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Capture help' })).not.toBeInTheDocument();
+    fireEvent.focus(input());
     expect(screen.getByRole('button', { name: 'Destination: Today' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Capture help' })).toBeInTheDocument();
     expect(screen.queryByText(/^Shortcuts:/)).not.toBeInTheDocument();
   });
 
@@ -798,6 +834,7 @@ describe('Composer capture bar', () => {
 
     cleanup();
     render(<Harness />);
+    fireEvent.focus(input());
     const today = screen.getByRole('button', { name: 'Destination: Today' });
     expect(today.querySelector('path')).toHaveAttribute('d', CALENDAR_PATH);
   });

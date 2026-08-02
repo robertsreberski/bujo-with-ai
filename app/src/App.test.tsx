@@ -206,7 +206,7 @@ describe('App capture', () => {
 describe('App composer presets', () => {
   it('takes a destination from a view and pins it as this screen’s chip', async () => {
     render(<App />);
-    expect(screen.getByRole('button', { name: 'Destination: Today' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Destination: Today' })).not.toBeInTheDocument();
 
     journalActions.focusComposer({ kind: 'collection', id: 'reading' });
     await waitFor(() =>
@@ -222,6 +222,7 @@ describe('App composer presets', () => {
     await screen.findByRole('button', { name: 'Destination: Reading' });
 
     await goTo(user, 'Index');
+    await user.click(screen.getByLabelText('Add an entry'));
     expect(screen.getByRole('button', { name: 'Destination: Today' })).toBeInTheDocument();
   });
 

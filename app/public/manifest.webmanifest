@@ -7,7 +7,7 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#16130F",
   "theme_color": "#16130F",
   "icons": [
@@ -30,8 +30,8 @@
   ],
   "shortcuts": [
     {
-      "name": "Today",
-      "short_name": "Today",
+      "name": "Timeline",
+      "short_name": "Timeline",
       "url": "/"
     },
     {
@@ -40,8 +40,8 @@
       "url": "/month"
     },
     {
-      "name": "Review",
-      "short_name": "Review",
+      "name": "Activity",
+      "short_name": "Activity",
       "url": "/review"
     }
   ]
