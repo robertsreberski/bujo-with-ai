@@ -478,8 +478,9 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
       return { original: result.original, copy: result.copy };
     },
 
-    restoreEntry: (id, expectedRevision, owner) => {
-      const result = domain.restoreEntry(id, owner, undefined, {
+    restoreEntry: (id, expectedRevision, owner, mutation) => {
+      const request = { id, ...(expectedRevision === undefined ? {} : { expectedRevision }) };
+      const result = domain.restoreEntry(id, owner, withCanonicalRequest(mutation, request), {
         ...(expectedRevision === undefined ? {} : { expectedRevision }),
       });
       return {

@@ -324,6 +324,7 @@ let sseReplayReady = true;
 let activeResetSequence: number | null = null;
 let resetSequence = 0;
 let timelineRequestSequence = 0;
+const restoreMutationIds = new Map<string, string>();
 let canonicalHistoryRollback: {
   generation: number;
   mirror: MirrorData;
@@ -644,37 +645,23 @@ export async function applyChangeBatch(
     : before.outbox;
   let mirror = applyServerChangeBatch({ ...mirrorFromState(before), cursor }, batch);
   const agentTokens = applyAgentTokenChanges(before.agentTokens, batch);
-  const timelineEntryIds = new Set(before.timelineEntryIds);
-  for (const change of batch.changes) {
-    if (change.kind === 'entry.created') {
-      if (
-        change.payload.deletedAt === null &&
-        (before.timelineAnchorDate === null || change.payload.date <= before.timelineAnchorDate)
-      ) {
-        timelineEntryIds.add(change.payload.id);
-      }
-    } else if (change.kind === 'entry.deleted') {
-      timelineEntryIds.delete(change.payload.id);
-    } else if (change.kind === 'entry.updated') {
-      const previous = before.entriesById[change.payload.id];
-      const fitsTimeline =
-        before.timelineAnchorDate === null || change.payload.date <= before.timelineAnchorDate;
-      if (
-        previous !== undefined &&
-        previous.deletedAt !== null &&
-        change.payload.deletedAt === null
-      ) {
-        if (fitsTimeline) timelineEntryIds.add(change.payload.id);
-      } else if (
-        timelineEntryIds.has(change.payload.id) &&
-        (change.payload.deletedAt !== null || !fitsTimeline)
-      ) {
-        timelineEntryIds.delete(change.payload.id);
-      }
-    }
-  }
-
   mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, remaining));
+  const changedEntryIds = batch.changes.flatMap((change) => {
+    switch (change.kind) {
+      case 'entry.created':
+      case 'entry.updated':
+      case 'entry.deleted':
+        return [change.payload.id];
+      default:
+        return [];
+    }
+  });
+  const timelineEntryIds = reconcileTimelineMembership(
+    before.timelineEntryIds,
+    mirror,
+    changedEntryIds,
+    before.timelineAnchorDate,
+  );
   const recentlyDeleted = new Map(
     before.recentlyDeleted.map((item) => [item.entry.id, item] as const),
   );
@@ -689,7 +676,7 @@ export async function applyChangeBatch(
     ...(invalidatesIndex
       ? { indexSource: mirror.index === null ? ('none' as const) : ('cached' as const) }
       : {}),
-    timelineEntryIds: [...timelineEntryIds],
+    timelineEntryIds,
     outbox: remaining,
     outboxCount: remaining.length,
     agentTokens,
@@ -882,9 +869,13 @@ async function prepareBootstrapReconciliation(
     activityNextCursor: oldest?.at ?? null,
     timeline: response.timeline
       ? {
-          timelineEntryIds: mergeIds(
-            response.timeline.items.map((entry) => entry.id),
-            pendingTimelineIds(projectedOutbox, null),
+          timelineEntryIds: eligibleTimelineIds(
+            mirror,
+            mergeIds(
+              response.timeline.items.map((entry) => entry.id),
+              pendingTimelineIds(projectedOutbox, null),
+            ),
+            null,
           ),
           timelineNextCursor: response.timeline.nextCursor,
           timelineAnchorDate: null,
@@ -1605,22 +1596,12 @@ async function enqueueCommand(command: QueueableCommand): Promise<void> {
     const mirror = recomputeActivityRevertEligibility(
       applyOptimisticCommand(mirrorFromState(state), command),
     );
-    const createdIds = commandCreatedEntries(command)
-      .filter(
-        (entry) => state.timelineAnchorDate === null || entry.date <= state.timelineAnchorDate,
-      )
-      .map((entry) => entry.id);
-    let timelineEntryIds = mergeIds(state.timelineEntryIds, createdIds);
-    if (command.kind === 'entry.update' || command.kind === 'entry.delete') {
-      const entry = mirror.entriesById[command.id];
-      if (
-        !entry ||
-        entry.deletedAt !== null ||
-        (state.timelineAnchorDate !== null && entry.date > state.timelineAnchorDate)
-      ) {
-        timelineEntryIds = timelineEntryIds.filter((id) => id !== command.id);
-      }
-    }
+    const timelineEntryIds = reconcileTimelineMembership(
+      state.timelineEntryIds,
+      mirror,
+      affectedEntryIds(command),
+      state.timelineAnchorDate,
+    );
     return {
       ...mirror,
       indexSource: mirror.index === null ? 'none' : 'cached',
@@ -1736,6 +1717,12 @@ async function settleOutboxItem(item: OutboxItem, rows: ServerRows): Promise<voi
     mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, outbox));
     return {
       ...mirror,
+      timelineEntryIds: reconcileTimelineMembership(
+        state.timelineEntryIds,
+        mirror,
+        affectedEntryIds(item.command),
+        state.timelineAnchorDate,
+      ),
       outbox,
       outboxCount: outbox.length,
       online: sseReplayReady && state.connectionStatus === 'connected',
@@ -1801,6 +1788,7 @@ async function deadLetterItem(
   const originalOutboxIndex = beforeCommit.outbox.findIndex(
     (candidate) => candidate.mutationId === item.mutationId,
   );
+  const affectedIds = affectedEntryIds(item.command);
   let committed = false;
   useJournalStore.setState((state) => {
     if (!state.outbox.some((candidate) => candidate.mutationId === item.mutationId)) return {};
@@ -1808,6 +1796,16 @@ async function deadLetterItem(
     const outbox = state.outbox.filter((candidate) => candidate.mutationId !== item.mutationId);
     return {
       ...prepared.mirror,
+      timelineEntryIds: reconcileTimelineMembership(
+        state.timelineEntryIds,
+        prepared.mirror,
+        affectedIds,
+        state.timelineAnchorDate,
+      ),
+      recentlyDeleted: localRecoveryRecords(
+        prepared.mirror.entriesById,
+        prepared.mirror.collectionsById,
+      ),
       outbox,
       outboxCount: outbox.length,
       deadLetters: [...state.deadLetters, deadLetter],
@@ -1842,6 +1840,13 @@ async function deadLetterItem(
         );
         return {
           ...mirror,
+          timelineEntryIds: reconcileTimelineMembership(
+            state.timelineEntryIds,
+            mirror,
+            affectedIds,
+            state.timelineAnchorDate,
+          ),
+          recentlyDeleted: localRecoveryRecords(mirror.entriesById, mirror.collectionsById),
           outbox,
           outboxCount: outbox.length,
           deadLetters: state.deadLetters.filter((letter) => letter.id !== deadLetter.id),
@@ -2091,14 +2096,52 @@ function mergeIds(...groups: readonly (readonly string[])[]): string[] {
   return [...new Set(groups.flatMap((group) => [...group]))];
 }
 
+/**
+ * The single client-side membership rule for the bounded Timeline projection.
+ * Monthly planning destinations remain available through Month, but never leak
+ * into Timeline through optimistic work, live replay, recovery, or stale pages.
+ */
+function isTimelineEligible(entry: Entry, anchorDate: string | null): boolean {
+  return (
+    entry.deletedAt === null &&
+    !entry.collection?.startsWith('month:') &&
+    (anchorDate === null || entry.date <= anchorDate)
+  );
+}
+
+function eligibleTimelineIds(
+  mirror: Pick<MirrorData, 'entriesById'>,
+  candidates: readonly string[],
+  anchorDate: string | null,
+): string[] {
+  return mergeIds(candidates).filter((id) => {
+    const entry = mirror.entriesById[id];
+    return entry !== undefined && isTimelineEligible(entry, anchorDate);
+  });
+}
+
+function reconcileTimelineMembership(
+  currentIds: readonly string[],
+  mirror: Pick<MirrorData, 'entriesById'>,
+  affectedIds: Iterable<string>,
+  anchorDate: string | null,
+): string[] {
+  const ids = new Set(currentIds);
+  for (const id of affectedIds) {
+    const entry = mirror.entriesById[id];
+    if (entry !== undefined && isTimelineEligible(entry, anchorDate)) ids.add(id);
+    else ids.delete(id);
+  }
+  return eligibleTimelineIds(mirror, [...ids], anchorDate);
+}
+
 function timelineIdsWithRestoredEntry(
   state: Pick<JournalState, 'timelineEntryIds' | 'timelineAnchorDate'>,
   entry: Entry,
 ): string[] {
-  return entry.deletedAt === null &&
-    (state.timelineAnchorDate === null || entry.date <= state.timelineAnchorDate)
+  return isTimelineEligible(entry, state.timelineAnchorDate)
     ? mergeIds(state.timelineEntryIds, [entry.id])
-    : state.timelineEntryIds;
+    : state.timelineEntryIds.filter((id) => id !== entry.id);
 }
 
 function commandCreatedEntries(command: QueueableCommand): Entry[] {
@@ -2119,7 +2162,7 @@ function commandCreatedEntries(command: QueueableCommand): Entry[] {
 function pendingTimelineIds(outbox: readonly OutboxItem[], anchorDate: string | null): string[] {
   return outbox.flatMap((item) =>
     commandCreatedEntries(item.command)
-      .filter((entry) => anchorDate === null || entry.date <= anchorDate)
+      .filter((entry) => isTimelineEligible(entry, anchorDate))
       .map((entry) => entry.id),
   );
 }
@@ -2128,7 +2171,9 @@ async function loadTimelinePage(anchorDate: string | null): Promise<Entry[]> {
   requireOnline();
   const request = ++timelineRequestSequence;
   const lifecycle = lifecycleGeneration;
-  const startingIds = new Set(useJournalStore.getState().timelineEntryIds);
+  const startingState = useJournalStore.getState();
+  const startingIds = new Set(startingState.timelineEntryIds);
+  const startingEntries = startingState.entriesById;
   useJournalStore.setState({ timelineLoading: true, timelineLoadingEarlier: false });
   try {
     const response = await authenticated(() =>
@@ -2142,26 +2187,32 @@ async function loadTimelinePage(anchorDate: string | null): Promise<Entry[]> {
     }
     const current = useJournalStore.getState();
     let mirror = mirrorFromState(current);
-    for (const entry of response.items) mirror = upsertServerEntry(mirror, entry);
+    for (const entry of response.items) {
+      // An SSE/optimistic change that landed during the request is newer than
+      // the page snapshot, even when both happen to carry the same revision.
+      if (current.entriesById[entry.id] !== startingEntries[entry.id]) continue;
+      mirror = upsertServerEntry(mirror, entry);
+    }
     for (const collection of response.collections) {
       mirror = upsertServerCollection(mirror, collection);
     }
     mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, current.outbox));
     const arrivedDuringRequest = current.timelineEntryIds.filter((id) => {
       const entry = current.entriesById[id];
-      return (
-        !startingIds.has(id) &&
-        entry !== undefined &&
-        (anchorDate === null || entry.date <= anchorDate)
-      );
+      return !startingIds.has(id) && entry !== undefined && isTimelineEligible(entry, anchorDate);
     });
-    useJournalStore.setState({
-      ...mirror,
-      timelineEntryIds: mergeIds(
+    const timelineEntryIds = eligibleTimelineIds(
+      mirror,
+      mergeIds(
         response.items.map((entry) => entry.id),
         arrivedDuringRequest,
         pendingTimelineIds(current.outbox, anchorDate),
       ),
+      anchorDate,
+    );
+    useJournalStore.setState({
+      ...mirror,
+      timelineEntryIds,
       timelineNextCursor: response.nextCursor,
       timelineAnchorDate: anchorDate,
       timelineLoaded: true,
@@ -2189,6 +2240,7 @@ async function loadEarlierTimelinePage(): Promise<Entry[]> {
   if (!state.timelineLoaded || cursor === null || state.timelineLoadingEarlier) return [];
   const request = ++timelineRequestSequence;
   const lifecycle = lifecycleGeneration;
+  const startingEntries = state.entriesById;
   useJournalStore.setState({ timelineLoadingEarlier: true });
   try {
     const response = await authenticated(() =>
@@ -2203,16 +2255,24 @@ async function loadEarlierTimelinePage(): Promise<Entry[]> {
     }
     const current = useJournalStore.getState();
     let mirror = mirrorFromState(current);
-    for (const entry of response.items) mirror = upsertServerEntry(mirror, entry);
+    for (const entry of response.items) {
+      if (current.entriesById[entry.id] !== startingEntries[entry.id]) continue;
+      mirror = upsertServerEntry(mirror, entry);
+    }
     for (const collection of response.collections) {
       mirror = upsertServerCollection(mirror, collection);
     }
     mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, current.outbox));
     useJournalStore.setState({
       ...mirror,
-      timelineEntryIds: mergeIds(
-        current.timelineEntryIds,
-        response.items.map((entry) => entry.id),
+      timelineEntryIds: eligibleTimelineIds(
+        mirror,
+        mergeIds(
+          current.timelineEntryIds,
+          response.items.map((entry) => entry.id),
+          pendingTimelineIds(current.outbox, state.timelineAnchorDate),
+        ),
+        state.timelineAnchorDate,
       ),
       // A repeated cursor is a malformed page, not permission to loop forever.
       timelineNextCursor: response.nextCursor === cursor ? null : response.nextCursor,
@@ -2432,7 +2492,11 @@ async function initializeJournal(): Promise<void> {
         activityHasMore: saved.mirror.activityOrder.length >= 50,
         activityNextCursor:
           saved.mirror.activityById[saved.mirror.activityOrder.at(-1) ?? '']?.at ?? null,
-        timelineEntryIds: saved.timeline?.entryIds ?? [],
+        timelineEntryIds: eligibleTimelineIds(
+          mirror,
+          saved.timeline?.entryIds ?? [],
+          saved.timeline?.anchorDate ?? null,
+        ),
         timelineNextCursor: saved.timeline?.nextCursor ?? null,
         timelineAnchorDate: saved.timeline?.anchorDate ?? null,
         timelineLoaded: saved.timeline?.loaded ?? false,
@@ -2650,6 +2714,7 @@ function shutdownJournal(): void {
   pendingReconnect = null;
   flushing = null;
   activeOutboxMutationId = null;
+  restoreMutationIds.clear();
   authenticationProbe = null;
   useJournalStore.setState({
     syncing: false,
@@ -2669,6 +2734,29 @@ const sortTagUsage = (usage: TagUsage[]): TagUsage[] =>
   usage.sort((left, right) => right.uses - left.uses || left.tag.localeCompare(right.tag));
 
 const RECOVERY_WINDOW_MS = 30 * 86_400_000;
+
+async function restoreEntryCanonically(
+  id: string,
+  expectedRevision: number,
+): Promise<Awaited<ReturnType<typeof journalApi.restoreEntry>>> {
+  const attempt = `${id}:${expectedRevision}`;
+  const mutationId = restoreMutationIds.get(attempt) ?? createUlid();
+  restoreMutationIds.set(attempt, mutationId);
+  try {
+    const response = await authenticated(() =>
+      journalApi.restoreEntry(id, mutationId, expectedRevision),
+    );
+    restoreMutationIds.delete(attempt);
+    return response;
+  } catch (error) {
+    // Keep the key when the outcome is indeterminate so the next owner retry
+    // asks the domain to replay the original result instead of restoring twice.
+    if (error instanceof ApiError && error.status > 0 && error.status !== 401 && !error.retryable) {
+      restoreMutationIds.delete(attempt);
+    }
+    throw error;
+  }
+}
 
 function recoveryRecord(
   entry: Entry,
@@ -2996,8 +3084,9 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
           );
         }
         try {
-          const response = await authenticated(() =>
-            journalApi.restoreEntry(id, (pendingDelete.expectedRevision ?? original.revision) + 1),
+          const response = await restoreEntryCanonically(
+            id,
+            (pendingDelete.expectedRevision ?? original.revision) + 1,
           );
           const mirror = upsertServerEntry(mirrorFromState(get()), response.entry);
           set((current) => ({
@@ -3029,7 +3118,7 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
       const deleted =
         state.recentlyDeleted.find((item) => item.entry.id === id)?.entry ?? state.entriesById[id];
       if (!deleted?.deletedAt) throw new Error('Deleted entry is no longer recoverable.');
-      const response = await authenticated(() => journalApi.restoreEntry(id, deleted.revision));
+      const response = await restoreEntryCanonically(id, deleted.revision);
       const mirror = upsertServerEntry(mirrorFromState(get()), response.entry);
       set((current) => ({
         ...mirror,
@@ -3055,13 +3144,17 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
         const response = await authenticated(() => journalApi.listRecentlyDeleted());
         if (lifecycle !== lifecycleGeneration) return;
         set((current) => {
-          // The read may have raced a delete that is still queued or in flight. Keep
-          // that local tombstone visible until SSE/HTTP either confirms or rejects it.
-          const items = new Map(response.items.map((item) => [item.entry.id, item] as const));
-          for (const item of local) {
-            if (current.entriesById[item.entry.id]?.deletedAt) {
-              items.set(item.entry.id, item);
-            }
+          // Build from state at commit time, not the pre-request snapshot: a
+          // queued delete or SSE tombstone may have landed while HTTP was open.
+          // Conversely, an intervening restore must suppress a stale response.
+          const items = new Map<string, RecentlyDeletedEntry>();
+          for (const item of response.items) {
+            const currentEntry = current.entriesById[item.entry.id];
+            if (currentEntry?.deletedAt === null) continue;
+            items.set(item.entry.id, item);
+          }
+          for (const item of localRecoveryRecords(current.entriesById, current.collectionsById)) {
+            items.set(item.entry.id, item);
           }
           return { recentlyDeleted: [...items.values()] };
         });
@@ -3187,10 +3280,12 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
         mirror = upsertServerSummary(mirror, response.summary);
         set({
           ...recomputeActivityRevertEligibility(mirror),
-          timelineEntryIds:
-            current.timelineAnchorDate === null || response.entry.date <= current.timelineAnchorDate
-              ? mergeIds(current.timelineEntryIds, [response.entry.id])
-              : current.timelineEntryIds,
+          timelineEntryIds: reconcileTimelineMembership(
+            current.timelineEntryIds,
+            mirror,
+            [response.entry.id],
+            current.timelineAnchorDate,
+          ),
         });
         await persistNow();
       }
@@ -3713,7 +3808,7 @@ export const selectEntries = (state: JournalState): Entry[] =>
 export const selectTimelineEntries = (state: JournalState): Entry[] =>
   state.timelineEntryIds.flatMap((id) => {
     const entry = state.entriesById[id];
-    return entry && entry.deletedAt === null ? [entry] : [];
+    return entry && isTimelineEligible(entry, state.timelineAnchorDate) ? [entry] : [];
   });
 export const selectCollections = (state: JournalState): Collection[] =>
   Object.values(state.collectionsById);

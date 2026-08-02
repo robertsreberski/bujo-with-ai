@@ -221,7 +221,14 @@ class MockOperations implements ApiJournalOperations {
   scheduleMonthly() {
     return { original: entry, copy: entry, collection: { id: 'month:2026-07' } };
   }
-  restoreEntry() {
+  restoreEntry(
+    id: string,
+    expectedRevision: number | undefined,
+    _actor: OwnerActor,
+    mutation: MutationContext,
+  ) {
+    this.rememberMutation(this.ownerMutations, mutation.id, { id, expectedRevision });
+    this.writes.push({ name: 'restoreEntry', mutation: mutation.id });
     return {
       entry,
       destination: { outcome: 'original', originalCollectionId: null },
@@ -890,7 +897,7 @@ describe('one-origin HTTP application', () => {
   });
 
   it('lists and restores recently deleted entries for a paired device', async () => {
-    const { application } = await build();
+    const { application, operations } = await build();
     openApplications.push(application);
     await request(application.app)
       .get('/api/recovery/deleted')
@@ -914,10 +921,31 @@ describe('one-origin HTTP application', () => {
       .set('Origin', 'http://localhost:5178')
       .set('Cookie', cookie)
       .send({ expectedRevision: 2 })
+      .expect(400);
+
+    await request(application.app)
+      .post(`/api/entries/${ENTRY_ID}/restore`)
+      .set('Host', 'localhost:5178')
+      .set('Origin', 'http://localhost:5178')
+      .set('Cookie', cookie)
+      .set('Idempotency-Key', MUTATION_ID)
+      .send({ expectedRevision: 2 })
       .expect(200, {
         entry,
         destination: { outcome: 'original', originalCollectionId: null },
       });
+    await request(application.app)
+      .post(`/api/entries/${ENTRY_ID}/restore`)
+      .set('Host', 'localhost:5178')
+      .set('Origin', 'http://localhost:5178')
+      .set('Cookie', cookie)
+      .set('Idempotency-Key', MUTATION_ID)
+      .send({ expectedRevision: 2 })
+      .expect(200);
+    expect(operations.writes.filter((write) => write.name === 'restoreEntry')).toMatchObject([
+      { mutation: MUTATION_ID },
+      { mutation: MUTATION_ID },
+    ]);
   });
 
   it('serves the bounded index read model to a paired device only', async () => {

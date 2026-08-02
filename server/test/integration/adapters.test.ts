@@ -150,6 +150,25 @@ describe('HTTP and MCP domain adapters', () => {
     expect(domain.authenticateAgent(issued.secret)?.scopes).toEqual(['timeline:read']);
   });
 
+  it('replays an owner restore by its canonical mutation key', async () => {
+    const { domain, owner, adapters } = fixture();
+    const created = createdEntry(domain, owner, {
+      id: ulid(),
+      date: '2026-07-31',
+      type: 'note',
+      text: 'Retry-safe restore',
+    });
+    const deleted = domain.deleteEntry(created.id, owner).entry;
+    const mutation = { id: ulid() };
+    if (!adapters.api.restoreEntry) throw new Error('Expected restore adapter');
+
+    const first = await adapters.api.restoreEntry(created.id, deleted.revision, owner, mutation);
+    const replay = await adapters.api.restoreEntry(created.id, deleted.revision, owner, mutation);
+
+    expect(replay).toEqual(first);
+    expect(domain.getEntry(created.id)?.revision).toBe(deleted.revision + 1);
+  });
+
   it('selects summaries by month and mutates an explicitly selected older summary', async () => {
     const { domain, owner, adapters } = fixture();
     const agent = {
