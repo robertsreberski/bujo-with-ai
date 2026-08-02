@@ -5,39 +5,66 @@ import type { JournalConfig } from '../config.js';
 import { journalDate } from '../config.js';
 import {
   ActivityItemSchema,
-  ActivityViewSchema,
   AgentTokenScopeSchema,
   AgentTokenSchema,
   CalendarMonthSchema,
-  CollectionSchema,
-  EntryPatchSchema,
   EntrySchema,
-  EntryTypeSchema,
-  IsoTimestampSchema,
   JournalExportSchema,
   JournalExportV2Schema,
-  MigrationOperationSchema,
-  ReflectionSchema,
-  ReflectionVersionSchema,
-  SearchInputSchema,
   SettingsSchema,
   SummarySchema,
-  UlidSchema,
 } from '../contracts/index.js';
 import type { JournalDatabase } from '../db/database.js';
+import { ActivityReflection } from './activity-reflection.js';
+import { CollectionRecovery } from './collection-recovery.js';
+import { EntryCommands } from './entry-commands.js';
 import { DomainError } from './errors.js';
 import {
-  JournalSearchParseError,
-  journalSearchNeedles,
-  parseJournalSearch,
-} from './search-query.js';
+  activityChange,
+  activityContentExpired,
+  actorRefs,
+  collectionChange,
+  entryChange,
+  entryCreatedChange,
+  invalid,
+  insertEntry as insertStoredEntry,
+  isMonday,
+  mapActivity,
+  mapCollection,
+  mapEntry,
+  mapSummary,
+  mondayOf,
+  normalizeSource,
+  normalizeText,
+  parseStringArray,
+  reflectionChange,
+  replaceEntry as replaceStoredEntry,
+  selectEntry as selectStoredEntry,
+  snapshotEntry,
+  snapshotEqual,
+  snapshotSummary,
+  stableJson,
+  summaryChange,
+  upsertChange,
+  validateDate,
+  validateId,
+} from './kernel.js';
 import type {
-  ActivityAction,
-  ActivityActorSummary,
+  ActivityAuditPort,
+  ActivityRow,
+  CollectionRow,
+  CollectionDestinationPort,
+  EntryRow,
+  EntryPersistencePort,
+  JournalWritePort,
+  ReflectionSlotRow,
+  SummaryRow,
+  WriteContext,
+} from './kernel.js';
+import { JournalSearchParseError, parseJournalSearch } from './search-query.js';
+import type {
   ActivityItem,
   ActivityKind,
-  ActivityLineage,
-  ActivityPresentation,
   ActivityView,
   ActorContext,
   AgentMigrationResult,
@@ -53,7 +80,6 @@ import type {
   EntityChange,
   Entry,
   EntryPatch,
-  EntryState,
   EntryType,
   EntryWriteResult,
   ImportReport,
@@ -65,7 +91,6 @@ import type {
   PairedDevice,
   RateLimitResult,
   Reflection,
-  ReflectionVersion,
   RecentlyDeletedEntry,
   SearchEntriesInput,
   SearchEntriesResult,
@@ -74,139 +99,7 @@ import type {
   Summary,
   TagUsage,
 } from './types.js';
-
-interface EntryRow {
-  readonly id: string;
-  readonly date: string;
-  readonly type: EntryType;
-  readonly text: string;
-  readonly state: EntryState;
-  readonly time: string | null;
-  readonly tags: string;
-  readonly author: 'me' | 'ai';
-  readonly source: string | null;
-  readonly migrations: number;
-  readonly collection: string | null;
-  readonly created_at: string;
-  readonly updated_at: string;
-  readonly deleted_at: string | null;
-  readonly revision: number;
-}
-
-type NewEntry = Omit<Entry, 'createdAt' | 'updatedAt' | 'deletedAt' | 'revision'>;
-
-function mapEntry(row: EntryRow): Entry {
-  return EntrySchema.parse({
-    id: row.id,
-    date: row.date,
-    type: row.type,
-    text: row.text,
-    state: row.state,
-    time: row.time,
-    tags: parseStringArray(row.tags),
-    author: row.author,
-    source: row.source,
-    migrations: row.migrations,
-    collection: row.collection,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    revision: row.revision,
-    deletedAt: row.deleted_at,
-  });
-}
-
-function mapCollection(row: CollectionRow): Collection {
-  return CollectionSchema.parse({
-    id: row.id,
-    name: row.name,
-    note: row.note,
-    createdAt: row.created_at,
-    archivedAt: row.archived_at,
-  });
-}
-
-function mapSummary(row: SummaryRow): Summary {
-  return SummarySchema.parse({
-    id: row.id,
-    weekStart: row.week_start,
-    text: row.text,
-    status: row.status,
-    source: row.source,
-    tokenId: row.token_id,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    savedEntryId: row.saved_entry_id,
-    revision: row.revision,
-  });
-}
-
-function mapReflectionVersion(row: ReflectionVersionRow): ReflectionVersion {
-  return ReflectionVersionSchema.parse({
-    id: row.id,
-    number: row.version_number,
-    text: row.text,
-    sourceFrom: row.source_from,
-    sourceTo: row.source_to,
-    generator: {
-      tokenId: row.generator_token_id,
-      label: row.generator_label,
-      ...(row.generator_tool === null ? {} : { tool: row.generator_tool }),
-      source: row.source,
-    },
-    generatedAt: row.generated_at,
-    sourceEntries: JSON.parse(row.source_entries) as unknown,
-  });
-}
-
-function mapReflection(
-  row: ReflectionSlotRow,
-  versionRows: readonly ReflectionVersionRow[],
-): Reflection {
-  const versions = versionRows.map(mapReflectionVersion);
-  const currentVersion =
-    row.current_version_id === null
-      ? null
-      : (versions.find((version) => version.id === row.current_version_id) ?? null);
-  return ReflectionSchema.parse({
-    id: row.id,
-    weekStart: row.week_start,
-    weekEnd: row.week_end,
-    status: row.status,
-    revision: row.revision,
-    requestId: row.request_id,
-    requestedAt: row.requested_at,
-    claimedAt: row.claimed_at,
-    claimedBy:
-      row.claimed_at === null || row.claimed_token_id === null || row.claimed_label === null
-        ? null
-        : {
-            tokenId: row.claimed_token_id,
-            label: row.claimed_label,
-            ...(row.claimed_tool === null ? {} : { tool: row.claimed_tool }),
-          },
-    failure: row.failure,
-    currentVersionId: row.current_version_id,
-    currentVersion,
-    versions,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  });
-}
-
-function mapActivity(row: ActivityRow): ActivityItem {
-  return ActivityItemSchema.parse({
-    id: row.id,
-    at: row.at,
-    kind: row.kind,
-    text: row.text,
-    origin: JSON.parse(row.origin) as unknown,
-    refs: JSON.parse(row.refs) as unknown,
-    preImages: JSON.parse(row.pre_images) as unknown,
-    postImages: JSON.parse(row.post_images) as unknown,
-    revertedAt: row.reverted_at,
-    revertedByActivityId: row.reverted_by_activity_id,
-  });
-}
+import { TimelineQueries } from './timeline-queries.js';
 
 function mapAgentToken(row: AgentTokenRow): AgentTokenRecord {
   return AgentTokenSchema.parse({
@@ -217,87 +110,6 @@ function mapAgentToken(row: AgentTokenRow): AgentTokenRecord {
     lastUsedAt: row.last_used_at,
     revokedAt: row.revoked_at,
   });
-}
-
-function normalizeCreateEntry(
-  input: CreateEntryInput,
-  actor: ActorContext,
-  today: string,
-  makeId: () => string = ulid,
-): NewEntry {
-  const id = input.id ?? makeId();
-  validateId(id);
-  const type = input.type ?? 'task';
-  validateEntryType(type);
-  const date = input.date ?? today;
-  validateDate(date);
-  if (actor.kind === 'agent') assertDateWithin(date, today, 366);
-  const text = normalizeText(input.text, 500, 'entry text');
-  const time = input.time === undefined || input.time === null ? null : validateTime(input.time);
-  const tags = normalizeTags(input.tags ?? []);
-  const collection = input.collection ?? null;
-  if (collection !== null) validateCollectionId(collection);
-  const author = actor.kind === 'agent' ? 'ai' : 'me';
-  const source = actor.kind === 'agent' ? normalizeSource(input.source ?? '') : null;
-  return {
-    id,
-    date,
-    type,
-    text,
-    state: isActionable(type) ? 'open' : 'logged',
-    time,
-    tags,
-    author,
-    source,
-    migrations: 0,
-    collection,
-  };
-}
-
-function normalizePatchedEntry(before: Entry, patchInput: EntryPatch): Entry {
-  const patch = EntryPatchSchema.parse(patchInput);
-  const type = patch.type ?? before.type;
-  const implicitState =
-    patch.type !== undefined && patch.state === undefined
-      ? isActionable(type)
-        ? 'open'
-        : 'logged'
-      : before.state;
-  const entry = {
-    ...before,
-    ...patch,
-    type,
-    state: patch.state ?? implicitState,
-    text: patch.text === undefined ? before.text : normalizeText(patch.text, 500, 'entry text'),
-    date: patch.date === undefined ? before.date : validateDate(patch.date),
-    time:
-      patch.time === undefined
-        ? before.time
-        : patch.time === null
-          ? null
-          : validateTime(patch.time),
-    tags: patch.tags === undefined ? before.tags : normalizeTags(patch.tags),
-    collection: patch.collection === undefined ? before.collection : patch.collection,
-  };
-  if (entry.collection !== null) validateCollectionId(entry.collection);
-  return EntrySchema.parse(entry);
-}
-
-function normalizeCollectionInput(input: {
-  readonly id: string;
-  readonly name: string;
-  readonly note?: string | null;
-}): Pick<Collection, 'id' | 'name' | 'note'> {
-  validateCollectionId(input.id);
-  return {
-    id: input.id,
-    name: validateCollectionName(input.name),
-    note: normalizeOptionalLine(input.note ?? null, 300, 'collection note'),
-  };
-}
-
-function validateCollectionName(value: string): string {
-  return normalizeText(value, 120, 'collection name');
 }
 
 function validateEntry(entry: Entry): void {
@@ -330,39 +142,6 @@ function validateSavedViewQueries(views: NonNullable<Settings['savedViews']> | u
   }
 }
 
-function validateSearch(input: SearchEntriesInput): void {
-  const canonical = {
-    ...(input.query === undefined ? {} : { query: input.query }),
-    ...(input.type === undefined ? {} : { type: input.type }),
-    ...(input.state === undefined ? {} : { state: input.state }),
-    ...(input.author === undefined ? {} : { author: input.author }),
-    ...(input.tag === undefined ? {} : { tag: input.tag }),
-    ...(input.collection === undefined ? {} : { collection: input.collection }),
-    ...(input.dateFrom === undefined ? {} : { dateFrom: input.dateFrom }),
-    ...(input.dateTo === undefined ? {} : { dateTo: input.dateTo }),
-    limit: input.limit ?? 25,
-  };
-  SearchInputSchema.parse(canonical);
-  if (input.offset !== undefined && (!Number.isInteger(input.offset) || input.offset < 0)) {
-    invalid('offset must be a non-negative integer');
-  }
-}
-
-function validateAgentMigration(input: ApplyAgentMigrationInput): void {
-  if (!['split', 'drop', 'retag', 'move', 'other'].includes(input.kind))
-    invalid('Unknown migration kind');
-  normalizeText(input.title, 120, 'migration title');
-  normalizeText(input.detail, 300, 'migration detail');
-  if (input.ops.length < 1 || input.ops.length > 10)
-    invalid('Migration requires 1 to 10 operations');
-  for (const operation of input.ops) {
-    if (!MigrationOperationSchema.safeParse(operation).success) {
-      invalid('Migration operation does not satisfy the revision-bound contract');
-    }
-  }
-  if ((input.lines?.length ?? 0) > 6) invalid('Migration supports at most 6 display lines');
-}
-
 function validateActor(actor: ActorContext): void {
   switch (actor.kind) {
     case 'owner':
@@ -383,111 +162,10 @@ function validateMutationKey(value: string): void {
     invalid('Mutation key must be 8 to 128 visible ASCII characters');
 }
 
-function validateId(id: string): void {
-  const result = UlidSchema.safeParse(id);
-  if (!result.success) invalid('Expected a canonical ULID');
-}
-
-function validateDate(value: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) invalid('Date must be YYYY-MM-DD');
-  const [year, month, day] = value.split('-').map(Number);
-  const date = new Date(Date.UTC(year ?? 0, (month ?? 0) - 1, day ?? 0));
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() + 1 !== month ||
-    date.getUTCDate() !== day
-  ) {
-    invalid('Date is not a valid calendar day');
-  }
-  return value;
-}
-
-function validateTime(value: string): string {
-  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) invalid('Time must be HH:MM');
-  return value;
-}
-
-function assertDateWithin(value: string, center: string, days: number): void {
-  const distance = Math.abs(Date.parse(`${value}T00:00:00Z`) - Date.parse(`${center}T00:00:00Z`));
-  if (distance > days * 86_400_000) {
-    invalid(`Agent entry date must be within ${days} days of server today`);
-  }
-}
-
-function validateEntryType(value: string): asserts value is EntryType {
-  if (!['task', 'event', 'note', 'idea', 'question', 'habit', 'mood'].includes(value)) {
-    invalid('Unknown entry type');
-  }
-}
-
-function validateCollectionId(value: string): void {
-  if (!/^(?:[a-z0-9-]+|month:\d{4}-(?:0[1-9]|1[0-2]))$/.test(value) || value.length > 80) {
-    invalid('Collection id must be a lowercase slug or month:YYYY-MM');
-  }
-}
-
-function normalizeText(value: string, maximum: number, label: string): string {
-  const normalized = value.trim();
-  if (normalized.length < 1 || normalized.length > maximum || /[\r\n]/.test(normalized)) {
-    invalid(`${label} must be one line between 1 and ${maximum} characters`);
-  }
-  return normalized;
-}
-
-function normalizeOptionalLine(
-  value: string | null,
-  maximum: number,
-  label: string,
-): string | null {
-  if (value === null) return null;
-  return normalizeText(value, maximum, label);
-}
-
-function normalizeSource(value: string): string {
-  const source = normalizeText(value, 300, 'source');
-  if (source.length < 5) invalid('Agent source must contain at least 5 characters');
-  return source;
-}
-
-function normalizeTag(value: string): string {
-  const tag = value.replace(/^#/, '').trim().toLowerCase();
-  if (!/^[a-z0-9-]{1,64}$/.test(tag)) invalid('Tags use lowercase letters, digits, and hyphens');
-  return tag;
-}
-
-function normalizeTags(values: readonly string[]): string[] {
-  if (values.length > 50) invalid('An entry can have at most 50 tags');
-  return [...new Set(values.map(normalizeTag))];
-}
-
 function normalizeScope(value: string): AgentTokenScope {
   const parsed = AgentTokenScopeSchema.safeParse(value);
   if (!parsed.success) invalid(`Unknown agent token scope: ${value}`);
   return parsed.data;
-}
-
-function isActionable(type: EntryType): boolean {
-  return type === 'task' || type === 'habit';
-}
-
-function assertActionableOpen(entry: Entry, operation: string): void {
-  if (!isActionable(entry.type) || entry.state !== 'open') {
-    throw new DomainError('CONFLICT', `Only open tasks or habits can ${operation}`);
-  }
-}
-
-function assertExpectedRevision(entry: Entry, expected: number | undefined): void {
-  if (expected !== undefined && entry.revision !== expected) {
-    throw new DomainError('CONFLICT', `Entry changed since revision ${expected}`, {
-      details: { expectedRevision: expected, actualRevision: entry.revision },
-    });
-  }
-}
-
-function requireAgentExpectedRevision(actor: ActorContext, expected: number | undefined): void {
-  if (actor.kind === 'agent' && expected === undefined) {
-    invalid('Agent update and delete operations require expectedRevision');
-  }
 }
 
 function assertExpectedSummaryRevision(summary: Summary, expected: number | undefined): void {
@@ -496,20 +174,6 @@ function assertExpectedSummaryRevision(summary: Summary, expected: number | unde
       details: { expectedRevision: expected, actualRevision: summary.revision },
     });
   }
-}
-
-function sameCreateIntent(existing: Entry, input: NewEntry): boolean {
-  return (
-    existing.deletedAt === null &&
-    existing.date === input.date &&
-    existing.type === input.type &&
-    existing.text === input.text &&
-    existing.time === input.time &&
-    stableJson(existing.tags) === stableJson(input.tags) &&
-    existing.author === input.author &&
-    existing.source === input.source &&
-    existing.collection === input.collection
-  );
 }
 
 function actorStorageIdentity(actor: ActorContext): {
@@ -542,262 +206,12 @@ function changeOrigin(actor: ActorContext): ChangeBatch['origin'] {
   }
 }
 
-function activityOrigin(actor: ActorContext): ActivityItem['origin'] {
-  switch (actor.kind) {
-    case 'owner':
-      return { actor: 'app', deviceId: actor.deviceId };
-    case 'agent':
-      return {
-        actor: 'mcp',
-        tokenId: actor.tokenId,
-        tokenLabel: actor.tokenLabel,
-        ...(actor.tool === undefined ? {} : { tool: actor.tool }),
-        ...(actor.tailscaleUserLogin === undefined
-          ? {}
-          : { tailscaleUserLogin: actor.tailscaleUserLogin }),
-      };
-    case 'system':
-      return { actor: 'system' };
-  }
-}
-
-function actorRefs(_actor: ActorContext, entryIds: readonly string[]): ActivityItem['refs'] {
-  return { entryIds: [...entryIds] };
-}
-
-function auditActor(
-  origin: ActivityItem['origin'],
-  tokenLabels: ReadonlyMap<string, string>,
-): ActivityActorSummary {
-  if (origin.actor === 'app') return { kind: 'owner', label: 'You' };
-  if (origin.actor === 'system') return { kind: 'system', label: 'Journal' };
-  const tokenId = origin.tokenId;
-  const label =
-    origin.tokenLabel ??
-    (tokenId === undefined
-      ? 'Assistant'
-      : (tokenLabels.get(tokenId) ?? `Agent …${tokenId.slice(-6)}`));
-  return {
-    kind: 'agent',
-    label,
-    ...(tokenId === undefined ? {} : { tokenId }),
-    ...(origin.tool === undefined ? {} : { tool: origin.tool }),
-  };
-}
-
-function auditAction(activity: ActivityItem): ActivityAction {
-  switch (activity.kind) {
-    case 'agent-add':
-      return 'added';
-    case 'agent-update':
-      return 'updated';
-    case 'agent-delete':
-      return 'deleted';
-    case 'agent-migration':
-      return activity.text.startsWith('Scheduled ') ? 'scheduled' : 'migrated';
-    case 'summary-filed':
-      return 'filed-summary';
-    case 'summary-saved':
-      return 'saved-summary';
-    case 'revert':
-      return 'reverted';
-  }
-}
-
-function activityEntryContentRedacted(activity: ActivityItem): boolean {
-  return (
-    activity.refs.entryIds.length > 0 &&
-    ![...activity.preImages, ...activity.postImages].some(
-      (snapshot) => snapshot.entity === 'entry' && snapshot.row !== null,
-    )
-  );
-}
-
-function auditReason(activity: ActivityItem): string | null {
-  if (activityEntryContentRedacted(activity)) return null;
-  const separator = activity.text.indexOf(' — ');
-  if (separator >= 0) return activity.text.slice(separator + 3).trim() || null;
-  if (activity.kind === 'agent-add') {
-    const snapshot = activity.postImages.find(
-      (snapshot) => snapshot.entity === 'entry' && snapshot.row !== null,
-    );
-    return snapshot?.entity === 'entry' ? snapshot.row?.source?.trim() || null : null;
-  }
-  if (activity.kind === 'summary-filed') {
-    const snapshot = activity.postImages.find(
-      (snapshot) => snapshot.entity === 'summary' && snapshot.row !== null,
-    );
-    return snapshot?.entity === 'summary' ? snapshot.row?.source?.trim() || null : null;
-  }
-  return null;
-}
-
-function activityEntry(activity: ActivityItem, entryId: string): Entry | null {
-  for (const images of [activity.postImages, activity.preImages]) {
-    const snapshot = images.find(
-      (candidate) => candidate.entity === 'entry' && candidate.id === entryId,
-    );
-    if (snapshot?.entity === 'entry' && snapshot.row !== null) return snapshot.row;
-  }
-  return null;
-}
-
-function auditObjectLabel(activity: ActivityItem): string {
-  const primaryEntryId = activity.refs.entryIds[0];
-  if (primaryEntryId !== undefined) {
-    if (activity.refs.entryIds.length > 1) return `${activity.refs.entryIds.length} entries`;
-    const row = activityEntry(activity, primaryEntryId);
-    if (row === null) return `Entry …${primaryEntryId.slice(-6)}`;
-    const label = row.text.length <= 100 ? row.text : `${row.text.slice(0, 99)}…`;
-    return `“${label}”`;
-  }
-  const summary = [...activity.postImages, ...activity.preImages].find(
-    (snapshot) => snapshot.entity === 'summary' && snapshot.row !== null,
-  );
-  if (summary?.entity === 'summary' && summary.row !== null) {
-    return `weekly summary for ${summary.row.weekStart}`;
-  }
-  return 'journal activity';
-}
-
-function migrationLineage(activity: ActivityItem): ActivityLineage | null {
-  if (activity.kind !== 'agent-migration') return null;
-  const fromEntryIds: string[] = [];
-  const toEntryIds: string[] = [];
-  const createdEntryIds: string[] = [];
-  for (const [index, before] of activity.preImages.entries()) {
-    const after = activity.postImages[index];
-    if (before.entity !== 'entry' || after?.entity !== 'entry') continue;
-    if (before.row !== null) fromEntryIds.push(before.id);
-    if (before.row === null && after.row !== null) createdEntryIds.push(after.id);
-    if (after.row !== null) toEntryIds.push(after.id);
-  }
-  if (fromEntryIds.length === 0 && toEntryIds.length === 0) return null;
-  return {
-    fromEntryIds: [...new Set(fromEntryIds)],
-    toEntryIds: [...new Set(createdEntryIds.length > 0 ? createdEntryIds : toEntryIds)],
-    relatedActivityId: activity.refs.activityId ?? activity.revertedByActivityId ?? null,
-  };
-}
-
-function snapshotEntry(entry: Entry): Snapshot {
-  return { entity: 'entry', id: entry.id, row: entry };
-}
-
-function snapshotSummary(summary: Summary): Snapshot {
-  return { entity: 'summary', id: summary.id, row: summary };
-}
-
-function snapshotCollection(collection: Collection): Snapshot {
-  return { entity: 'collection', id: collection.id, row: collection };
-}
-
-function snapshotEqual(left: Snapshot['row'], right: Snapshot['row']): boolean {
-  return stableJson(left) === stableJson(right);
-}
-
-function upsertChange(
-  entity: 'entry' | 'collection' | 'summary',
-  row: Entry | Collection | Summary,
-): EntityChange {
-  switch (entity) {
-    case 'entry':
-      return entryChange(row as Entry);
-    case 'collection':
-      return collectionChange(row as Collection);
-    case 'summary':
-      return summaryChange(row as Summary);
-  }
-}
-
-function entryChange(entry: Entry): EntityChange {
-  return { kind: entry.deletedAt === null ? 'entry.updated' : 'entry.deleted', payload: entry };
-}
-
-function entryCreatedChange(entry: Entry): EntityChange {
-  return { kind: 'entry.created', payload: entry };
-}
-
-function collectionChange(collection: Collection | null, id?: string): EntityChange {
-  if (collection !== null) return { kind: 'collection.changed', payload: collection };
-  if (id === undefined) throw new Error('Removed collection changes require an id');
-  return { kind: 'collection.changed', payload: { id } };
-}
-
-function summaryChange(summary: Summary | null, id?: string): EntityChange {
-  if (summary !== null) return { kind: 'summary.changed', payload: summary };
-  if (id === undefined) throw new Error('Removed summary changes require an id');
-  return { kind: 'summary.changed', payload: { id } };
-}
-
-function reflectionChange(reflection: Reflection): EntityChange {
-  return { kind: 'reflection.changed', payload: reflection };
-}
-
-function activityChange(activity: ActivityItem): EntityChange {
-  return { kind: 'activity.appended', payload: activity };
-}
-
 function settingsChange(settings: Settings): EntityChange {
   return { kind: 'settings.changed', payload: settings };
 }
 
 function tokenChange(token: AgentTokenRecord): EntityChange {
   return { kind: 'token.changed', payload: token };
-}
-
-function addWhere(where: string[], params: unknown[], clause: string, value: unknown): void {
-  where.push(clause);
-  params.push(value);
-}
-
-function ftsPrefixQuery(value: string): string {
-  const tokens = value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
-  if (tokens.length === 0) return '"journal-no-token-sentinel"';
-  return tokens.map((token) => `"${token}"*`).join(' AND ');
-}
-
-function entryPredicate(input: SearchEntriesInput): { predicate: string; params: unknown[] } {
-  const where: string[] = [];
-  const params: unknown[] = [];
-  if (input.includeDeleted !== true) where.push('e.deleted_at IS NULL');
-  if (input.excludeMonthlyCollections === true) {
-    where.push("(e.collection IS NULL OR e.collection NOT LIKE 'month:%')");
-  }
-  if (input.type !== undefined) addWhere(where, params, 'e.type = ?', input.type);
-  if (input.state !== undefined) addWhere(where, params, 'e.state = ?', input.state);
-  if (input.author !== undefined) addWhere(where, params, 'e.author = ?', input.author);
-  if (input.dateFrom !== undefined) addWhere(where, params, 'e.date >= ?', input.dateFrom);
-  if (input.dateTo !== undefined) addWhere(where, params, 'e.date <= ?', input.dateTo);
-  if (input.collection === 'daily') where.push('e.collection IS NULL');
-  else if (input.collection !== undefined)
-    addWhere(where, params, 'e.collection = ?', input.collection);
-  const exactTag =
-    input.tag ?? (input.query?.trim().startsWith('#') ? input.query.trim().slice(1) : undefined);
-  if (exactTag !== undefined && exactTag !== '') {
-    const tag = normalizeTag(exactTag);
-    where.push('EXISTS (SELECT 1 FROM json_each(e.tags) WHERE value = ?)');
-    params.push(tag);
-  } else if (input.query !== undefined && input.query.trim() !== '') {
-    const needles = journalSearchNeedles(input.query);
-    for (const needle of needles) {
-      where.push(
-        `(e.rowid IN (SELECT rowid FROM entries_fts WHERE entries_fts MATCH ?)
-          OR instr(journal_search_normalize(e.text), ?) > 0
-          OR instr(journal_search_normalize(e.tags), ?) > 0)`,
-      );
-      params.push(ftsPrefixQuery(needle), needle, needle);
-    }
-  }
-  return { predicate: where.length === 0 ? '1 = 1' : where.join(' AND '), params };
-}
-
-function parseStringArray(json: string): string[] {
-  const value = JSON.parse(json) as unknown;
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    throw new DomainError('INTEGRITY_ERROR', 'Invalid string array stored in the journal database');
-  }
-  return value;
 }
 
 function hashSecret(secret: string): string {
@@ -814,152 +228,10 @@ function stableHash(value: unknown): string {
   return createHash('sha256').update(stableJson(value)).digest('hex');
 }
 
-function stableJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .filter((key) => record[key] !== undefined)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
-    .join(',')}}`;
-}
-
-function mondayOf(dateString: string): string {
-  const date = new Date(`${validateDate(dateString)}T00:00:00Z`);
-  const weekday = date.getUTCDay();
-  const delta = weekday === 0 ? -6 : 1 - weekday;
-  date.setUTCDate(date.getUTCDate() + delta);
-  return date.toISOString().slice(0, 10);
-}
-
-function addCalendarDays(dateString: string, days: number): string {
-  const date = new Date(`${validateDate(dateString)}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function isMonday(dateString: string): boolean {
-  return new Date(`${validateDate(dateString)}T00:00:00Z`).getUTCDay() === 1;
-}
-
-function formatMonthName(month: string): string {
-  const [year, monthNumber] = month.split('-').map(Number);
-  return new Intl.DateTimeFormat('en', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(
-    new Date(Date.UTC(year ?? 0, (monthNumber ?? 1) - 1, 1)),
-  );
-}
-
-function truncateForActivity(value: string): string {
-  return value.length <= 120 ? value : `${value.slice(0, 117)}…`;
-}
-
-function migrationActivityText(input: ApplyAgentMigrationInput): string {
-  const lines = (input.lines ?? []).map((line, index) => `${index + 1}. ${line}`).join(' ');
-  const sources = [
-    ...new Set(
-      input.ops
-        .filter((operation) => operation.op === 'create')
-        .map((operation) => operation.entry.source),
-    ),
-  ];
-  const parts = [`Applied migration: ${input.title}`, input.detail];
-  if (lines !== '') parts.push(lines);
-  if (sources.length > 0) parts.push(`Source: ${sources.join('; ')}`);
-  const text = parts.join(' — ').replace(/\s+/g, ' ').trim();
-  return text.length <= 500 ? text : `${text.slice(0, 499)}…`;
-}
-
 function assertImportMatch(entity: string, id: string, existing: unknown, incoming: unknown): void {
   if (stableJson(existing) !== stableJson(incoming)) {
     throw new DomainError('CONFLICT', `${entity} ${id} already exists with different content`);
   }
-}
-
-function invalid(message: string): never {
-  throw new DomainError('VALIDATION_ERROR', message);
-}
-
-interface CollectionRow {
-  readonly id: string;
-  readonly name: string;
-  readonly note: string | null;
-  readonly created_at: string;
-  readonly updated_at: string;
-  readonly archived_at: string | null;
-}
-
-interface CountedCollectionRow extends CollectionRow {
-  readonly count: number;
-}
-
-interface MonthCountRow {
-  readonly month: string;
-  readonly count: number;
-}
-
-interface TypeCountRow {
-  readonly type: string;
-  readonly count: number;
-}
-
-interface SummaryRow {
-  readonly id: string;
-  readonly week_start: string;
-  readonly text: string;
-  readonly status: Summary['status'];
-  readonly source: string;
-  readonly token_id: string | null;
-  readonly created_at: string;
-  readonly updated_at: string;
-  readonly saved_entry_id: string | null;
-  readonly revision: number;
-}
-
-interface ReflectionSlotRow {
-  readonly id: string;
-  readonly week_start: string;
-  readonly week_end: string;
-  readonly status: Reflection['status'];
-  readonly request_id: string | null;
-  readonly requested_at: string | null;
-  readonly claimed_at: string | null;
-  readonly claimed_token_id: string | null;
-  readonly claimed_label: string | null;
-  readonly claimed_tool: string | null;
-  readonly failure: string | null;
-  readonly current_version_id: string | null;
-  readonly created_at: string;
-  readonly updated_at: string;
-  readonly revision: number;
-}
-
-interface ReflectionVersionRow {
-  readonly id: string;
-  readonly reflection_id: string;
-  readonly version_number: number;
-  readonly text: string;
-  readonly source_from: string;
-  readonly source_to: string;
-  readonly generator_token_id: string;
-  readonly generator_label: string;
-  readonly generator_tool: string | null;
-  readonly source: string;
-  readonly generated_at: string;
-  readonly source_entries: string;
-}
-
-interface ActivityRow {
-  readonly id: string;
-  readonly at: string;
-  readonly kind: ActivityKind;
-  readonly text: string;
-  readonly origin: string;
-  readonly refs: string;
-  readonly pre_images: string;
-  readonly post_images: string;
-  readonly reverted_at: string | null;
-  readonly reverted_by_activity_id: string | null;
 }
 
 interface AgentTokenRow {
@@ -988,12 +260,6 @@ interface MutationRow {
   readonly request_hash: string;
   readonly status_code: number;
   readonly result: string;
-}
-
-interface WriteContext {
-  readonly now: string;
-  readonly changes: EntityChange[];
-  readonly implicitSnapshots: Array<{ readonly pre: Snapshot; readonly post: Snapshot }>;
 }
 
 interface MutationOutcome<T> {
@@ -1048,6 +314,10 @@ export class JournalDomain {
   private readonly now: () => Date;
   private readonly idFactory: () => string;
   private readonly listeners = new Set<ChangeListener>();
+  private readonly timelineQueries: TimelineQueries;
+  private readonly collectionRecovery: CollectionRecovery;
+  private readonly activityReflection: ActivityReflection;
+  private readonly entryCommands: EntryCommands;
 
   public constructor(options: JournalDomainOptions) {
     this.database = options.database;
@@ -1055,6 +325,76 @@ export class JournalDomain {
     this.config = options.config;
     this.now = options.now ?? (() => new Date());
     this.idFactory = options.idFactory ?? (() => ulid());
+    const write: JournalWritePort = {
+      execute: <T>(
+        operation: string,
+        input: unknown,
+        actor: ActorContext,
+        mutation: MutationContext | undefined,
+        command: (context: WriteContext) => T,
+      ): T => this.write(operation, input, actor, mutation, command),
+    };
+    this.timelineQueries = new TimelineQueries({ db: this.db, today: () => this.today() });
+    this.collectionRecovery = new CollectionRecovery({ db: this.db, now: this.now, write });
+    this.activityReflection = new ActivityReflection({
+      db: this.db,
+      today: () => this.today(),
+      now: this.now,
+      idFactory: this.idFactory,
+      write,
+    });
+    const entries: EntryPersistencePort = {
+      select: (id, includeDeleted) => this.selectEntry(id, includeDeleted),
+      requireLive: (id) => this.requireLiveEntry(id),
+      listLiveByTag: (tag) =>
+        (
+          this.db
+            .prepare(
+              `SELECT e.* FROM entries e WHERE e.deleted_at IS NULL
+               AND EXISTS (SELECT 1 FROM json_each(e.tags) WHERE value = ?)
+               ORDER BY e.date DESC, e.created_at DESC, e.id DESC`,
+            )
+            .all(tag) as EntryRow[]
+        ).map(mapEntry),
+      insert: (input, now) => this.insertEntry(input, now),
+      replace: (input, now) => this.replaceEntry(input, now),
+    };
+    const collections: CollectionDestinationPort = {
+      get: (id) => this.collectionRecovery.getCollection(id),
+      ensure: (id, now, context) => this.collectionRecovery.ensure(id, now, context),
+    };
+    const audit: ActivityAuditPort = {
+      append: (input, actor, context) => this.activityReflection.append(input, actor, context),
+      appendEntryChange: (actor, kind, text, before, after, context, reason) =>
+        this.activityReflection.appendEntryChange(
+          actor,
+          kind,
+          text,
+          before,
+          after,
+          context,
+          reason,
+        ),
+      appendVisibleChange: (actor, kind, text, refs, preImages, postImages, context) =>
+        this.activityReflection.appendVisibleChange(
+          actor,
+          kind,
+          text,
+          refs,
+          preImages,
+          postImages,
+          context,
+        ),
+    };
+    this.entryCommands = new EntryCommands({
+      today: () => this.today(),
+      now: this.now,
+      idFactory: this.idFactory,
+      write,
+      entries,
+      collections,
+      audit,
+    });
   }
 
   public today(at = this.now()): string {
@@ -1067,161 +407,40 @@ export class JournalDomain {
   }
 
   public getEntry(id: string, options: { includeDeleted?: boolean } = {}): Entry | null {
-    validateId(id);
-    const row = this.db
-      .prepare(
-        `SELECT * FROM entries WHERE id = ? ${options.includeDeleted === true ? '' : 'AND deleted_at IS NULL'}`,
-      )
-      .get(id) as EntryRow | undefined;
-    return row === undefined ? null : mapEntry(row);
+    return this.timelineQueries.getEntry(id, options);
   }
 
   public requireEntry(id: string, options: { includeDeleted?: boolean } = {}): Entry {
-    const entry = this.getEntry(id, options);
-    if (entry === null) throw new DomainError('NOT_FOUND', `Entry ${id} was not found`);
-    return entry;
+    return this.timelineQueries.requireEntry(id, options);
   }
 
   public searchEntries(input: SearchEntriesInput = {}): SearchEntriesResult {
-    validateSearch(input);
-    const { predicate, params } = entryPredicate(input);
-    const total = this.countEntries(input);
-    const limit = input.limit ?? 25;
-    const offset = input.offset ?? 0;
-    const rows = this.db
-      .prepare(
-        `SELECT e.* FROM entries e WHERE ${predicate}
-         ORDER BY e.date DESC, e.created_at DESC, e.id DESC LIMIT ? OFFSET ?`,
-      )
-      .all(...params, limit, offset) as EntryRow[];
-    return { total, entries: rows.map(mapEntry) };
+    return this.timelineQueries.searchEntries(input);
   }
 
   public listRecentlyDeleted(retentionDays = 30): readonly RecentlyDeletedEntry[] {
-    if (!Number.isInteger(retentionDays) || retentionDays < 1)
-      invalid('retentionDays must be a positive integer');
-    const cutoff = new Date(this.now().getTime() - retentionDays * 86_400_000).toISOString();
-    const rows = this.db
-      .prepare(
-        `SELECT e.*, c.name AS recovery_collection_name, c.archived_at AS recovery_archived_at
-         FROM entries e
-         LEFT JOIN collections c ON c.id = e.collection
-         WHERE e.deleted_at IS NOT NULL AND e.deleted_at >= ?
-         ORDER BY e.deleted_at DESC, e.id DESC`,
-      )
-      .all(cutoff) as Array<
-      EntryRow & { recovery_collection_name: string | null; recovery_archived_at: string | null }
-    >;
-    return rows.map((row) => {
-      const entry = mapEntry(row);
-      const deletedAt = entry.deletedAt;
-      if (deletedAt === null) throw new DomainError('INTEGRITY_ERROR', 'Recovery row is live');
-      const collectionId = entry.collection;
-      const destination =
-        collectionId === null
-          ? { collectionId: null, collectionName: null, status: 'daily' as const }
-          : row.recovery_collection_name === null
-            ? {
-                collectionId,
-                collectionName: null,
-                status: 'missing' as const,
-              }
-            : {
-                collectionId,
-                collectionName: row.recovery_collection_name,
-                status:
-                  row.recovery_archived_at === null ? ('active' as const) : ('archived' as const),
-              };
-      return {
-        entry,
-        expiresAt: new Date(Date.parse(deletedAt) + retentionDays * 86_400_000).toISOString(),
-        destination,
-      };
-    });
+    return this.collectionRecovery.listRecentlyDeleted(retentionDays);
   }
 
   public countEntries(input: SearchEntriesInput = {}): number {
-    validateSearch(input);
-    const { predicate, params } = entryPredicate(input);
-    return (
-      this.db
-        .prepare(`SELECT count(*) AS count FROM entries e WHERE ${predicate}`)
-        .get(...params) as { count: number }
-    ).count;
+    return this.timelineQueries.countEntries(input);
   }
 
   public pageEntries(
     input: Omit<SearchEntriesInput, 'limit' | 'offset'> & { readonly limit: number },
     before?: EntryPageBoundary,
   ): EntryPage {
-    validateSearch(input);
-    if (before !== undefined) {
-      validateDate(before.date);
-      if (!IsoTimestampSchema.safeParse(before.createdAt).success)
-        invalid('Invalid entry cursor timestamp');
-      validateId(before.id);
-    }
-    const { predicate, params } = entryPredicate(input);
-    const boundary =
-      before === undefined
-        ? ''
-        : ` AND (e.date < ? OR (e.date = ? AND e.created_at < ?)
-             OR (e.date = ? AND e.created_at = ? AND e.id < ?))`;
-    if (before !== undefined) {
-      params.push(
-        before.date,
-        before.date,
-        before.createdAt,
-        before.date,
-        before.createdAt,
-        before.id,
-      );
-    }
-    const rows = this.db
-      .prepare(
-        `SELECT e.* FROM entries e WHERE ${predicate}${boundary}
-         ORDER BY e.date DESC, e.created_at DESC, e.id DESC LIMIT ?`,
-      )
-      .all(...params, input.limit + 1) as EntryRow[];
-    return { items: rows.slice(0, input.limit).map(mapEntry), hasMore: rows.length > input.limit };
+    return this.timelineQueries.pageEntries(input, before);
   }
 
   public listDay(date = this.today()): DayResult {
-    validateDate(date);
-    const entries = (
-      this.db
-        .prepare(
-          `SELECT * FROM entries WHERE date = ? AND collection IS NULL AND deleted_at IS NULL
-           ORDER BY created_at DESC, id DESC`,
-        )
-        .all(date) as EntryRow[]
-    ).map(mapEntry);
-    const isToday = date === this.today();
-    const leftovers = isToday
-      ? (
-          this.db
-            .prepare(
-              `SELECT * FROM entries WHERE date < ? AND collection IS NULL AND type = 'task'
-               AND state = 'open' AND deleted_at IS NULL ORDER BY date ASC, created_at ASC`,
-            )
-            .all(date) as EntryRow[]
-        ).map(mapEntry)
-      : [];
-    return { date, isToday, entries, leftovers: { count: leftovers.length, entries: leftovers } };
+    return this.timelineQueries.listDay(date);
   }
 
   public listCollections(
     options: { includeArchived?: boolean; includeMonths?: boolean } = {},
   ): readonly Collection[] {
-    const clauses: string[] = [];
-    if (options.includeArchived !== true) clauses.push('archived_at IS NULL');
-    if (options.includeMonths !== true) clauses.push("id NOT LIKE 'month:%'");
-    const where = clauses.length === 0 ? '' : `WHERE ${clauses.join(' AND ')}`;
-    return (
-      this.db
-        .prepare(`SELECT * FROM collections ${where} ORDER BY name COLLATE NOCASE`)
-        .all() as CollectionRow[]
-    ).map(mapCollection);
+    return this.collectionRecovery.listCollections(options);
   }
 
   /**
@@ -1230,293 +449,41 @@ export class JournalDomain {
    * entry's calendar date owns it.
    */
   public getIndexAggregates(): JournalIndexAggregates {
-    const collections = (
-      this.db
-        .prepare(
-          `SELECT c.*, count(e.id) AS count
-           FROM collections c
-           LEFT JOIN entries e ON e.collection = c.id AND e.deleted_at IS NULL
-           WHERE c.id NOT LIKE 'month:%'
-           GROUP BY c.id
-           ORDER BY (c.archived_at IS NOT NULL), c.name COLLATE NOCASE, c.id`,
-        )
-        .all() as CountedCollectionRow[]
-    ).map((row) => ({ ...mapCollection(row), count: row.count }));
-
-    const months = (
-      this.db
-        .prepare(
-          `SELECT CASE
-             WHEN substr(e.collection, 1, 6) = 'month:' THEN substr(e.collection, 7, 7)
-             ELSE substr(e.date, 1, 7)
-           END AS month,
-           count(*) AS count
-           FROM entries e
-           WHERE e.deleted_at IS NULL
-           GROUP BY month
-           ORDER BY month DESC`,
-        )
-        .all() as MonthCountRow[]
-    ).map((row) => ({ month: CalendarMonthSchema.parse(row.month), count: row.count }));
-
-    const countedTypes = new Map<EntryType, number>(
-      (
-        this.db
-          .prepare(
-            `SELECT e.type AS type, count(*) AS count
-           FROM entries e
-           WHERE e.deleted_at IS NULL
-           GROUP BY e.type`,
-          )
-          .all() as TypeCountRow[]
-      ).map((row) => [EntryTypeSchema.parse(row.type), row.count]),
-    );
-    const types = (['task', 'event', 'note', 'idea', 'question', 'habit', 'mood'] as const).map(
-      (type) => ({ type, count: countedTypes.get(type) ?? 0 }),
-    );
-
-    return { collections, months, types };
+    return this.collectionRecovery.getIndexAggregates();
   }
 
   /** Tag vocabulary ranked by use, so capture can suggest what the owner already writes. */
   public listTags(limit = 300): readonly TagUsage[] {
-    if (!Number.isInteger(limit) || limit < 1 || limit > 500)
-      invalid('limit must be between 1 and 500');
-    return this.db
-      .prepare(
-        `SELECT value AS tag, COUNT(*) AS uses, MAX(e.created_at) AS lastUsedAt
-         FROM entries e, json_each(e.tags)
-         WHERE e.deleted_at IS NULL
-         GROUP BY value
-         ORDER BY uses DESC, tag ASC
-         LIMIT ?`,
-      )
-      .all(limit) as TagUsage[];
+    return this.collectionRecovery.listTags(limit);
   }
 
   public getCollection(id: string): Collection | null {
-    validateCollectionId(id);
-    const row = this.db.prepare('SELECT * FROM collections WHERE id = ?').get(id) as
-      | CollectionRow
-      | undefined;
-    return row === undefined ? null : mapCollection(row);
+    return this.collectionRecovery.getCollection(id);
   }
 
   /** Resolve only the destination labels needed by one bounded Timeline page. */
   public listCollectionsByIds(ids: readonly string[]): readonly Collection[] {
-    const unique = [...new Set(ids)];
-    for (const id of unique) validateCollectionId(id);
-    if (unique.length === 0) return [];
-    return (
-      this.db
-        .prepare(
-          `SELECT * FROM collections
-           WHERE id IN (SELECT value FROM json_each(?))
-           ORDER BY name COLLATE NOCASE, id`,
-        )
-        .all(JSON.stringify(unique)) as CollectionRow[]
-    ).map(mapCollection);
+    return this.collectionRecovery.listCollectionsByIds(ids);
   }
 
   public listActivity(limit = 100, offset = 0): readonly ActivityItem[] {
-    if (!Number.isInteger(limit) || limit < 1 || limit > 500)
-      invalid('limit must be between 1 and 500');
-    if (!Number.isInteger(offset) || offset < 0) invalid('offset must be a non-negative integer');
-    return (
-      this.db
-        .prepare('SELECT * FROM activity ORDER BY at DESC, id DESC LIMIT ? OFFSET ?')
-        .all(limit, offset) as ActivityRow[]
-    ).map(mapActivity);
+    return this.activityReflection.listActivity(limit, offset);
   }
 
   public getActivity(id: string): ActivityItem | null {
-    validateId(id);
-    const row = this.db.prepare('SELECT * FROM activity WHERE id = ?').get(id) as
-      | ActivityRow
-      | undefined;
-    return row === undefined ? null : mapActivity(row);
+    return this.activityReflection.getActivity(id);
   }
 
   public activityView(activityOrId: ActivityItem | string): ActivityView {
-    const activity =
-      typeof activityOrId === 'string' ? this.getActivity(activityOrId) : activityOrId;
-    if (activity === null)
-      throw new DomainError('NOT_FOUND', `Activity ${activityOrId} was not found`);
-    return this.activityViews([activity])[0]!;
+    return this.activityReflection.activityView(activityOrId);
   }
 
   public listActivityViews(limit = 100, offset = 0): readonly ActivityView[] {
-    return this.activityViews(this.listActivity(limit, offset));
+    return this.activityReflection.listActivityViews(limit, offset);
   }
 
   public listActivityPage(limit = 50, before?: ActivityPageBoundary): ActivityPage {
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
-      invalid('limit must be between 1 and 100');
-    if (before !== undefined) {
-      if (!IsoTimestampSchema.safeParse(before.at).success) invalid('Invalid activity cursor time');
-      if (before.id !== undefined) validateId(before.id);
-    }
-    const rows = (
-      before === undefined
-        ? this.db.prepare('SELECT * FROM activity ORDER BY at DESC, id DESC LIMIT ?').all(limit + 1)
-        : before.id === undefined
-          ? this.db
-              .prepare('SELECT * FROM activity WHERE at <= ? ORDER BY at DESC, id DESC LIMIT ?')
-              .all(before.at, limit + 1)
-          : this.db
-              .prepare(
-                `SELECT * FROM activity WHERE at < ? OR (at = ? AND id < ?)
-                 ORDER BY at DESC, id DESC LIMIT ?`,
-              )
-              .all(before.at, before.at, before.id, limit + 1)
-    ) as ActivityRow[];
-    return {
-      items: this.activityViews(rows.slice(0, limit).map(mapActivity)),
-      hasMore: rows.length > limit,
-    };
-  }
-
-  private activityViews(activities: readonly ActivityItem[]): readonly ActivityView[] {
-    const snapshots = activities.flatMap((activity) => activity.postImages);
-    const current = new Map<string, Snapshot['row']>();
-    const currentEntries = new Map<string, Entry>();
-    const load = <Row>(
-      entity: Snapshot['entity'],
-      rows: readonly Row[],
-      idOf: (row: Row) => string,
-      map: (row: Row) => Snapshot['row'],
-    ): void => {
-      for (const row of rows) current.set(`${entity}\0${idOf(row)}`, map(row));
-    };
-    const ids = (entity: Snapshot['entity']): string[] => [
-      ...new Set(
-        snapshots.filter((snapshot) => snapshot.entity === entity).map((snapshot) => snapshot.id),
-      ),
-    ];
-    const entryIds = [
-      ...new Set([...ids('entry'), ...activities.flatMap((activity) => activity.refs.entryIds)]),
-    ];
-    if (entryIds.length > 0) {
-      const rows = this.db
-        .prepare('SELECT * FROM entries WHERE id IN (SELECT value FROM json_each(?))')
-        .all(JSON.stringify(entryIds)) as EntryRow[];
-      load('entry', rows, (row) => row.id, mapEntry);
-      for (const row of rows) {
-        const entry = mapEntry(row);
-        currentEntries.set(entry.id, entry);
-      }
-    }
-    const collectionIds = ids('collection');
-    if (collectionIds.length > 0) {
-      load(
-        'collection',
-        this.db
-          .prepare('SELECT * FROM collections WHERE id IN (SELECT value FROM json_each(?))')
-          .all(JSON.stringify(collectionIds)) as CollectionRow[],
-        (row) => row.id,
-        mapCollection,
-      );
-    }
-    const summaryIds = ids('summary');
-    if (summaryIds.length > 0) {
-      load(
-        'summary',
-        this.db
-          .prepare('SELECT * FROM summaries WHERE id IN (SELECT value FROM json_each(?))')
-          .all(JSON.stringify(summaryIds)) as SummaryRow[],
-        (row) => row.id,
-        mapSummary,
-      );
-    }
-
-    const latestActivityByEntry = new Map<string, ActivityItem>();
-    for (const candidate of [...activities].sort(
-      (left, right) => right.at.localeCompare(left.at) || right.id.localeCompare(left.id),
-    )) {
-      for (const entryId of candidate.refs.entryIds) {
-        if (!latestActivityByEntry.has(entryId)) latestActivityByEntry.set(entryId, candidate);
-      }
-    }
-    const tokenLabels = new Map<string, string>();
-
-    return activities.map((activity) => {
-      let reason: 'already_reverted' | 'post_image_mismatch' | 'not_reversible' | null = null;
-      if (activity.revertedAt !== null) reason = 'already_reverted';
-      else if (
-        activity.kind === 'revert' ||
-        activity.postImages.length === 0 ||
-        activity.text.endsWith('(content expired)')
-      )
-        reason = 'not_reversible';
-      else if (
-        activity.postImages.some(
-          (snapshot) =>
-            !snapshotEqual(current.get(`${snapshot.entity}\0${snapshot.id}`) ?? null, snapshot.row),
-        )
-      ) {
-        reason = 'post_image_mismatch';
-      }
-      const actor = auditActor(activity.origin, tokenLabels);
-      const action = auditAction(activity);
-      const primaryEntryId = activity.refs.entryIds[0] ?? null;
-      let lineage = migrationLineage(activity);
-      if (activity.kind === 'revert' && activity.refs.activityId !== undefined) {
-        const original = this.getActivity(activity.refs.activityId);
-        const originalLineage = original === null ? null : migrationLineage(original);
-        if (originalLineage !== null) {
-          lineage = {
-            fromEntryIds: originalLineage.toEntryIds,
-            toEntryIds: originalLineage.fromEntryIds,
-            relatedActivityId: activity.refs.activityId,
-          };
-        }
-      }
-      const presentationReason = auditReason(activity);
-      const presentation: ActivityPresentation = {
-        actor,
-        action,
-        objectLabel: auditObjectLabel(activity),
-        primaryEntryId,
-        reason: presentationReason,
-        attribution: activity.refs.entryIds.map((entryId) => {
-          const row = currentEntries.get(entryId) ?? activityEntry(activity, entryId);
-          const latest = latestActivityByEntry.get(entryId);
-          const latestSnapshot = latest === undefined ? null : activityEntry(latest, entryId);
-          const latestIsCurrent =
-            row !== null && latest !== undefined && latestSnapshot?.revision === row.revision;
-          return {
-            entryId,
-            originalAuthor:
-              row === null
-                ? 'unknown'
-                : row.author === 'ai'
-                  ? ('agent' as const)
-                  : ('owner' as const),
-            latestModifier:
-              row === null || latest === undefined || !latestIsCurrent
-                ? null
-                : auditActor(latest.origin, tokenLabels),
-          };
-        }),
-        lineage,
-        latestAgentTouch:
-          actor.kind === 'agent' && primaryEntryId !== null
-            ? {
-                activityId: activity.id,
-                entryId: primaryEntryId,
-                at: activity.at,
-                actor,
-                action,
-                reason: presentationReason,
-              }
-            : null,
-      };
-      return ActivityViewSchema.parse({
-        ...activity,
-        revert: { eligible: reason === null, reason },
-        presentation,
-      });
-    });
+    return this.activityReflection.listActivityPage(limit, before);
   }
 
   public listSummaries(limit = 20): readonly Summary[] {
@@ -1558,37 +525,15 @@ export class JournalDomain {
   }
 
   public listReflections(from: string, to: string): readonly Reflection[] {
-    validateDate(from);
-    validateDate(to);
-    if (from > to) invalid('Reflection range end cannot precede its start');
-    this.materializeReflectionSlots(from, to);
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM reflection_slots
-         WHERE week_start <= ? AND week_end >= ? AND week_end < ?
-         ORDER BY week_start DESC`,
-      )
-      .all(to, from, this.today()) as ReflectionSlotRow[];
-    return rows.map((row) => this.mapReflectionRow(row));
+    return this.activityReflection.listReflections(from, to);
   }
 
   public getReflection(id: string): Reflection | null {
-    validateId(id);
-    const row = this.db.prepare('SELECT * FROM reflection_slots WHERE id = ?').get(id) as
-      | ReflectionSlotRow
-      | undefined;
-    return row === undefined ? null : this.mapReflectionRow(row);
+    return this.activityReflection.getReflection(id);
   }
 
   public listPendingReflections(): readonly Reflection[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM reflection_slots
-         WHERE status IN ('queued', 'running')
-         ORDER BY requested_at ASC, week_start ASC`,
-      )
-      .all() as ReflectionSlotRow[];
-    return rows.map((row) => this.mapReflectionRow(row));
+    return this.activityReflection.listPendingReflections();
   }
 
   public requestReflection(
@@ -1596,11 +541,7 @@ export class JournalDomain {
     actor: ActorContext,
     options: { readonly expectedRevision: number },
   ): { readonly reflection: Reflection; readonly activityId: string } {
-    return this.queueReflection('request-reflection', id, actor, options, [
-      'notRequested',
-      'current',
-      'stale',
-    ]);
+    return this.activityReflection.requestReflection(id, actor, options);
   }
 
   public retryReflection(
@@ -1608,7 +549,7 @@ export class JournalDomain {
     actor: ActorContext,
     options: { readonly expectedRevision: number },
   ): { readonly reflection: Reflection; readonly activityId: string } {
-    return this.queueReflection('retry-reflection', id, actor, options, ['failed']);
+    return this.activityReflection.retryReflection(id, actor, options);
   }
 
   public claimReflection(
@@ -1617,44 +558,7 @@ export class JournalDomain {
     actor: ActorContext,
     mutation?: MutationContext,
   ): { readonly kind: 'reflection'; readonly reflection: Reflection; readonly activityId: string } {
-    if (actor.kind !== 'agent') invalid('Only an authenticated assistant can claim a Reflection');
-    validateDate(weekStart);
-    validateId(requestId);
-    return this.write('claim-reflection', { weekStart, requestId }, actor, mutation, (context) => {
-      const before = this.requireReflectionForWeek(weekStart);
-      if (before.status !== 'queued' || before.requestId !== requestId) {
-        throw new DomainError('CONFLICT', 'Reflection request is no longer queued');
-      }
-      this.db
-        .prepare(
-          `UPDATE reflection_slots SET
-              status='running', claimed_at=?, claimed_token_id=?, claimed_label=?, claimed_tool=?,
-              failure=NULL, updated_at=?, revision=revision+1
-             WHERE id=?`,
-        )
-        .run(
-          context.now,
-          actor.tokenId,
-          actor.tokenLabel,
-          actor.tool ?? null,
-          context.now,
-          before.id,
-        );
-      const reflection = this.requireReflection(before.id);
-      context.changes.push(reflectionChange(reflection));
-      const activity = this.insertActivity(
-        {
-          kind: 'summary-filed',
-          text: `Claimed weekly Reflection for ${weekStart}`,
-          refs: { ...actorRefs(actor, []), summaryId: reflection.id },
-          preImages: [],
-          postImages: [],
-        },
-        actor,
-        context,
-      );
-      return { kind: 'reflection', reflection, activityId: activity.id };
-    });
+    return this.activityReflection.claimReflection(weekStart, requestId, actor, mutation);
   }
 
   public completeReflection(
@@ -1667,75 +571,7 @@ export class JournalDomain {
     actor: ActorContext,
     mutation?: MutationContext,
   ): { readonly kind: 'reflection'; readonly reflection: Reflection; readonly activityId: string } {
-    if (actor.kind !== 'agent')
-      invalid('Only an authenticated assistant can complete a Reflection');
-    validateDate(input.weekStart);
-    validateId(input.requestId);
-    const text = normalizeText(input.text, 500, 'reflection text');
-    const source = normalizeSource(input.source);
-    return this.write('complete-reflection', input, actor, mutation, (context) => {
-      const before = this.requireReflectionForWeek(input.weekStart);
-      if (
-        before.status !== 'running' ||
-        before.requestId !== input.requestId ||
-        before.claimedBy?.tokenId !== actor.tokenId
-      ) {
-        throw new DomainError('CONFLICT', 'Reflection request is not claimed by this assistant');
-      }
-      const sourceEntries = this.reflectionSourceEntries(before.weekStart, before.weekEnd);
-      const versionId = this.idFactory();
-      const versionNumber = (before.versions[0]?.number ?? 0) + 1;
-      this.db
-        .prepare(
-          `INSERT INTO reflection_versions(
-            id,reflection_id,version_number,text,source_from,source_to,generator_token_id,
-            generator_label,generator_tool,source,generated_at,source_entries
-           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-        )
-        .run(
-          versionId,
-          before.id,
-          versionNumber,
-          text,
-          before.weekStart,
-          before.weekEnd,
-          actor.tokenId,
-          actor.tokenLabel,
-          actor.tool ?? null,
-          source,
-          context.now,
-          JSON.stringify(sourceEntries),
-        );
-      this.db
-        .prepare(
-          `UPDATE reflection_slots SET
-            status='current', request_id=NULL, requested_at=NULL, claimed_at=NULL,
-            claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
-            current_version_id=?, updated_at=?, revision=revision+1
-           WHERE id=?`,
-        )
-        .run(versionId, context.now, before.id);
-      const reflection = this.requireReflection(before.id);
-      context.changes.push(reflectionChange(reflection));
-      const activity = this.insertActivity(
-        {
-          kind: 'summary-filed',
-          text: `Completed weekly Reflection for ${before.weekStart}`,
-          refs: {
-            ...actorRefs(
-              actor,
-              sourceEntries.map((entry) => entry.id),
-            ),
-            summaryId: before.id,
-          },
-          preImages: [],
-          postImages: [],
-        },
-        actor,
-        context,
-      );
-      return { kind: 'reflection', reflection, activityId: activity.id };
-    });
+    return this.activityReflection.completeReflection(input, actor, mutation);
   }
 
   public failReflection(
@@ -1743,42 +579,7 @@ export class JournalDomain {
     actor: ActorContext,
     mutation?: MutationContext,
   ): { readonly kind: 'reflection'; readonly reflection: Reflection; readonly activityId: string } {
-    if (actor.kind !== 'agent') invalid('Only an authenticated assistant can fail a Reflection');
-    validateDate(input.weekStart);
-    validateId(input.requestId);
-    const reason = normalizeText(input.reason, 500, 'reflection failure');
-    return this.write('fail-reflection', input, actor, mutation, (context) => {
-      const before = this.requireReflectionForWeek(input.weekStart);
-      if (
-        before.status !== 'running' ||
-        before.requestId !== input.requestId ||
-        before.claimedBy?.tokenId !== actor.tokenId
-      ) {
-        throw new DomainError('CONFLICT', 'Reflection request is not claimed by this assistant');
-      }
-      this.db
-        .prepare(
-          `UPDATE reflection_slots SET
-            status='failed', claimed_at=NULL, claimed_token_id=NULL, claimed_label=NULL,
-            claimed_tool=NULL, failure=?, updated_at=?, revision=revision+1
-           WHERE id=?`,
-        )
-        .run(reason, context.now, before.id);
-      const reflection = this.requireReflection(before.id);
-      context.changes.push(reflectionChange(reflection));
-      const activity = this.insertActivity(
-        {
-          kind: 'summary-filed',
-          text: `Weekly Reflection failed for ${before.weekStart}: ${truncateForActivity(reason)}`,
-          refs: { ...actorRefs(actor, []), summaryId: before.id },
-          preImages: [],
-          postImages: [],
-        },
-        actor,
-        context,
-      );
-      return { kind: 'reflection', reflection, activityId: activity.id };
-    });
+    return this.activityReflection.failReflection(input, actor, mutation);
   }
 
   public restoreReflectionVersion(
@@ -1787,50 +588,7 @@ export class JournalDomain {
     actor: ActorContext,
     options: { readonly expectedRevision: number },
   ): { readonly reflection: Reflection; readonly activityId: string } {
-    validateId(id);
-    validateId(versionId);
-    return this.write(
-      'restore-reflection-version',
-      { id, versionId, expectedRevision: options.expectedRevision },
-      actor,
-      undefined,
-      (context) => {
-        const before = this.requireReflection(id);
-        this.assertExpectedReflectionRevision(before, options.expectedRevision);
-        const version = before.versions.find((candidate) => candidate.id === versionId);
-        if (!version) throw new DomainError('NOT_FOUND', 'Reflection version was not found');
-        const current = this.reflectionVersionIsCurrent(version);
-        this.db
-          .prepare(
-            `UPDATE reflection_slots SET
-              status=?, request_id=NULL, requested_at=NULL, claimed_at=NULL,
-              claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
-              current_version_id=?, updated_at=?, revision=revision+1
-             WHERE id=?`,
-          )
-          .run(current ? 'current' : 'stale', version.id, context.now, before.id);
-        const reflection = this.requireReflection(id);
-        context.changes.push(reflectionChange(reflection));
-        const activity = this.insertActivity(
-          {
-            kind: 'summary-filed',
-            text: `Restored Reflection version ${version.number} for ${before.weekStart}`,
-            refs: {
-              ...actorRefs(
-                actor,
-                version.sourceEntries.map((entry) => entry.id),
-              ),
-              summaryId: before.id,
-            },
-            preImages: [],
-            postImages: [],
-          },
-          actor,
-          context,
-        );
-        return { reflection, activityId: activity.id };
-      },
-    );
+    return this.activityReflection.restoreReflectionVersion(id, versionId, actor, options);
   }
 
   public createEntry(
@@ -1838,7 +596,7 @@ export class JournalDomain {
     actor: ActorContext,
     mutation?: MutationContext,
   ): EntryWriteResult {
-    const normalized = normalizeCreateEntry(input, actor, this.today(), this.idFactory);
+    const normalized = this.entryCommands.normalizeCreate(input, actor);
     if (
       actor.kind === 'agent' &&
       input.reflectionAction !== undefined &&
@@ -1847,14 +605,14 @@ export class JournalDomain {
     ) {
       switch (input.reflectionAction) {
         case 'claim':
-          return this.claimReflection(
+          return this.activityReflection.claimReflection(
             input.summaryWeekStart,
             input.reflectionRequestId,
             actor,
             mutation,
           );
         case 'complete':
-          return this.completeReflection(
+          return this.activityReflection.completeReflection(
             {
               weekStart: input.summaryWeekStart,
               requestId: input.reflectionRequestId,
@@ -1865,7 +623,7 @@ export class JournalDomain {
             mutation,
           );
         case 'fail':
-          return this.failReflection(
+          return this.activityReflection.failReflection(
             {
               weekStart: input.summaryWeekStart,
               requestId: input.reflectionRequestId,
@@ -1893,35 +651,7 @@ export class JournalDomain {
         mutation,
       );
     }
-
-    const createIntent = { ...normalized, id: input.id ?? null };
-    return this.write('create-entry', createIntent, actor, mutation, (context) => {
-      const existing = this.selectEntry(normalized.id, true);
-      if (existing !== null) {
-        if (sameCreateIntent(existing, normalized)) return { kind: 'entry', entry: existing };
-        throw new DomainError(
-          'CONFLICT',
-          `Entry id ${normalized.id} already exists with different content`,
-        );
-      }
-      if (normalized.collection !== null)
-        this.ensureCollection(normalized.collection, context.now, context);
-      const entry = this.insertEntry(normalized, context.now);
-      context.changes.push(entryCreatedChange(entry));
-      if (actor.kind !== 'agent') return { kind: 'entry', entry };
-      const activity = this.insertActivity(
-        {
-          kind: 'agent-add',
-          text: `Added “${truncateForActivity(entry.text)}” — ${entry.source ?? 'assistant source'}`,
-          refs: actorRefs(actor, [entry.id]),
-          preImages: [{ entity: 'entry', id: entry.id, row: null }],
-          postImages: [snapshotEntry(entry)],
-        },
-        actor,
-        context,
-      );
-      return { kind: 'entry', entry, activityId: activity.id };
-    });
+    return this.entryCommands.createNormalized(input, normalized, actor, mutation);
   }
 
   public updateEntry(
@@ -1931,29 +661,7 @@ export class JournalDomain {
     mutation?: MutationContext,
     options: { expectedRevision?: number; reason?: string } = {},
   ): { readonly entry: Entry; readonly activityId?: string } {
-    validateId(id);
-    if (Object.keys(patch).length === 0) invalid('Entry patch must contain at least one field');
-    requireAgentExpectedRevision(actor, options.expectedRevision);
-    return this.write('update-entry', { id, patch, ...options }, actor, mutation, (context) => {
-      const before = this.requireLiveEntry(id);
-      assertExpectedRevision(before, options.expectedRevision);
-      // Filing an entry into a collection moves it; it does not recapture it.
-      // Only an explicit date patch re-dates an entry.
-      const next = normalizePatchedEntry(before, patch);
-      if (next.collection !== null) this.ensureCollection(next.collection, context.now, context);
-      const entry = this.replaceEntry(next, context.now);
-      context.changes.push(upsertChange('entry', entry));
-      const activity = this.maybeRecordEntryActivity(
-        actor,
-        'agent-update',
-        `Updated “${truncateForActivity(entry.text)}”`,
-        before,
-        entry,
-        context,
-        options.reason,
-      );
-      return activity === null ? { entry } : { entry, activityId: activity.id };
-    });
+    return this.entryCommands.updateEntry(id, patch, actor, mutation, options);
   }
 
   public toggleEntry(
@@ -1961,18 +669,7 @@ export class JournalDomain {
     actor: ActorContext,
     mutation?: MutationContext,
   ): { readonly entry: Entry; readonly activityId?: string } {
-    const before = this.requireEntry(id);
-    if (before.type !== 'task' && before.type !== 'habit')
-      invalid('Only tasks and habits can be toggled');
-    if (before.state !== 'open' && before.state !== 'done') {
-      throw new DomainError('CONFLICT', `Entry in ${before.state} state cannot be toggled`);
-    }
-    return this.updateEntry(
-      id,
-      { state: before.state === 'open' ? 'done' : 'open' },
-      actor,
-      mutation,
-    );
+    return this.entryCommands.toggleEntry(id, actor, mutation);
   }
 
   public migrateEntry(
@@ -1985,45 +682,7 @@ export class JournalDomain {
     actor: ActorContext,
     mutation?: MutationContext,
   ): { readonly original: Entry; readonly copy: Entry; readonly activityId?: string } {
-    validateId(id);
-    validateId(input.newEntryId);
-    if (input.targetDate !== undefined) validateDate(input.targetDate);
-    return this.write('migrate-entry', { id, ...input }, actor, mutation, (context) => {
-      const before = this.requireLiveEntry(id);
-      assertActionableOpen(before, 'migrate');
-      assertExpectedRevision(before, input.expectedRevision);
-      if (this.selectEntry(input.newEntryId, true) !== null) {
-        throw new DomainError('CONFLICT', `Entry id ${input.newEntryId} already exists`);
-      }
-      const original = this.replaceEntry({ ...before, state: 'migrated' }, context.now);
-      const copy = this.insertEntry(
-        {
-          id: input.newEntryId,
-          date: input.targetDate ?? this.today(),
-          type: before.type,
-          text: before.text,
-          state: 'open',
-          time: before.time,
-          tags: before.tags,
-          author: before.author,
-          source: before.source,
-          migrations: before.migrations + 1,
-          collection: null,
-        },
-        context.now,
-      );
-      context.changes.push(upsertChange('entry', original), entryCreatedChange(copy));
-      const activity = this.maybeRecordActivity(
-        actor,
-        'agent-migration',
-        `Moved “${truncateForActivity(before.text)}” forward`,
-        actorRefs(actor, [original.id, copy.id]),
-        [snapshotEntry(before), { entity: 'entry', id: copy.id, row: null }],
-        [snapshotEntry(original), snapshotEntry(copy)],
-        context,
-      );
-      return activity === null ? { original, copy } : { original, copy, activityId: activity.id };
-    });
+    return this.entryCommands.migrateEntry(id, input, actor, mutation);
   }
 
   public scheduleMonthly(
@@ -2037,50 +696,7 @@ export class JournalDomain {
     readonly collection: Collection;
     readonly activityId?: string;
   } {
-    validateId(id);
-    validateId(input.copyId);
-    const month = input.month ?? this.today().slice(0, 7);
-    if (!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)) invalid('month must be YYYY-MM');
-    return this.write('schedule-monthly', { id, ...input, month }, actor, mutation, (context) => {
-      const before = this.requireLiveEntry(id);
-      assertActionableOpen(before, 'schedule');
-      assertExpectedRevision(before, input.expectedRevision);
-      if (this.selectEntry(input.copyId, true) !== null) {
-        throw new DomainError('CONFLICT', `Entry id ${input.copyId} already exists`);
-      }
-      const collectionId = `month:${month}`;
-      const collection = this.ensureCollection(collectionId, context.now, context);
-      const original = this.replaceEntry({ ...before, state: 'scheduled' }, context.now);
-      const copy = this.insertEntry(
-        {
-          id: input.copyId,
-          date: this.today(),
-          type: before.type,
-          text: before.text,
-          state: 'open',
-          time: before.time,
-          tags: before.tags,
-          author: before.author,
-          source: before.source,
-          migrations: before.migrations,
-          collection: collectionId,
-        },
-        context.now,
-      );
-      context.changes.push(upsertChange('entry', original), entryCreatedChange(copy));
-      const activity = this.maybeRecordActivity(
-        actor,
-        'agent-migration',
-        `Scheduled “${truncateForActivity(before.text)}” for ${month}`,
-        actorRefs(actor, [original.id, copy.id]),
-        [snapshotEntry(before), { entity: 'entry', id: copy.id, row: null }],
-        [snapshotEntry(original), snapshotEntry(copy)],
-        context,
-      );
-      return activity === null
-        ? { original, copy, collection }
-        : { original, copy, collection, activityId: activity.id };
-    });
+    return this.entryCommands.scheduleMonthly(id, input, actor, mutation);
   }
 
   public fileEntry(
@@ -2094,48 +710,7 @@ export class JournalDomain {
       readonly reason?: string;
     } = {},
   ): { readonly entry: Entry; readonly collection?: Collection; readonly activityId?: string } {
-    validateId(id);
-    if (collectionId !== null) validateCollectionId(collectionId);
-    if (options.filingDate !== undefined) validateDate(options.filingDate);
-    return this.write(
-      'file-entry',
-      { id, collectionId, ...options },
-      actor,
-      mutation,
-      (context) => {
-        const before = this.requireLiveEntry(id);
-        assertExpectedRevision(before, options.expectedRevision);
-        const collection =
-          collectionId === null
-            ? undefined
-            : this.ensureCollection(collectionId, context.now, context);
-        const entry = this.replaceEntry(
-          {
-            ...before,
-            collection: collectionId,
-            date: options.filingDate ?? (collectionId === null ? before.date : this.today()),
-          },
-          context.now,
-        );
-        context.changes.push(upsertChange('entry', entry));
-        const activity = this.maybeRecordEntryActivity(
-          actor,
-          'agent-update',
-          collectionId === null
-            ? `Returned “${truncateForActivity(entry.text)}” to the daily log`
-            : `Filed “${truncateForActivity(entry.text)}” in ${collectionId}`,
-          before,
-          entry,
-          context,
-          options.reason,
-        );
-        return {
-          entry,
-          ...(collection === undefined ? {} : { collection }),
-          ...(activity === null ? {} : { activityId: activity.id }),
-        };
-      },
-    );
+    return this.entryCommands.fileEntry(id, collectionId, actor, mutation, options);
   }
 
   public deleteEntry(
@@ -2144,24 +719,7 @@ export class JournalDomain {
     mutation?: MutationContext,
     options: { readonly expectedRevision?: number; readonly reason?: string } = {},
   ): { readonly entry: Entry; readonly activityId?: string } {
-    validateId(id);
-    requireAgentExpectedRevision(actor, options.expectedRevision);
-    return this.write('delete-entry', { id, ...options }, actor, mutation, (context) => {
-      const before = this.requireLiveEntry(id);
-      assertExpectedRevision(before, options.expectedRevision);
-      const entry = this.replaceEntry({ ...before, deletedAt: context.now }, context.now);
-      context.changes.push(upsertChange('entry', entry));
-      const activity = this.maybeRecordEntryActivity(
-        actor,
-        'agent-delete',
-        `Deleted “${truncateForActivity(before.text)}”`,
-        before,
-        entry,
-        context,
-        options.reason,
-      );
-      return activity === null ? { entry } : { entry, activityId: activity.id };
-    });
+    return this.entryCommands.deleteEntry(id, actor, mutation, options);
   }
 
   public restoreEntry(
@@ -2174,44 +732,7 @@ export class JournalDomain {
     readonly activityId?: string;
     readonly fallbackFromCollection?: string;
   } {
-    validateId(id);
-    return this.write('restore-entry', { id, ...options }, actor, mutation, (context) => {
-      const before = this.selectEntry(id, true);
-      if (before === null || before.deletedAt === null) {
-        throw new DomainError('NOT_FOUND', `Deleted entry ${id} was not found`);
-      }
-      const recoveryCutoff = this.now().getTime() - 30 * 86_400_000;
-      if (Date.parse(before.deletedAt) < recoveryCutoff) {
-        throw new DomainError('CONFLICT', 'The 30-day recovery window for this entry has expired');
-      }
-      assertExpectedRevision(before, options.expectedRevision);
-      let collection = before.collection;
-      let fallbackFromCollection: string | undefined;
-      if (collection !== null) {
-        const existingCollection = this.getCollection(collection);
-        if (existingCollection === null && !collection.startsWith('month:')) {
-          fallbackFromCollection = collection;
-          collection = null;
-        } else {
-          this.ensureCollection(collection, context.now, context);
-        }
-      }
-      const entry = this.replaceEntry({ ...before, collection, deletedAt: null }, context.now);
-      context.changes.push(upsertChange('entry', entry));
-      const activity = this.maybeRecordEntryActivity(
-        actor,
-        'agent-update',
-        `Restored “${truncateForActivity(entry.text)}”`,
-        before,
-        entry,
-        context,
-      );
-      return {
-        entry,
-        ...(activity === null ? {} : { activityId: activity.id }),
-        ...(fallbackFromCollection === undefined ? {} : { fallbackFromCollection }),
-      };
-    });
+    return this.entryCommands.restoreEntry(id, actor, mutation, options);
   }
 
   public createCollection(
@@ -2219,32 +740,7 @@ export class JournalDomain {
     actor: ActorContext,
     mutation?: MutationContext,
   ): Collection {
-    const normalized = normalizeCollectionInput(input);
-    if (normalized.id.startsWith('month:')) invalid('Month collections are created automatically');
-    return this.write('create-collection', normalized, actor, mutation, (context) => {
-      const existing = this.getCollection(normalized.id);
-      if (existing !== null) {
-        const collection = this.updateCollectionRow(
-          { ...existing, name: normalized.name, note: normalized.note, archivedAt: null },
-          context.now,
-        );
-        context.changes.push(upsertChange('collection', collection));
-        return collection;
-      }
-      const collection: Collection = {
-        ...normalized,
-        createdAt: context.now,
-        archivedAt: null,
-      };
-      this.db
-        .prepare(
-          `INSERT INTO collections(id, name, note, created_at, updated_at, archived_at)
-           VALUES (@id, @name, @note, @createdAt, @createdAt, @archivedAt)`,
-        )
-        .run(collection);
-      context.changes.push(upsertChange('collection', collection));
-      return collection;
-    });
+    return this.collectionRecovery.createCollection(input, actor, mutation);
   }
 
   public updateCollection(
@@ -2253,31 +749,7 @@ export class JournalDomain {
     actor: ActorContext,
     mutation?: MutationContext,
   ): Collection {
-    validateCollectionId(id);
-    if (Object.keys(patch).length === 0) invalid('Collection patch must not be empty');
-    return this.write('update-collection', { id, patch }, actor, mutation, (context) => {
-      const before = this.getCollection(id);
-      if (before === null) throw new DomainError('NOT_FOUND', `Collection ${id} was not found`);
-      if (patch.archived !== undefined && id.startsWith('month:'))
-        invalid('Month collections cannot be archived');
-      const name = patch.name === undefined ? before.name : validateCollectionName(patch.name);
-      const note =
-        patch.note === undefined
-          ? before.note
-          : normalizeOptionalLine(patch.note, 300, 'collection note');
-      const collection = this.updateCollectionRow(
-        {
-          ...before,
-          name,
-          note,
-          archivedAt:
-            patch.archived === undefined ? before.archivedAt : patch.archived ? context.now : null,
-        },
-        context.now,
-      );
-      context.changes.push(upsertChange('collection', collection));
-      return collection;
-    });
+    return this.collectionRecovery.updateCollection(id, patch, actor, mutation);
   }
 
   public archiveCollection(
@@ -2286,18 +758,7 @@ export class JournalDomain {
     actor: ActorContext,
     mutation?: MutationContext,
   ): Collection {
-    validateCollectionId(id);
-    if (id.startsWith('month:')) invalid('Month collections cannot be archived');
-    return this.write('archive-collection', { id, archived }, actor, mutation, (context) => {
-      const before = this.getCollection(id);
-      if (before === null) throw new DomainError('NOT_FOUND', `Collection ${id} was not found`);
-      const collection = this.updateCollectionRow(
-        { ...before, archivedAt: archived ? context.now : null },
-        context.now,
-      );
-      context.changes.push(upsertChange('collection', collection));
-      return collection;
-    });
+    return this.collectionRecovery.archiveCollection(id, archived, actor, mutation);
   }
 
   public fileSummary(
@@ -2498,163 +959,7 @@ export class JournalDomain {
     actor: ActorContext,
     mutation?: MutationContext,
   ): AgentMigrationResult {
-    if (actor.kind !== 'agent') invalid('Agent migration requires an agent actor');
-    validateAgentMigration(input);
-    return this.write('agent-migration', input, actor, mutation, (context) => {
-      const initial = new Map<string, Entry | null>();
-      const touched = new Set<string>();
-      const remember = (entryId: string): Entry | null => {
-        if (!initial.has(entryId)) initial.set(entryId, this.selectEntry(entryId, true));
-        return this.selectEntry(entryId, true);
-      };
-
-      for (const op of input.ops) {
-        switch (op.op) {
-          case 'create': {
-            const normalized = normalizeCreateEntry(
-              {
-                text: op.entry.text,
-                type: op.entry.type,
-                ...(op.entry.date === undefined ? {} : { date: op.entry.date }),
-                time: op.entry.time,
-                tags: op.entry.tags,
-                collection: op.entry.collection,
-                source: op.entry.source,
-              },
-              actor,
-              this.today(),
-              this.idFactory,
-            );
-            if (remember(normalized.id) !== null) {
-              throw new DomainError('CONFLICT', `Entry id ${normalized.id} already exists`);
-            }
-            if (normalized.collection !== null)
-              this.ensureCollection(normalized.collection, context.now, context);
-            const created = this.insertEntry(normalized, context.now);
-            touched.add(created.id);
-            context.changes.push(entryCreatedChange(created));
-            break;
-          }
-          case 'update': {
-            validateId(op.id);
-            const before = remember(op.id);
-            if (before === null || before.deletedAt !== null) {
-              throw new DomainError('NOT_FOUND', `Entry ${op.id} was not found`);
-            }
-            assertExpectedRevision(before, op.expectedRevision);
-            const next = normalizePatchedEntry(before, op.patch);
-            if (next.collection !== null)
-              this.ensureCollection(next.collection, context.now, context);
-            const updated = this.replaceEntry(next, context.now);
-            touched.add(updated.id);
-            context.changes.push(upsertChange('entry', updated));
-            break;
-          }
-          case 'delete': {
-            validateId(op.id);
-            const before = remember(op.id);
-            if (before === null || before.deletedAt !== null) {
-              throw new DomainError('NOT_FOUND', `Entry ${op.id} was not found`);
-            }
-            assertExpectedRevision(before, op.expectedRevision);
-            const deleted = this.replaceEntry({ ...before, deletedAt: context.now }, context.now);
-            touched.add(deleted.id);
-            context.changes.push(upsertChange('entry', deleted));
-            break;
-          }
-          case 'retag': {
-            const from = normalizeTag(op.from);
-            const to = normalizeTag(op.to);
-            const rows = this.db
-              .prepare(
-                `SELECT e.* FROM entries e WHERE e.deleted_at IS NULL
-                 AND EXISTS (SELECT 1 FROM json_each(e.tags) WHERE value = ?)
-                 ORDER BY e.date DESC, e.created_at DESC, e.id DESC`,
-              )
-              .all(from) as EntryRow[];
-            const expectedById = new Map(
-              op.sources.map((source) => [source.id, source.expectedRevision] as const),
-            );
-            for (const row of rows) {
-              if (!expectedById.has(row.id)) {
-                throw new DomainError(
-                  'CONFLICT',
-                  `Retag source set changed: entry ${row.id} now carries #${from}`,
-                  {
-                    details: {
-                      reason: 'source_set_changed',
-                      entryId: row.id,
-                      actualRevision: row.revision,
-                    },
-                  },
-                );
-              }
-            }
-            for (const source of op.sources) {
-              const before = remember(source.id);
-              if (before === null || before.deletedAt !== null) {
-                throw new DomainError('CONFLICT', `Retag source ${source.id} is no longer live`, {
-                  details: {
-                    reason: 'source_set_changed',
-                    entryId: source.id,
-                    expectedRevision: source.expectedRevision,
-                    actualRevision: before?.revision ?? null,
-                  },
-                });
-              }
-              assertExpectedRevision(before, source.expectedRevision);
-              if (!before.tags.includes(from)) {
-                throw new DomainError(
-                  'CONFLICT',
-                  `Retag source ${source.id} no longer carries #${from}`,
-                  {
-                    details: {
-                      reason: 'source_set_changed',
-                      entryId: source.id,
-                      expectedRevision: source.expectedRevision,
-                      actualRevision: before.revision,
-                    },
-                  },
-                );
-              }
-            }
-            for (const row of rows) {
-              const before = mapEntry(row);
-              if (!initial.has(before.id)) initial.set(before.id, before);
-              const tags = normalizeTags(before.tags.map((tag) => (tag === from ? to : tag)));
-              const updated = this.replaceEntry({ ...before, tags }, context.now);
-              touched.add(updated.id);
-              context.changes.push(upsertChange('entry', updated));
-            }
-            break;
-          }
-        }
-      }
-
-      const preImages: Snapshot[] = [];
-      const postImages: Snapshot[] = [];
-      for (const entryId of touched) {
-        preImages.push({ entity: 'entry', id: entryId, row: initial.get(entryId) ?? null });
-        postImages.push({ entity: 'entry', id: entryId, row: this.selectEntry(entryId, true) });
-      }
-      const activity = this.insertActivity(
-        {
-          kind: 'agent-migration',
-          text: migrationActivityText(input),
-          refs: actorRefs(actor, [...touched]),
-          preImages,
-          postImages,
-        },
-        actor,
-        context,
-      );
-      return {
-        entries: [...touched].map((entryId) =>
-          this.requireEntry(entryId, { includeDeleted: true }),
-        ),
-        activityId: activity.id,
-      };
-    });
+    return this.entryCommands.applyAgentMigration(input, actor, mutation);
   }
 
   public revertActivity(
@@ -2667,7 +972,7 @@ export class JournalDomain {
       const original = this.getActivity(id);
       if (original === null) throw new DomainError('NOT_FOUND', `Activity ${id} was not found`);
       if (original.kind === 'revert') invalid('A revert activity cannot itself be reverted');
-      if (original.text.endsWith('(content expired)'))
+      if (activityContentExpired(original.text))
         invalid('Expired entry content cannot be restored from activity history');
       if (original.revertedAt !== null) {
         throw new DomainError('CONFLICT', 'This activity has already been reverted');
@@ -3171,76 +1476,7 @@ export class JournalDomain {
     readonly mutations: number;
     readonly devices: number;
   } {
-    if (!Number.isInteger(retentionDays) || retentionDays < 1)
-      invalid('retentionDays must be a positive integer');
-    const cutoff = new Date(this.now().getTime() - retentionDays * 86_400_000).toISOString();
-    const now = this.now().toISOString();
-    const transaction = this.db.transaction(() => {
-      const expiredIds = (
-        this.db
-          .prepare('SELECT id FROM entries WHERE deleted_at IS NOT NULL AND deleted_at < ?')
-          .all(cutoff) as Array<{ id: string }>
-      ).map(({ id }) => id);
-      if (expiredIds.length > 0) {
-        const expired = new Set(expiredIds);
-        const rows = this.db
-          .prepare(
-            `SELECT id, kind, pre_images, post_images FROM activity
-             WHERE EXISTS (
-               SELECT 1 FROM json_each(activity.refs, '$.entryIds')
-               WHERE value IN (SELECT value FROM json_each(?))
-             )`,
-          )
-          .all(JSON.stringify(expiredIds)) as Array<{
-          id: string;
-          kind: ActivityKind;
-          pre_images: string;
-          post_images: string;
-        }>;
-        const redact = (json: string): string => {
-          const snapshots = JSON.parse(json) as Snapshot[];
-          return JSON.stringify(
-            snapshots.map((snapshot) =>
-              snapshot.entity === 'entry' && expired.has(snapshot.id)
-                ? { ...snapshot, row: null }
-                : snapshot,
-            ),
-          );
-        };
-        const activityLabel: Record<ActivityKind, string> = {
-          'agent-add': 'Added an entry (content expired)',
-          'agent-update': 'Updated an entry (content expired)',
-          'agent-delete': 'Deleted an entry (content expired)',
-          'agent-migration': 'Migrated entries (content expired)',
-          'summary-filed': 'Filed a reflection (content expired)',
-          'summary-saved': 'Saved a reflection (content expired)',
-          revert: 'Reverted a change (content expired)',
-        };
-        const update = this.db.prepare(
-          'UPDATE activity SET text = ?, pre_images = ?, post_images = ? WHERE id = ?',
-        );
-        for (const row of rows) {
-          update.run(
-            activityLabel[row.kind],
-            redact(row.pre_images),
-            redact(row.post_images),
-            row.id,
-          );
-        }
-      }
-      return {
-        entries: this.db
-          .prepare('DELETE FROM entries WHERE deleted_at IS NOT NULL AND deleted_at < ?')
-          .run(cutoff).changes,
-        // Idempotency records are durable: DM-11/API-4 define no expiry after which a
-        // caller key may silently execute again.
-        mutations: 0,
-        devices: this.db
-          .prepare('DELETE FROM device_tokens WHERE expires_at < ? OR revoked_at < ?')
-          .run(now, cutoff).changes,
-      };
-    });
-    return transaction();
+    return this.collectionRecovery.purgeExpired(retentionDays);
   }
 
   public close(): void {
@@ -3285,7 +1521,9 @@ export class JournalDomain {
         implicitSnapshots: [],
       };
       const result = command(context);
-      this.markReflectionsStaleForEntryChanges(context);
+      // Reflection staleness is a before-commit participant in this same
+      // SQLite transaction, never a follow-up write.
+      this.activityReflection.beforeCommit(context);
       if (mutation !== undefined) {
         this.db
           .prepare(
@@ -3328,12 +1566,7 @@ export class JournalDomain {
   }
 
   private selectEntry(id: string, includeDeleted: boolean): Entry | null {
-    const row = this.db
-      .prepare(
-        `SELECT * FROM entries WHERE id = ? ${includeDeleted ? '' : 'AND deleted_at IS NULL'}`,
-      )
-      .get(id) as EntryRow | undefined;
-    return row === undefined ? null : mapEntry(row);
+    return selectStoredEntry(this.db, id, includeDeleted);
   }
 
   private requireLiveEntry(id: string): Entry {
@@ -3347,170 +1580,15 @@ export class JournalDomain {
       Partial<Pick<Entry, 'createdAt' | 'updatedAt' | 'deletedAt' | 'revision'>>,
     now: string,
   ): Entry {
-    const entry = EntrySchema.parse({
-      ...input,
-      createdAt: input.createdAt ?? now,
-      updatedAt: input.updatedAt ?? now,
-      deletedAt: input.deletedAt ?? null,
-      revision: input.revision ?? 1,
-    });
-    this.db
-      .prepare(
-        `INSERT INTO entries(
-          id,date,type,text,state,time,tags,author,source,migrations,collection,
-          created_at,updated_at,deleted_at,revision
-        ) VALUES (
-          @id,@date,@type,@text,@state,@time,@tags,@author,@source,@migrations,@collection,
-          @createdAt,@updatedAt,@deletedAt,@revision
-        )`,
-      )
-      .run({ ...entry, tags: JSON.stringify(entry.tags) });
-    return entry;
+    return insertStoredEntry(this.db, input, now);
   }
 
   private replaceEntry(input: Entry, now: string): Entry {
-    const current = this.selectEntry(input.id, true);
-    if (current === null) throw new DomainError('NOT_FOUND', `Entry ${input.id} was not found`);
-    const entry = EntrySchema.parse({
-      ...input,
-      createdAt: current.createdAt,
-      updatedAt: now,
-      revision: current.revision + 1,
-    });
-    this.db
-      .prepare(
-        `UPDATE entries SET
-          date=@date,type=@type,text=@text,state=@state,time=@time,tags=@tags,author=@author,
-          source=@source,migrations=@migrations,collection=@collection,updated_at=@updatedAt,
-          deleted_at=@deletedAt,revision=@revision
-         WHERE id=@id`,
-      )
-      .run({ ...entry, tags: JSON.stringify(entry.tags) });
-    return entry;
-  }
-
-  private ensureCollection(id: string, now: string, context: WriteContext): Collection {
-    validateCollectionId(id);
-    const existing = this.getCollection(id);
-    if (existing !== null) {
-      if (existing.archivedAt === null) return existing;
-      const collection = this.updateCollectionRow({ ...existing, archivedAt: null }, now);
-      context.changes.push(collectionChange(collection));
-      context.implicitSnapshots.push({
-        pre: snapshotCollection(existing),
-        post: snapshotCollection(collection),
-      });
-      return collection;
-    }
-    if (!id.startsWith('month:'))
-      throw new DomainError('NOT_FOUND', `Collection ${id} was not found`);
-    const month = id.slice('month:'.length);
-    const collection = CollectionSchema.parse({
-      id,
-      name: formatMonthName(month),
-      note: 'Monthly log',
-      createdAt: now,
-      archivedAt: null,
-    });
-    this.db
-      .prepare(
-        `INSERT INTO collections(id,name,note,created_at,updated_at,archived_at)
-         VALUES (@id,@name,@note,@createdAt,@createdAt,@archivedAt)`,
-      )
-      .run(collection);
-    context.changes.push(collectionChange(collection));
-    context.implicitSnapshots.push({
-      pre: { entity: 'collection', id: collection.id, row: null },
-      post: snapshotCollection(collection),
-    });
-    return collection;
+    return replaceStoredEntry(this.db, input, now);
   }
 
   private updateCollectionRow(collectionInput: Collection, now: string): Collection {
-    const collection = CollectionSchema.parse(collectionInput);
-    this.db
-      .prepare(
-        'UPDATE collections SET name = ?, note = ?, updated_at = ?, archived_at = ? WHERE id = ?',
-      )
-      .run(collection.name, collection.note, now, collection.archivedAt, collection.id);
-    return collection;
-  }
-
-  private materializeReflectionSlots(from: string, to: string): void {
-    const today = this.today();
-    const now = this.now().toISOString();
-    const insert = this.db.prepare(
-      `INSERT OR IGNORE INTO reflection_slots(
-        id,week_start,week_end,status,request_id,requested_at,claimed_at,claimed_token_id,
-        claimed_label,claimed_tool,failure,current_version_id,created_at,updated_at,revision
-       ) VALUES (?, ?, ?, 'notRequested', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 1)`,
-    );
-    const hasSourceEntries = this.db.prepare(
-      `SELECT 1 FROM entries
-       WHERE date >= ? AND date <= ? AND deleted_at IS NULL
-       LIMIT 1`,
-    );
-    const transaction = this.db.transaction(() => {
-      let weekStart = mondayOf(from);
-      while (weekStart <= to) {
-        const weekEnd = addCalendarDays(weekStart, 6);
-        if (
-          weekEnd <= to &&
-          weekEnd < today &&
-          hasSourceEntries.get(weekStart, weekEnd) !== undefined
-        ) {
-          insert.run(this.idFactory(), weekStart, weekEnd, now, now);
-        }
-        weekStart = addCalendarDays(weekStart, 7);
-      }
-    });
-    transaction();
-  }
-
-  private markReflectionsStaleForEntryChanges(context: WriteContext): void {
-    const dates = new Set(
-      context.changes.flatMap((change) => {
-        if (!change.kind.startsWith('entry.')) return [];
-        const parsed = EntrySchema.safeParse(change.payload);
-        return parsed.success ? [parsed.data.date] : [];
-      }),
-    );
-    if (dates.size === 0) return;
-    const rows = this.db
-      .prepare("SELECT * FROM reflection_slots WHERE status = 'current'")
-      .all() as ReflectionSlotRow[];
-    for (const row of rows) {
-      if (![...dates].some((date) => date >= row.week_start && date <= row.week_end)) continue;
-      this.db
-        .prepare(
-          `UPDATE reflection_slots
-           SET status='stale', updated_at=?, revision=revision+1
-           WHERE id=?`,
-        )
-        .run(context.now, row.id);
-      const reflection = this.requireReflection(row.id);
-      context.changes.push(reflectionChange(reflection));
-      const summary = this.getSummaryForWeek(row.week_start);
-      if (summary?.status === 'current') {
-        const stale: Summary = {
-          ...summary,
-          status: 'stale',
-          updatedAt: context.now,
-          revision: summary.revision + 1,
-        };
-        this.updateSummaryRow(stale);
-        context.changes.push(upsertChange('summary', stale));
-      }
-    }
-  }
-
-  private mapReflectionRow(row: ReflectionSlotRow): Reflection {
-    const versions = this.db
-      .prepare(
-        'SELECT * FROM reflection_versions WHERE reflection_id = ? ORDER BY version_number DESC',
-      )
-      .all(row.id) as ReflectionVersionRow[];
-    return mapReflection(row, versions);
+    return this.collectionRecovery.updateRow(collectionInput, now);
   }
 
   private requireReflection(id: string): Reflection {
@@ -3519,157 +1597,12 @@ export class JournalDomain {
     return reflection;
   }
 
-  private requireReflectionForWeek(weekStart: string): Reflection {
-    if (!isMonday(weekStart)) invalid('Reflection weekStart must be a Monday');
-    const row = this.db
-      .prepare('SELECT * FROM reflection_slots WHERE week_start = ?')
-      .get(weekStart) as ReflectionSlotRow | undefined;
-    if (!row) throw new DomainError('NOT_FOUND', `Reflection week ${weekStart} was not found`);
-    return this.mapReflectionRow(row);
-  }
-
-  private assertExpectedReflectionRevision(reflection: Reflection, expectedRevision: number): void {
-    if (reflection.revision !== expectedRevision) {
-      throw new DomainError('CONFLICT', `Reflection changed since revision ${expectedRevision}`, {
-        details: { expectedRevision, actualRevision: reflection.revision },
-      });
-    }
-  }
-
-  private queueReflection(
-    operation: string,
-    id: string,
-    actor: ActorContext,
-    options: { readonly expectedRevision: number },
-    allowedStatuses: readonly Reflection['status'][],
-  ): { readonly reflection: Reflection; readonly activityId: string } {
-    if (actor.kind !== 'owner') invalid('Only the owner can request a weekly Reflection');
-    validateId(id);
-    return this.write(
-      operation,
-      { id, expectedRevision: options.expectedRevision },
-      actor,
-      undefined,
-      (context) => {
-        const before = this.requireReflection(id);
-        this.assertExpectedReflectionRevision(before, options.expectedRevision);
-        if (!allowedStatuses.includes(before.status)) {
-          throw new DomainError('CONFLICT', `Reflection is already ${before.status}`);
-        }
-        const requestId = this.idFactory();
-        this.db
-          .prepare(
-            `UPDATE reflection_slots SET
-              status='queued', request_id=?, requested_at=?, claimed_at=NULL,
-              claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
-              updated_at=?, revision=revision+1
-             WHERE id=?`,
-          )
-          .run(requestId, context.now, context.now, before.id);
-        const reflection = this.requireReflection(before.id);
-        context.changes.push(reflectionChange(reflection));
-        const activity = this.insertActivity(
-          {
-            kind: 'summary-filed',
-            text: `${operation === 'retry-reflection' ? 'Retried' : 'Requested'} weekly Reflection for ${before.weekStart}`,
-            refs: { ...actorRefs(actor, []), summaryId: before.id },
-            preImages: [],
-            postImages: [],
-          },
-          actor,
-          context,
-        );
-        return { reflection, activityId: activity.id };
-      },
-    );
-  }
-
-  private reflectionSourceEntries(
-    sourceFrom: string,
-    sourceTo: string,
-  ): ReflectionVersion['sourceEntries'] {
-    return this.db
-      .prepare(
-        `SELECT id, revision FROM entries
-         WHERE date >= ? AND date <= ? AND deleted_at IS NULL
-         ORDER BY id`,
-      )
-      .all(sourceFrom, sourceTo) as ReflectionVersion['sourceEntries'];
-  }
-
-  private reflectionVersionIsCurrent(version: ReflectionVersion): boolean {
-    return (
-      stableJson(version.sourceEntries) ===
-      stableJson(this.reflectionSourceEntries(version.sourceFrom, version.sourceTo))
-    );
-  }
-
-  private getSummaryForWeek(weekStart: string): Summary | null {
-    const row = this.db.prepare('SELECT * FROM summaries WHERE week_start = ?').get(weekStart) as
-      | SummaryRow
-      | undefined;
-    return row === undefined ? null : mapSummary(row);
-  }
-
   private upsertLegacyReflection(
     summary: Summary,
     actor: Extract<ActorContext, { readonly kind: 'agent' }>,
     context: WriteContext,
   ): Reflection {
-    const existingRow = this.db
-      .prepare('SELECT * FROM reflection_slots WHERE week_start = ?')
-      .get(summary.weekStart) as ReflectionSlotRow | undefined;
-    const weekEnd = addCalendarDays(summary.weekStart, 6);
-    const reflectionId = existingRow?.id ?? summary.id;
-    if (existingRow === undefined) {
-      this.db
-        .prepare(
-          `INSERT INTO reflection_slots(
-            id,week_start,week_end,status,request_id,requested_at,claimed_at,claimed_token_id,
-            claimed_label,claimed_tool,failure,current_version_id,created_at,updated_at,revision
-           ) VALUES (?, ?, ?, 'notRequested', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, 1)`,
-        )
-        .run(reflectionId, summary.weekStart, weekEnd, context.now, context.now);
-    }
-    const versionNumber =
-      (this.db
-        .prepare(
-          'SELECT coalesce(max(version_number), 0) FROM reflection_versions WHERE reflection_id = ?',
-        )
-        .pluck()
-        .get(reflectionId) as number) + 1;
-    const versionId = this.idFactory();
-    this.db
-      .prepare(
-        `INSERT INTO reflection_versions(
-          id,reflection_id,version_number,text,source_from,source_to,generator_token_id,
-          generator_label,generator_tool,source,generated_at,source_entries
-         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-      )
-      .run(
-        versionId,
-        reflectionId,
-        versionNumber,
-        summary.text,
-        summary.weekStart,
-        weekEnd,
-        actor.tokenId,
-        actor.tokenLabel,
-        actor.tool ?? null,
-        summary.source,
-        context.now,
-        JSON.stringify(this.reflectionSourceEntries(summary.weekStart, weekEnd)),
-      );
-    this.db
-      .prepare(
-        `UPDATE reflection_slots SET
-          status='current', request_id=NULL, requested_at=NULL, claimed_at=NULL,
-          claimed_token_id=NULL, claimed_label=NULL, claimed_tool=NULL, failure=NULL,
-          current_version_id=?, updated_at=?, revision=revision+1
-         WHERE id=?`,
-      )
-      .run(versionId, context.now, reflectionId);
-    return this.requireReflection(reflectionId);
+    return this.activityReflection.upsertLegacyReflection(summary, actor, context);
   }
 
   private insertSummary(summaryInput: Summary): void {
@@ -3718,69 +1651,7 @@ export class JournalDomain {
     actor: ActorContext,
     context: WriteContext,
   ): ActivityItem {
-    const activity = ActivityItemSchema.parse({
-      id: input.id ?? this.idFactory(),
-      at: context.now,
-      kind: input.kind,
-      text: normalizeText(input.text, 500, 'activity text'),
-      origin: activityOrigin(actor),
-      refs: input.refs,
-      preImages: [...input.preImages, ...context.implicitSnapshots.map((snapshot) => snapshot.pre)],
-      postImages: [
-        ...input.postImages,
-        ...context.implicitSnapshots.map((snapshot) => snapshot.post),
-      ],
-      revertedAt: null,
-      revertedByActivityId: null,
-    });
-    this.db
-      .prepare(
-        `INSERT INTO activity(
-          id,at,kind,text,origin,refs,pre_images,post_images,reverted_at,reverted_by_activity_id
-        ) VALUES (@id,@at,@kind,@text,@origin,@refs,@preImages,@postImages,@revertedAt,@revertedByActivityId)`,
-      )
-      .run({
-        ...activity,
-        origin: JSON.stringify(activity.origin),
-        refs: JSON.stringify(activity.refs),
-        preImages: JSON.stringify(activity.preImages),
-        postImages: JSON.stringify(activity.postImages),
-      });
-    context.changes.push(activityChange(activity));
-    return activity;
-  }
-
-  private maybeRecordEntryActivity(
-    actor: ActorContext,
-    kind: Extract<ActivityKind, 'agent-update' | 'agent-delete'>,
-    text: string,
-    before: Entry,
-    after: Entry,
-    context: WriteContext,
-    reason?: string,
-  ): ActivityItem | null {
-    return this.maybeRecordActivity(
-      actor,
-      kind,
-      reason === undefined ? text : `${text} — ${reason}`,
-      actorRefs(actor, [after.id]),
-      [snapshotEntry(before)],
-      [snapshotEntry(after)],
-      context,
-    );
-  }
-
-  private maybeRecordActivity(
-    actor: ActorContext,
-    kind: ActivityKind,
-    text: string,
-    refs: ActivityItem['refs'],
-    preImages: readonly Snapshot[],
-    postImages: readonly Snapshot[],
-    context: WriteContext,
-  ): ActivityItem | null {
-    if (actor.kind === 'owner' && !kind.startsWith('summary-') && kind !== 'revert') return null;
-    return this.insertActivity({ kind, text, refs, preImages, postImages }, actor, context);
+    return this.activityReflection.append(input, actor, context);
   }
 
   private selectSnapshot(entity: Snapshot['entity'], id: string): Snapshot['row'] {
