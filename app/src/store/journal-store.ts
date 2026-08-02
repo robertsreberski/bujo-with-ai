@@ -28,8 +28,17 @@ import {
   registerJournalServiceWorker,
   subscribePwaRegistration,
 } from '../pwa/registration';
-import type { Destination } from '../components/destination';
-import { hydrateLogView, type LogViewConfig } from '../views/log-arrangement';
+import type {
+  CreateEntryInput,
+  DeadLetter,
+  Destination,
+  JournalNotice,
+  JournalSearchPage,
+  LogViewConfig,
+  OutboxItem,
+  QueueableCommand,
+} from '../domain/contracts';
+import { hydrateLogView } from '../domain/log-arrangement';
 import {
   createActivityEnrichmentActions,
   deriveTagUsage,
@@ -52,16 +61,7 @@ import {
   type ServerRows,
 } from './connection-outbox';
 import { createUlid } from './ids';
-import type {
-  CreateEntryInput,
-  DeadLetter,
-  JournalClientRecord,
-  JournalNotice,
-  JournalSearchPage,
-  MirrorData,
-  OutboxItem,
-  QueueableCommand,
-} from './models';
+import type { JournalClientRecord, MirrorData } from './models';
 import {
   applyAgentTokenChanges,
   applyOptimisticCommand,
@@ -118,7 +118,7 @@ export type {
   JournalSearchPage,
   JournalStatus,
   OutboxItem,
-} from './models';
+} from '../domain/contracts';
 export type {
   ActivityView,
   AgentToken,

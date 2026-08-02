@@ -1,8 +1,9 @@
 import { ApiError, journalApi } from '../api/client';
 import type { Settings } from '../api/types';
 import { mergeAgentToken, upsertServerSettings } from './optimistic';
+import type { MirrorData } from './models';
 import { mirrorFromState, type JournalFeatureRuntime } from './runtime';
-import type { JournalState } from './state';
+import type { JournalActions, JournalDataState } from './state';
 
 export const PAIRING_EXPIRED_MESSAGE = 'Pairing expired. Reload Journal to reconnect.';
 
@@ -15,9 +16,12 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 type SettingsPairingActions = Pick<
-  JournalState,
+  JournalActions,
   'updateSettings' | 'refreshTokens' | 'createToken' | 'revokeToken'
 >;
+
+type SettingsPairingState = MirrorData &
+  Pick<JournalDataState, 'agentTokens' | 'tokensLoading' | 'indexSource'>;
 
 /**
  * Loads the canonical startup snapshot and performs the one allowed pairing
@@ -26,7 +30,7 @@ type SettingsPairingActions = Pick<
 export async function bootstrapSnapshot(
   allowPair: boolean,
   expectedGeneration: number,
-  runtime: JournalFeatureRuntime,
+  runtime: JournalFeatureRuntime<SettingsPairingState>,
 ): Promise<Awaited<ReturnType<typeof journalApi.bootstrap>> | null> {
   try {
     return await journalApi.bootstrap();
@@ -46,7 +50,7 @@ export async function bootstrapSnapshot(
 }
 
 export function createSettingsPairingActions(
-  runtime: JournalFeatureRuntime,
+  runtime: JournalFeatureRuntime<SettingsPairingState>,
 ): SettingsPairingActions {
   return {
     updateSettings: async (patch) => {

@@ -1,26 +1,12 @@
 import type { JournalRoute } from '../routes/useJournalRoute';
+import type { Destination, DestinationSource, ResolvedDestination } from '../domain/contracts';
 import { formatMonth, formatShortDate } from './dates';
 import type { DateShift, JournalCollection } from './types';
 
 const MONTH_COLLECTION_PREFIX = 'month:';
 
-/** Where a capture lands: a calendar day, or a (possibly monthly) collection. */
-export type Destination = { kind: 'date'; date: string } | { kind: 'collection'; id: string };
-
-export type DestinationSource = 'token' | 'chip' | 'screen';
-
-export interface ResolvedDestination {
-  destination: Destination;
-  source: DestinationSource;
-  /** True when filing here would mint a collection the mirror has never seen. */
-  createsCollection: boolean;
-  /**
-   * The day a `>` token named for a collection filing. Null for a date
-   * destination, which already carries its day, and null when no token was
-   * typed — where the server still stamps the filing day.
-   */
-  statedDate: string | null;
-}
+/** @deprecated Import neutral destination contracts from ../domain/contracts. */
+export type { Destination, DestinationSource, ResolvedDestination } from '../domain/contracts';
 
 export interface ResolveDestinationArgs {
   route: JournalRoute;

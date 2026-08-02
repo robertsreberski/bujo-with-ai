@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Entry, RecentlyDeletedEntry } from '../api/types';
-import type { DeadLetter, QueueableCommand } from '../store/models';
+import type { DeadLetter, QueueableCommand } from '../domain/contracts';
 import { EMPTY_PANEL } from '../views/view-classes';
 import { ConfirmDialog, Dialog } from './Dialog';
 import { Icon } from './Icon';

@@ -1,25 +1,8 @@
-import { ENTRY_TYPES, type EntryType, type JournalEntry } from '../components/types';
+import type { Entry as JournalEntry, EntryType } from '../api/types';
+import { DEFAULT_LOG_VIEW, ENTRY_TYPES, type LogSort, type LogViewConfig } from './contracts';
 
-/** Ordered by the date an entry belongs to, not the moment it was captured. */
-export type LogSort = 'newest' | 'oldest';
-export type LogGroup = 'none' | 'type';
-export type LogStateFilter = 'open' | 'all' | 'closed';
-
-export interface LogViewConfig {
-  sort: LogSort;
-  group: LogGroup;
-  stateFilter: LogStateFilter;
-  /** Type narrowing; empty means every type. */
-  types: EntryType[];
-}
-
-/** Day 1 up, the way a paper monthly log reads. */
-export const DEFAULT_LOG_VIEW: LogViewConfig = Object.freeze({
-  sort: 'oldest',
-  group: 'none',
-  stateFilter: 'open',
-  types: [],
-});
+export { DEFAULT_LOG_VIEW } from './contracts';
+export type { LogGroup, LogSort, LogStateFilter, LogViewConfig } from './contracts';
 
 /**
  * The default from before the log sorted by entry date. A saved copy of it

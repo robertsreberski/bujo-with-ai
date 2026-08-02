@@ -6,7 +6,7 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { formatLongDate } from './dates';
 import { cn } from '../lib/utils';
-import type { JournalStatus } from '../store/models';
+import type { JournalStatus } from '../domain/contracts';
 
 /** The two nav destinations that carry a count, and what that count means. */
 export interface ShellCounts {

@@ -1,4 +1,4 @@
-import type { CreateEntryInput } from '../store/models';
+import type { CreateEntryInput } from '../domain/contracts';
 import { humanizeSlug, nextCalendarDate, type ResolvedDestination } from './destination';
 import type { ParsedDraft } from './types';
 

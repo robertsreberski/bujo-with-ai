@@ -11,7 +11,8 @@ import type {
   Summary,
 } from '@journal/server/contracts/app';
 
-export const ENTRY_TYPES = ['task', 'event', 'note', 'idea', 'question', 'habit', 'mood'] as const;
+/** @deprecated Import neutral entry contracts from ../domain/contracts. */
+export { ENTRY_TYPES } from '../domain/contracts';
 
 export type { DateShift };
 export type EntryType = CanonicalEntryType;

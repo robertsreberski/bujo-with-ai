@@ -5,7 +5,8 @@ import {
 
 import { ApiError, journalApi } from '../api/client';
 import type { Collection, Entry, IndexResponse } from '../api/types';
-import type { JournalSearchPage, MirrorData, OutboxItem, QueueableCommand } from './models';
+import type { JournalSearchPage, OutboxItem, QueueableCommand } from '../domain/contracts';
+import type { MirrorData } from './models';
 import {
   applyPendingCommands,
   recomputeActivityRevertEligibility,
@@ -13,10 +14,30 @@ import {
   upsertServerEntry,
 } from './optimistic';
 import { mirrorFromState, type JournalFeatureRuntime } from './runtime';
-import type { JournalState, LoadEntriesQuery } from './state';
+import type { JournalActions, JournalDataState, LoadEntriesQuery } from './state';
+
+type TimelineRetrievalState = MirrorData &
+  Pick<
+    JournalDataState,
+    | 'outbox'
+    | 'online'
+    | 'networkOnline'
+    | 'connectionStatus'
+    | 'timelineEntryIds'
+    | 'timelineNextCursor'
+    | 'timelineAnchorDate'
+    | 'timelineLoaded'
+    | 'timelineLoading'
+    | 'timelineLoadingEarlier'
+    | 'timelineLatestAgentTouch'
+    | 'timelineWeeklyReflection'
+    | 'indexStatus'
+    | 'indexSource'
+    | 'indexError'
+  >;
 
 export interface TimelineRetrievalDependencies {
-  runtime: JournalFeatureRuntime;
+  runtime: JournalFeatureRuntime<TimelineRetrievalState>;
   sseReplayReady(): boolean;
   canonicalHistoryHydrating(): boolean;
   nextTimelineRequest(): number;
@@ -25,7 +46,7 @@ export interface TimelineRetrievalDependencies {
 }
 
 type TimelineRetrievalActions = Pick<
-  JournalState,
+  JournalActions,
   | 'searchEntries'
   | 'loadEntry'
   | 'loadEntries'
@@ -125,7 +146,7 @@ export function reconcileTimelineMembership(
 }
 
 export function timelineIdsWithRestoredEntry(
-  state: Pick<JournalState, 'timelineEntryIds' | 'timelineAnchorDate'>,
+  state: Pick<JournalDataState, 'timelineEntryIds' | 'timelineAnchorDate'>,
   entry: Entry,
 ): string[] {
   return isTimelineEligible(entry, state.timelineAnchorDate)
@@ -498,25 +519,27 @@ export function createTimelineRetrievalActions(
   };
 }
 
-export const selectEntries = (state: JournalState): Entry[] =>
+export const selectEntries = (state: Pick<MirrorData, 'entriesById'>): Entry[] =>
   Object.values(state.entriesById).filter((entry) => entry.deletedAt === null);
 
-export const selectTimelineEntries = (state: JournalState): Entry[] =>
+export const selectTimelineEntries = (
+  state: Pick<JournalDataState, 'timelineEntryIds' | 'entriesById' | 'timelineAnchorDate'>,
+): Entry[] =>
   state.timelineEntryIds.flatMap((id) => {
     const entry = state.entriesById[id];
     return entry && isTimelineEligible(entry, state.timelineAnchorDate) ? [entry] : [];
   });
 
-export const selectCollections = (state: JournalState): Collection[] =>
+export const selectCollections = (state: Pick<MirrorData, 'collectionsById'>): Collection[] =>
   Object.values(state.collectionsById);
 
 /** Collections a capture can file into: no archives, no server-owned monthly logs. */
-export const selectActiveCollections = (state: JournalState): Collection[] =>
+export const selectActiveCollections = (state: Pick<MirrorData, 'collectionsById'>): Collection[] =>
   Object.values(state.collectionsById)
     .filter((collection) => !collection.archivedAt && !collection.id.startsWith('month:'))
     .sort((left, right) => left.name.localeCompare(right.name));
 
-export const selectOpenTodayCount = (state: JournalState): number =>
+export const selectOpenTodayCount = (state: Pick<MirrorData, 'entriesById' | 'today'>): number =>
   Object.values(state.entriesById).filter(
     (entry) =>
       entry.deletedAt === null &&
