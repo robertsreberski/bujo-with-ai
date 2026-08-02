@@ -6,6 +6,7 @@ import type {
   ChangeBatch,
   Collection,
   Entry,
+  Reflection,
   Settings,
   Summary,
 } from '../api/types';
@@ -27,6 +28,24 @@ const settings: Settings = {
   showTypeBadges: true,
   highlightAiEntries: true,
   updatedAt: '2026-07-31T08:00:00.000Z',
+};
+
+const reflection: Reflection = {
+  id: '01K1H000000000000000000041',
+  weekStart: '2026-07-20',
+  weekEnd: '2026-07-26',
+  status: 'notRequested',
+  revision: 1,
+  requestId: null,
+  requestedAt: null,
+  claimedAt: null,
+  claimedBy: null,
+  failure: null,
+  currentVersionId: null,
+  currentVersion: null,
+  versions: [],
+  createdAt: '2026-07-27T08:00:00.000Z',
+  updatedAt: '2026-07-27T08:00:00.000Z',
 };
 
 function entry(patch: Partial<Entry> = {}): Entry {
@@ -273,6 +292,39 @@ describe('optimistic command projection', () => {
     expect(projected.collectionsById[collection.id]).toBeUndefined();
     expect(projected.summariesByMonth['2026-08']).toBeNull();
     expect(projected.latestSummary).toEqual(olderSummary);
+  });
+
+  it('removes only the Reflection named by a typed tombstone', () => {
+    const base = {
+      ...mirror(),
+      reflectionsByWeek: { [reflection.weekStart]: reflection },
+    };
+    const removed = applyServerChangeBatch(base, {
+      transactionId: '01K1H000000000000000000042',
+      mutationId: null,
+      origin: { kind: 'system' },
+      changes: [
+        {
+          kind: 'reflection.changed',
+          payload: { id: reflection.id, weekStart: reflection.weekStart },
+        },
+      ],
+    } as unknown as ChangeBatch);
+
+    expect(removed.reflectionsByWeek?.[reflection.weekStart]).toBeUndefined();
+
+    const staleTombstone = applyServerChangeBatch(base, {
+      transactionId: '01K1H000000000000000000043',
+      mutationId: null,
+      origin: { kind: 'system' },
+      changes: [
+        {
+          kind: 'reflection.changed',
+          payload: { id: '01K1H000000000000000000044', weekStart: reflection.weekStart },
+        },
+      ],
+    } as unknown as ChangeBatch);
+    expect(staleTombstone.reflectionsByWeek?.[reflection.weekStart]).toEqual(reflection);
   });
 
   it('converges settings and secret-free token metadata from SSE', () => {
