@@ -750,7 +750,7 @@ test('authoritative text, exact tags, and all three saved views return the inten
 
   const exactTagResponse = page.waitForResponse((response) => {
     const url = new URL(response.url());
-    return url.pathname === '/api/entries' && url.searchParams.get('tag') === 'work';
+    return url.pathname === '/api/entries' && url.searchParams.get('q') === '#work';
   });
   await searchInput.fill('#work');
   const exactTagDocument = (await (await exactTagResponse).json()) as {

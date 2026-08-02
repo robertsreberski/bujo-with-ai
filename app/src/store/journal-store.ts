@@ -1,4 +1,10 @@
-import { ActivitySnapshotSchema, initialEntryState } from '@journal/server/contracts/app';
+import {
+  ActivitySnapshotSchema,
+  entryMatchesJournalSearch,
+  initialEntryState,
+  parseJournalSearch as parseSharedJournalSearch,
+  type JournalSearchFilters as SharedJournalSearchFilters,
+} from '@journal/server/contracts/app';
 import { create } from 'zustand';
 import type { StoreApi, UseBoundStore } from 'zustand';
 
@@ -10,7 +16,6 @@ import type {
   Collection,
   Entry,
   EntryPatch,
-  EntryState,
   EntryType,
   DateIntent,
   Settings,
@@ -40,6 +45,7 @@ import type {
   JournalNotice,
   JournalPersistenceState,
   JournalResourceStatus,
+  JournalSearchPage,
   JournalStatus,
   MirrorData,
   OutboxItem,
@@ -73,6 +79,7 @@ export type {
   JournalNotice,
   JournalPersistenceState,
   JournalResourceStatus,
+  JournalSearchPage,
   JournalStatus,
   OutboxItem,
 } from './models';
@@ -218,7 +225,7 @@ export interface JournalState extends MirrorData {
   updateSettings(
     patch: Partial<Pick<Settings, 'density' | 'showTypeBadges' | 'highlightAiEntries'>>,
   ): Promise<Settings>;
-  searchEntries(query: string): Promise<Entry[]>;
+  searchEntries(query: string, cursor?: string): Promise<JournalSearchPage>;
   loadEntries(query: LoadEntriesQuery): Promise<Entry[]>;
   loadDate(date: string): Promise<Entry[]>;
   loadMonth(month: string): Promise<Entry[]>;
@@ -1810,43 +1817,58 @@ function normalizePatch(entry: Entry, patch: EntryPatch): EntryPatch {
   return { ...patch, state: actionable ? 'open' : 'logged' };
 }
 
-export interface JournalSearchFilters {
-  q?: string;
-  type?: EntryType;
-  state?: EntryState;
-  author?: 'me' | 'ai';
-  tag?: string;
-}
+export type JournalSearchFilters = SharedJournalSearchFilters;
 
 export interface LoadEntriesQuery extends JournalSearchFilters {
-  from?: string;
-  to?: string;
   collection?: string;
 }
 
-/** Converts the three shipped saved-view aliases into structured API filters. */
-export function parseJournalSearch(query: string): JournalSearchFilters {
-  const trimmed = query.trim();
-  const lowered = trimmed.toLowerCase();
-  if (lowered === 'open') return { type: 'task', state: 'open' };
-  if (lowered === 'claude') return { author: 'ai' };
-  if (/^#[a-z0-9-]+$/i.test(trimmed)) return { tag: trimmed.slice(1).toLowerCase() };
+/** The browser and API intentionally consume the same query grammar. */
+export const parseJournalSearch = parseSharedJournalSearch;
 
-  const filters: JournalSearchFilters = {};
-  const remaining: string[] = [];
-  for (const token of trimmed.split(/\s+/).filter(Boolean)) {
-    const normalized = token.toLowerCase();
-    if (normalized === 'is:open') {
-      filters.type = 'task';
-      filters.state = 'open';
-    } else if (normalized === 'by:assistant') {
-      filters.author = 'ai';
-    } else {
-      remaining.push(token);
-    }
+const SEARCH_PAGE_SIZE = 50;
+const DOWNLOADED_CURSOR_PREFIX = 'downloaded:';
+
+function downloadedCursor(offset: number): string {
+  return `${DOWNLOADED_CURSOR_PREFIX}${offset}`;
+}
+
+function downloadedOffset(cursor: string | undefined): number {
+  if (cursor === undefined) return 0;
+  if (!cursor.startsWith(DOWNLOADED_CURSOR_PREFIX)) return 0;
+  const offset = Number(cursor.slice(DOWNLOADED_CURSOR_PREFIX.length));
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new Error('Invalid downloaded search cursor.');
   }
-  if (remaining.length > 0) filters.q = remaining.join(' ');
-  return filters;
+  return offset;
+}
+
+function downloadedSearchPage(
+  entriesById: Record<string, Entry>,
+  query: string,
+  cursor: string | undefined,
+  reason: JournalSearchPage['reason'],
+): JournalSearchPage {
+  const filters = parseJournalSearch(query);
+  const offset = downloadedOffset(cursor);
+  const matching = Object.values(entriesById)
+    .filter((entry) => entryMatchesJournalSearch(entry, filters))
+    .sort(
+      (left, right) =>
+        right.date.localeCompare(left.date) ||
+        right.createdAt.localeCompare(left.createdAt) ||
+        right.id.localeCompare(left.id),
+    );
+  const items = matching.slice(offset, offset + SEARCH_PAGE_SIZE);
+  const nextOffset = offset + items.length;
+  const hasMore = nextOffset < matching.length;
+  return {
+    items,
+    nextCursor: hasMore ? downloadedCursor(nextOffset) : null,
+    hasMore,
+    source: 'downloaded',
+    reason,
+  };
 }
 
 async function loadEntriesIntoMirror(
@@ -2789,29 +2811,51 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
       await persistNow();
       return response.settings;
     },
-    searchEntries: async (query) => {
-      const filters = parseJournalSearch(query);
-      const normalized = filters.q?.toLowerCase() ?? '';
-      const local = Object.values(get().entriesById)
-        .filter(
-          (entry) =>
-            entry.deletedAt === null &&
-            (filters.type === undefined || entry.type === filters.type) &&
-            (filters.state === undefined || entry.state === filters.state) &&
-            (filters.author === undefined || entry.author === filters.author) &&
-            (filters.tag === undefined || entry.tags.includes(filters.tag)) &&
-            (!normalized ||
-              entry.text.toLowerCase().includes(normalized) ||
-              entry.tags.some((tag) => tag.includes(normalized.replace(/^#/, '')))),
-        )
-        .sort(
-          (left, right) =>
-            right.date.localeCompare(left.date) || right.createdAt.localeCompare(left.createdAt),
+    searchEntries: async (query, cursor) => {
+      // Parse before choosing a source so malformed input behaves identically offline.
+      parseJournalSearch(query);
+      const localReason = (): JournalSearchPage['reason'] =>
+        get().networkOnline ? 'unavailable' : 'offline';
+      if (cursor?.startsWith(DOWNLOADED_CURSOR_PREFIX) || !get().online) {
+        return downloadedSearchPage(get().entriesById, query, cursor, localReason());
+      }
+
+      const lifecycle = lifecycleGeneration;
+      let response: Awaited<ReturnType<typeof journalApi.listEntries>>;
+      try {
+        response = await authenticated(() =>
+          journalApi.listEntries({
+            q: query.trim(),
+            limit: SEARCH_PAGE_SIZE,
+            ...(cursor === undefined ? {} : { cursor }),
+          }),
         );
-      if (query.trim() === '') return local;
-      if (!get().online)
-        throw new ApiError(0, 'offline', 'Search is limited to downloaded entries.');
-      return loadEntriesIntoMirror(filters);
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 0 || error.retryable)) {
+          return downloadedSearchPage(get().entriesById, query, cursor, localReason());
+        }
+        throw error;
+      }
+
+      if (lifecycle === lifecycleGeneration && !pairingExpired) {
+        let mirror = mirrorFromState(get());
+        for (const entry of response.items) mirror = upsertServerEntry(mirror, entry);
+        mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, get().outbox));
+        set({
+          ...mirror,
+          today: response.today,
+          serverToday: response.today,
+          timezone: response.timezone,
+        });
+        persistSoon();
+      }
+      return {
+        items: response.items,
+        nextCursor: response.nextCursor,
+        hasMore: response.nextCursor !== null,
+        source: 'journal',
+        reason: null,
+      };
     },
     loadEntries: loadEntriesIntoMirror,
     loadDate: (date) => loadEntriesIntoMirror({ from: date, to: date }),
@@ -3035,8 +3079,8 @@ export const journalActions = {
   setCollectionLogView: (config: LogViewConfig | null): void =>
     useJournalStore.getState().setCollectionLogView(config),
   setDefaultType: (type: EntryType): void => useJournalStore.getState().setDefaultType(type),
-  searchEntries: (query: string): Promise<Entry[]> =>
-    useJournalStore.getState().searchEntries(query),
+  searchEntries: (query: string, cursor?: string): Promise<JournalSearchPage> =>
+    useJournalStore.getState().searchEntries(query, cursor),
   loadEntries: (query: LoadEntriesQuery): Promise<Entry[]> =>
     useJournalStore.getState().loadEntries(query),
   loadDate: (date: string): Promise<Entry[]> => useJournalStore.getState().loadDate(date),

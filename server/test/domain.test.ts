@@ -514,6 +514,19 @@ describe('JournalDomain entry commands', () => {
     expect(domain.searchEntries({ query: 'afé', limit: 25 }).total).toBe(1);
   });
 
+  it('requires every text needle while keeping Unicode prefix behavior', () => {
+    const { domain, owner } = fixture();
+    domain.createEntry({ id: ulid(), text: 'Alpha only', type: 'note', date: '2026-07-31' }, owner);
+    domain.createEntry({ id: ulid(), text: 'Beta only', type: 'note', date: '2026-07-31' }, owner);
+    domain.createEntry(
+      { id: ulid(), text: 'Alpha and BÉTA together', type: 'note', date: '2026-07-31' },
+      owner,
+    );
+    const matches = domain.searchEntries({ query: 'alpha beta', limit: 25 });
+    expect(matches.total).toBe(1);
+    expect(matches.entries[0]?.text).toBe('Alpha and BÉTA together');
+  });
+
   it('ranks the tag vocabulary by use, then alphabetically, ignoring deleted entries', () => {
     const { domain, owner, advance } = fixture();
     const first = domain.createEntry(

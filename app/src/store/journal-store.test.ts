@@ -1388,3 +1388,82 @@ describe('journal store reconciliation', () => {
     });
   });
 });
+
+describe('journal search paging', () => {
+  it('pages every matching downloaded row in groups of 50 without a silent cap', async () => {
+    const entries = Object.fromEntries(
+      Array.from({ length: 120 }, (_, index) => {
+        const row = entry(index, { text: `Needle ${index}`, type: 'note', state: 'logged' });
+        return [row.id, row];
+      }),
+    );
+    useJournalStore.setState({
+      entriesById: entries,
+      online: false,
+      networkOnline: false,
+    });
+
+    const first = await journalActions.searchEntries('needle');
+    const second = await journalActions.searchEntries('needle', first.nextCursor ?? undefined);
+    const third = await journalActions.searchEntries('needle', second.nextCursor ?? undefined);
+
+    expect(first).toMatchObject({ source: 'downloaded', reason: 'offline', hasMore: true });
+    expect(first.items).toHaveLength(50);
+    expect(second.items).toHaveLength(50);
+    expect(third.items).toHaveLength(20);
+    expect(third.nextCursor).toBeNull();
+    expect(third.hasMore).toBe(false);
+    expect(
+      new Set([...first.items, ...second.items, ...third.items].map((row) => row.id)).size,
+    ).toBe(120);
+  });
+
+  it('falls back truthfully on a retryable failure and retries the same raw grammar online', async () => {
+    const downloaded = entry(1, {
+      text: 'CAFÉ launch plan',
+      type: 'note',
+      state: 'logged',
+      tags: ['work'],
+    });
+    useJournalStore.setState({
+      entriesById: { [downloaded.id]: downloaded },
+      online: true,
+      networkOnline: true,
+    });
+    const listEntries = vi
+      .spyOn(journalApi, 'listEntries')
+      .mockRejectedValueOnce(new ApiError(503, 'unavailable', 'Journal is unavailable.'))
+      .mockResolvedValueOnce({
+        items: [downloaded],
+        nextCursor: 'server-page-two',
+        today: '2026-07-31',
+        timezone: 'Europe/Amsterdam',
+      });
+
+    const fallback = await journalActions.searchEntries('type:note #work cafe');
+    const retry = await journalActions.searchEntries('type:note #work cafe');
+
+    expect(fallback).toMatchObject({
+      items: [downloaded],
+      source: 'downloaded',
+      reason: 'unavailable',
+      nextCursor: null,
+      hasMore: false,
+    });
+    expect(retry).toMatchObject({
+      items: [downloaded],
+      source: 'journal',
+      reason: null,
+      nextCursor: 'server-page-two',
+      hasMore: true,
+    });
+    expect(listEntries).toHaveBeenNthCalledWith(1, {
+      q: 'type:note #work cafe',
+      limit: 50,
+    });
+    expect(listEntries).toHaveBeenNthCalledWith(2, {
+      q: 'type:note #work cafe',
+      limit: 50,
+    });
+  });
+});
