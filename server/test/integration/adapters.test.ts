@@ -6,7 +6,7 @@ import { ulid } from 'ulid';
 import { createDomainAdapters } from '../../src/adapters.js';
 import type { OwnerActor } from '../../src/api/routes.js';
 import type { JournalConfig } from '../../src/config.js';
-import type { ActivityView, Collection, Entry } from '../../src/contracts/index.js';
+import type { ActivityView, AgentEntry, Collection, Entry } from '../../src/contracts/index.js';
 import { JournalDatabase } from '../../src/db/database.js';
 import { JournalDomain } from '../../src/domain/journal.js';
 
@@ -176,6 +176,46 @@ describe('HTTP and MCP domain adapters', () => {
         },
       ]),
     );
+  });
+
+  it('stamps a collection entry with the date it belongs to rather than the filing date', async () => {
+    const { adapters } = fixture();
+    const agent = {
+      kind: 'agent' as const,
+      tokenId: ulid(),
+      tokenLabel: 'integration',
+      tool: 'add_to_collection',
+    };
+    const dated = (await adapters.mcp.addToCollection(
+      {
+        collection: 'month:2026-08',
+        text: 'Dentist appointment',
+        type: 'event',
+        tags: [],
+        date: '2026-08-26',
+        time: '12:00',
+        source: 'From the adapter integration test.',
+      },
+      agent,
+    )) as { entry: AgentEntry };
+    expect(dated.entry).toMatchObject({
+      collection: 'month:2026-08',
+      date: '2026-08-26',
+      time: '12:00',
+    });
+
+    // Today is still the sensible default, so existing callers keep working.
+    const undated = (await adapters.mcp.addToCollection(
+      {
+        collection: 'month:2026-08',
+        text: 'Submit water meter reading',
+        type: 'task',
+        tags: [],
+        source: 'From the adapter integration test.',
+      },
+      agent,
+    )) as { entry: AgentEntry };
+    expect(undated.entry).toMatchObject({ date: '2026-07-31', time: null });
   });
 
   it('resolves stale offline date intents from their frozen base without rebasing at sync time', () => {

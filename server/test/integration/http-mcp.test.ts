@@ -1193,10 +1193,12 @@ describe('stateful MCP endpoint', () => {
       {
         name: 'add_to_collection',
         arguments: {
-          collection: 'ideas',
+          collection: 'month:2026-07',
           text: 'Keep this release idea.',
           type: 'note',
           tags: ['release'],
+          date: '2026-07-31',
+          time: '09:00',
           source: 'Captured during release coverage.',
           idempotencyKey: 'release-collection-write',
         },
@@ -1282,6 +1284,23 @@ describe('stateful MCP endpoint', () => {
     }
     expect(toolLogs.filter((event) => event.outcome === 'error')).toEqual(
       toolNames.map((tool) => ({ tool, outcome: 'error' })),
+    );
+
+    // Asserted after the per-tool log tallies above, which allow exactly one
+    // success and one error per tool. A month log rejects a date from another
+    // month at the transport boundary, before the write is ever attempted.
+    const wrongMonth = await rpc('tools/call', {
+      name: 'add_to_collection',
+      arguments: {
+        collection: 'month:2026-07',
+        text: 'A date from the wrong month.',
+        date: '2026-08-01',
+        source: 'Captured during release coverage.',
+      },
+    });
+    expect(wrongMonth.isError).toBe(true);
+    expect(wrongMonth.content?.[0]?.text).toContain(
+      'Input validation error: Invalid arguments for tool add_to_collection',
     );
 
     const listedResources = await rpc('resources/list', {});

@@ -498,6 +498,8 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
           {
             text: input.text,
             type: input.type,
+            ...(input.date === undefined ? {} : { date: input.date }),
+            time: input.time ?? null,
             tags: input.tags,
             collection: input.collection,
             source: input.source,

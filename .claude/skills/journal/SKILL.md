@@ -24,8 +24,11 @@ returned revision to protect against overwriting a newer edit.
 
 ## Capture and lookup
 
-1. Use `add_entry` for a dated daily-log item and `add_to_collection` for a
-   flat collection or `month:YYYY-MM`.
+1. Use `add_entry` for a daily-log item and `add_to_collection` for a flat
+   collection or `month:YYYY-MM`. Both accept `date` and `time`, so put the day
+   an entry belongs to in those fields rather than writing it into the text. A
+   date given to a `month:YYYY-MM` log must fall inside that month; omitting it
+   files the entry under today.
 2. Use a stable `idempotencyKey` when a write may be retried. Reuse it only for
    byte-for-byte equivalent intent.
 3. Use `list_day` for one daily log and its open-task leftovers. Use `search`

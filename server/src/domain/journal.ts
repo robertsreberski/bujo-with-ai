@@ -1148,11 +1148,9 @@ export class JournalDomain {
     return this.write('update-entry', { id, patch, ...options }, actor, mutation, (context) => {
       const before = this.requireLiveEntry(id);
       assertExpectedRevision(before, options.expectedRevision);
-      const filingPatch =
-        patch.collection !== undefined && patch.collection !== null && patch.date === undefined
-          ? { ...patch, date: this.today() }
-          : patch;
-      const next = normalizePatchedEntry(before, filingPatch);
+      // Filing an entry into a collection moves it; it does not recapture it.
+      // Only an explicit date patch re-dates an entry.
+      const next = normalizePatchedEntry(before, patch);
       if (next.collection !== null) this.ensureCollection(next.collection, context.now, context);
       const entry = this.replaceEntry(next, context.now);
       context.changes.push(upsertChange('entry', entry));

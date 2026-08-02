@@ -248,7 +248,7 @@ describe('JournalDomain entry commands', () => {
     expect(domain.getCollection('month:2026-08')).toBeNull();
   });
 
-  it('stamps the filing date when an update moves a daily entry into a collection', () => {
+  it('keeps an entry on its own date when an update moves it into a collection', () => {
     const { domain, owner } = fixture();
     domain.createCollection({ id: 'books', name: 'Books' }, owner);
     const created = domain.createEntry(
@@ -256,8 +256,11 @@ describe('JournalDomain entry commands', () => {
       owner,
     );
     if (created.kind !== 'entry') throw new Error('Expected entry');
+    // Filing is a move, not a recapture: only an explicit date patch re-dates an entry.
     const filed = domain.updateEntry(created.entry.id, { collection: 'books' }, owner);
-    expect(filed.entry).toMatchObject({ collection: 'books', date: '2026-07-31' });
+    expect(filed.entry).toMatchObject({ collection: 'books', date: '2026-07-01' });
+    const redated = domain.updateEntry(created.entry.id, { date: '2026-07-31' }, owner);
+    expect(redated.entry).toMatchObject({ collection: 'books', date: '2026-07-31' });
   });
 
   it('applies an agent migration atomically with revision checks', () => {
