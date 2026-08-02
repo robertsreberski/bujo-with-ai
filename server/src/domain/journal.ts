@@ -306,6 +306,7 @@ interface MutationRow {
 interface SummaryReflectionRevertRow {
   readonly activity_id: string;
   readonly reflection_id: string;
+  readonly legacy_summary_id: string | null;
   readonly pre_state: string;
   readonly post_state: string;
   readonly created_at: string;
@@ -400,7 +401,9 @@ export class JournalDomain {
       idFactory: this.idFactory,
       write,
     });
-    this.reconcileRevertedSummaryReflections();
+    if (!options.database.readonlyMode && this.hasSummaryReflectionRevertStorage()) {
+      this.reconcileRevertedSummaryReflections();
+    }
     const entries: EntryPersistencePort = {
       select: (id, includeDeleted) => this.selectEntry(id, includeDeleted),
       requireLive: (id) => this.requireLiveEntry(id),
@@ -848,8 +851,8 @@ export class JournalDomain {
           .get(input.weekStart) as SummaryRow | undefined;
         const before = row === undefined ? null : mapSummary(row);
         const reflectionBeforeRow = this.db
-          .prepare('SELECT id FROM reflection_slots WHERE week_start = ?')
-          .get(input.weekStart) as { id: string } | undefined;
+          .prepare('SELECT id,legacy_summary_id FROM reflection_slots WHERE week_start = ?')
+          .get(input.weekStart) as { id: string; legacy_summary_id: string | null } | undefined;
         const reflectionBefore =
           reflectionBeforeRow === undefined ? null : this.requireReflection(reflectionBeforeRow.id);
         const summary: Summary =
@@ -895,6 +898,7 @@ export class JournalDomain {
           {
             activityId: activity.id,
             reflectionId: reflection.id,
+            legacySummaryId: reflectionBeforeRow?.legacy_summary_id ?? null,
             before: reflectionBefore,
             after: reflection,
           },
@@ -988,8 +992,8 @@ export class JournalDomain {
       const before = this.requireSummary(id);
       assertExpectedSummaryRevision(before, options.expectedRevision);
       const reflectionBeforeRow = this.db
-        .prepare('SELECT id FROM reflection_slots WHERE week_start = ?')
-        .get(before.weekStart) as { id: string } | undefined;
+        .prepare('SELECT id,legacy_summary_id FROM reflection_slots WHERE week_start = ?')
+        .get(before.weekStart) as { id: string; legacy_summary_id: string | null } | undefined;
       const reflectionBefore =
         reflectionBeforeRow === undefined ? null : this.requireReflection(reflectionBeforeRow.id);
       const summary: Summary = {
@@ -1032,6 +1036,7 @@ export class JournalDomain {
           {
             activityId: activity.id,
             reflectionId: reflectionBefore.id,
+            legacySummaryId: reflectionBeforeRow?.legacy_summary_id ?? null,
             before: reflectionBefore,
             after: this.requireReflection(reflectionBefore.id),
           },
@@ -1454,11 +1459,7 @@ export class JournalDomain {
           },
           summaryReflectionReverts: {
             version: 1,
-            items: (
-              this.db
-                .prepare('SELECT * FROM summary_reflection_reverts ORDER BY activity_id')
-                .all() as SummaryReflectionRevertRow[]
-            ).map((row) => this.parseSummaryReflectionRevert(row)),
+            items: this.listSummaryReflectionReverts(),
           },
         },
       });
@@ -1577,6 +1578,7 @@ export class JournalDomain {
       }
       for (const reflection of reflections) {
         const outcome = this.activityReflection.importReflection(reflection, context);
+        this.markImportedLegacySummaryProjection(reflection, journal.summaries);
         if (outcome === 'inserted') inserted.reflections++;
         else skipped.reflections++;
       }
@@ -1629,6 +1631,7 @@ export class JournalDomain {
           this.insertSummaryReflectionRevert(provenance, context.now);
           inserted.summaryReflectionReverts++;
         }
+        this.restoreImportedLegacySummaryMarker(provenance);
       }
       const settingCount = (
         this.db.prepare('SELECT count(*) AS count FROM settings').get() as { count: number }
@@ -1656,6 +1659,7 @@ export class JournalDomain {
       // Merge imports can change the historical source set of an existing
       // current Reflection. Reconcile it before this same transaction commits,
       // exactly like command writes do.
+      this.reconcileRevertedSummaryReflectionsInContext(context);
       this.activityReflection.beforeCommit(context);
     });
     transaction();
@@ -1793,16 +1797,36 @@ export class JournalDomain {
     this.db
       .prepare(
         `INSERT INTO summary_reflection_reverts(
-          activity_id, reflection_id, pre_state, post_state, created_at
-         ) VALUES (?, ?, ?, ?, ?)`,
+          activity_id, reflection_id, legacy_summary_id, pre_state, post_state, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .run(
         provenance.activityId,
         provenance.reflectionId,
+        provenance.legacySummaryId,
         stableJson(provenance.before),
         stableJson(provenance.after),
         createdAt,
       );
+  }
+
+  private hasSummaryReflectionRevertStorage(): boolean {
+    return (
+      this.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='summary_reflection_reverts'",
+        )
+        .get() !== undefined
+    );
+  }
+
+  private listSummaryReflectionReverts(): readonly SummaryReflectionRevert[] {
+    if (!this.hasSummaryReflectionRevertStorage()) return [];
+    return (
+      this.db
+        .prepare('SELECT * FROM summary_reflection_reverts ORDER BY activity_id')
+        .all() as SummaryReflectionRevertRow[]
+    ).map((row) => this.parseSummaryReflectionRevert(row));
   }
 
   private getSummaryReflectionRevert(activityId: string): SummaryReflectionRevert | null {
@@ -1820,6 +1844,7 @@ export class JournalDomain {
       const provenance = SummaryReflectionRevertSchema.parse({
         activityId: row.activity_id,
         reflectionId: row.reflection_id,
+        legacySummaryId: row.legacy_summary_id,
         before,
         after,
       });
@@ -1925,6 +1950,61 @@ export class JournalDomain {
     }
   }
 
+  private markImportedLegacySummaryProjection(
+    reflection: Reflection,
+    summaries: readonly Summary[],
+  ): void {
+    const version = reflection.versions[0];
+    const summary = summaries.find(
+      (candidate) => candidate.id === reflection.id && candidate.weekStart === reflection.weekStart,
+    );
+    if (
+      summary === undefined ||
+      version === undefined ||
+      reflection.versions.length !== 1 ||
+      reflection.currentVersionId !== reflection.id ||
+      version.id !== reflection.id ||
+      version.number !== 1 ||
+      version.generator.label !== 'Legacy assistant' ||
+      version.generator.tool !== undefined ||
+      version.sourceEntries.length !== 0 ||
+      version.text !== summary.text ||
+      version.generator.tokenId !== summary.tokenId ||
+      version.generator.source !== summary.source ||
+      version.generatedAt !== summary.updatedAt ||
+      reflection.requestId !== null ||
+      reflection.requestedAt !== null ||
+      reflection.claimedAt !== null ||
+      reflection.claimedBy !== null ||
+      reflection.claimedSourceEntries !== null ||
+      reflection.failure !== null
+    ) {
+      return;
+    }
+    this.db
+      .prepare(
+        'UPDATE reflection_slots SET legacy_summary_id=? WHERE id=? AND legacy_summary_id IS NULL',
+      )
+      .run(reflection.id, reflection.id);
+  }
+
+  private restoreImportedLegacySummaryMarker(provenance: SummaryReflectionRevert): void {
+    if (provenance.legacySummaryId === null) return;
+    const existing = this.db
+      .prepare('SELECT legacy_summary_id FROM reflection_slots WHERE id=?')
+      .pluck()
+      .get(provenance.reflectionId) as string | null;
+    if (existing !== null && existing !== provenance.legacySummaryId) {
+      throw new DomainError(
+        'CONFLICT',
+        `Reflection ${provenance.reflectionId} has different legacy Summary provenance`,
+      );
+    }
+    this.db
+      .prepare('UPDATE reflection_slots SET legacy_summary_id=? WHERE id=?')
+      .run(provenance.legacySummaryId, provenance.reflectionId);
+  }
+
   private restoreSummaryReflection(
     provenance: SummaryReflectionRevert,
     context: WriteContext,
@@ -1940,10 +2020,6 @@ export class JournalDomain {
     if (current === null) {
       throw new DomainError('INTEGRITY_ERROR', 'Recorded Reflection post-state is missing');
     }
-    const marker = this.db
-      .prepare('SELECT legacy_summary_id FROM reflection_slots WHERE id = ?')
-      .pluck()
-      .get(current.id) as string | null;
     this.db.prepare('DELETE FROM reflection_versions WHERE reflection_id = ?').run(current.id);
     this.db.prepare('DELETE FROM reflection_slots WHERE id = ?').run(current.id);
     if (provenance.before === null) {
@@ -1995,7 +2071,7 @@ export class JournalDomain {
         restored.createdAt,
         restored.updatedAt,
         restored.revision,
-        marker,
+        provenance.legacySummaryId,
       );
     const insertVersion = this.db.prepare(
       `INSERT INTO reflection_versions(
@@ -2024,45 +2100,49 @@ export class JournalDomain {
 
   private reconcileRevertedSummaryReflections(): void {
     const reconcile = this.db.transaction(() => {
-      const rows = this.db
-        .prepare('SELECT * FROM summary_reflection_reverts ORDER BY created_at, activity_id')
-        .all() as SummaryReflectionRevertRow[];
       const context: WriteContext = {
         now: this.now().toISOString(),
         changes: [],
         implicitSnapshots: [],
       };
-      for (const row of rows) {
-        const provenance = this.parseSummaryReflectionRevert(row);
-        const activity = this.getActivity(provenance.activityId);
-        if (activity === null) {
-          throw new DomainError(
-            'INTEGRITY_ERROR',
-            `Summary Reflection revert provenance references missing Activity ${provenance.activityId}`,
-          );
-        }
-        this.validateImportedSummaryReflectionRevert(provenance, [activity]);
-        if (activity.revertedAt === null) continue;
-        const summaryBefore = activity.preImages.find((snapshot) => snapshot.entity === 'summary');
-        if (summaryBefore?.entity !== 'summary') continue;
-        const currentSummary = this.getSummary(summaryBefore.id);
-        const summaryWasRestored =
-          summaryBefore.row === null
-            ? currentSummary === null
-            : currentSummary !== null &&
-              stableJson({
-                ...currentSummary,
-                updatedAt: summaryBefore.row.updatedAt,
-                revision: summaryBefore.row.revision,
-              }) === stableJson(summaryBefore.row);
-        if (!summaryWasRestored) continue;
-        const currentReflection = this.getReflection(provenance.reflectionId);
-        if (stableJson(currentReflection) !== stableJson(provenance.after)) continue;
-        this.restoreSummaryReflection(provenance, context);
-      }
+      this.reconcileRevertedSummaryReflectionsInContext(context);
       this.activityReflection.beforeCommit(context);
     });
     reconcile();
+  }
+
+  private reconcileRevertedSummaryReflectionsInContext(context: WriteContext): void {
+    const rows = this.db
+      .prepare('SELECT * FROM summary_reflection_reverts ORDER BY created_at, activity_id')
+      .all() as SummaryReflectionRevertRow[];
+    for (const row of rows) {
+      const provenance = this.parseSummaryReflectionRevert(row);
+      const activity = this.getActivity(provenance.activityId);
+      if (activity === null) {
+        throw new DomainError(
+          'INTEGRITY_ERROR',
+          `Summary Reflection revert provenance references missing Activity ${provenance.activityId}`,
+        );
+      }
+      this.validateImportedSummaryReflectionRevert(provenance, [activity]);
+      if (activity.revertedAt === null) continue;
+      const summaryBefore = activity.preImages.find((snapshot) => snapshot.entity === 'summary');
+      if (summaryBefore?.entity !== 'summary') continue;
+      const currentSummary = this.getSummary(summaryBefore.id);
+      const summaryWasRestored =
+        summaryBefore.row === null
+          ? currentSummary === null
+          : currentSummary !== null &&
+            stableJson({
+              ...currentSummary,
+              updatedAt: summaryBefore.row.updatedAt,
+              revision: summaryBefore.row.revision,
+            }) === stableJson(summaryBefore.row);
+      if (!summaryWasRestored) continue;
+      const currentReflection = this.getReflection(provenance.reflectionId);
+      if (stableJson(currentReflection) !== stableJson(provenance.after)) continue;
+      this.restoreSummaryReflection(provenance, context);
+    }
   }
 
   private upsertLegacyReflection(

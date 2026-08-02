@@ -545,12 +545,26 @@ const ReflectionExportProjectionSchema = z
     });
   });
 
-export const SummaryReflectionRevertSchema = z.strictObject({
-  activityId: UlidSchema,
-  reflectionId: UlidSchema,
-  before: ReflectionSchema.nullable(),
-  after: ReflectionSchema,
-});
+export const SummaryReflectionRevertSchema = z
+  .strictObject({
+    activityId: UlidSchema,
+    reflectionId: UlidSchema,
+    legacySummaryId: UlidSchema.nullable(),
+    before: ReflectionSchema.nullable(),
+    after: ReflectionSchema,
+  })
+  .superRefine((provenance, context) => {
+    if (
+      provenance.legacySummaryId !== null &&
+      provenance.legacySummaryId !== provenance.reflectionId
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['legacySummaryId'],
+        message: 'Legacy Summary provenance must identify the recorded Reflection.',
+      });
+    }
+  });
 
 const SummaryReflectionRevertProjectionSchema = z
   .strictObject({

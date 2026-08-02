@@ -869,7 +869,14 @@ export class ActivityReflection {
           activity.postImages.some((snapshot) => snapshot.entity === 'summary'),
       )
       .map((activity) => activity.id);
-    if (summaryActivityIds.length > 0) {
+    const hasSummaryReflectionRevertStorage =
+      summaryActivityIds.length > 0 &&
+      this.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='summary_reflection_reverts'",
+        )
+        .get() !== undefined;
+    if (hasSummaryReflectionRevertStorage) {
       const rows = this.db
         .prepare(
           `SELECT activity_id,reflection_id,post_state FROM summary_reflection_reverts

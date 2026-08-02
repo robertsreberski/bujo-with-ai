@@ -68,7 +68,7 @@ export class JournalDatabase {
   public readonly path: string;
   private readonly now: () => Date;
   private readonly backupDir?: string;
-  private readonly readonlyMode: boolean;
+  public readonly readonlyMode: boolean;
   private closed = false;
 
   public constructor(options: JournalDatabaseOptions) {
