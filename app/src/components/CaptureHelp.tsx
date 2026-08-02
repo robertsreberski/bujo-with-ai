@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react';
-import { ComposerPopover } from './ComposerPopover';
+import { DeferredComposerPopover } from './DeferredComposerPopover';
 import { Icon } from './Icon';
 import { SIGNIFIER_KEYS } from './signifiers';
 import { TYPE_LABELS } from './types';
@@ -42,7 +42,7 @@ const DESCRIPTION = 'ml-0 min-w-0 text-md text-fg-body';
 export function CaptureHelp() {
   const [open, setOpen] = useState(false);
   return (
-    <ComposerPopover
+    <DeferredComposerPopover
       open={open}
       onOpenChange={setOpen}
       title="Capture grammar"
@@ -114,6 +114,6 @@ export function CaptureHelp() {
           </dl>
         </section>
       </div>
-    </ComposerPopover>
+    </DeferredComposerPopover>
   );
 }
