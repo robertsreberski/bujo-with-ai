@@ -369,8 +369,16 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
       const result = domain.restoreEntry(id, owner, undefined, {
         ...(expectedRevision === undefined ? {} : { expectedRevision }),
       });
-      return { entry: result.entry };
+      return {
+        entry: result.entry,
+        destination: {
+          outcome: result.fallbackFromCollection === undefined ? 'original' : 'daily_fallback',
+          originalCollectionId: result.fallbackFromCollection ?? result.entry.collection,
+        },
+      };
     },
+
+    listRecentlyDeleted: () => ({ items: domain.listRecentlyDeleted() }),
 
     listCollections: () => ({
       items: domain.listCollections(),

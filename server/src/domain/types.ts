@@ -61,6 +61,16 @@ export interface SearchEntriesResult {
   readonly entries: readonly Entry[];
 }
 
+export interface RecentlyDeletedEntry {
+  readonly entry: Entry;
+  readonly expiresAt: string;
+  readonly destination: {
+    readonly collectionId: string | null;
+    readonly collectionName: string | null;
+    readonly status: 'daily' | 'active' | 'archived' | 'missing';
+  };
+}
+
 export interface DayResult {
   readonly date: string;
   readonly isToday: boolean;

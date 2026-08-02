@@ -740,6 +740,92 @@ describe('JournalDomain summaries and credentials', () => {
     expect(domain.getEntry(created.entry.id, { includeDeleted: true })).toBeNull();
   });
 
+  it('describes recovery destinations, reopens archives, and falls back from missing collections', () => {
+    const { domain, database, owner } = fixture();
+    domain.createCollection({ id: 'archive-me', name: 'Archive me' }, owner);
+    const created = domain.createEntry(
+      {
+        id: ulid(),
+        text: 'Restore with destination context',
+        type: 'note',
+        date: '2026-07-31',
+        collection: 'archive-me',
+      },
+      owner,
+    );
+    if (created.kind !== 'entry') throw new Error('Expected entry');
+
+    const firstDelete = domain.deleteEntry(created.entry.id, owner);
+    domain.updateCollection('archive-me', { archived: true }, owner);
+    expect(domain.listRecentlyDeleted()).toMatchObject([
+      {
+        entry: { id: created.entry.id },
+        destination: {
+          collectionId: 'archive-me',
+          collectionName: 'Archive me',
+          status: 'archived',
+        },
+      },
+    ]);
+    const reopened = domain.restoreEntry(created.entry.id, owner, undefined, {
+      expectedRevision: firstDelete.entry.revision,
+    });
+    expect(reopened.entry.collection).toBe('archive-me');
+    expect(domain.getCollection('archive-me')?.archivedAt).toBeNull();
+
+    const secondDelete = domain.deleteEntry(created.entry.id, owner);
+    database.raw.prepare('DELETE FROM collections WHERE id = ?').run('archive-me');
+    expect(domain.listRecentlyDeleted()[0]?.destination).toEqual({
+      collectionId: 'archive-me',
+      collectionName: null,
+      status: 'missing',
+    });
+    const fallback = domain.restoreEntry(created.entry.id, owner, undefined, {
+      expectedRevision: secondDelete.entry.revision,
+    });
+    expect(fallback).toMatchObject({
+      entry: { collection: null, date: '2026-07-31' },
+      fallbackFromCollection: 'archive-me',
+    });
+  });
+
+  it('redacts expired entry content from audit snapshots without weakening revert safety', () => {
+    const { domain, agent, advance } = fixture();
+    const sentinel = 'Private expired recovery text';
+    const created = domain.createEntry(
+      {
+        id: ulid(),
+        text: sentinel,
+        type: 'note',
+        date: '2026-07-31',
+        source: 'Recovery retention fixture.',
+      },
+      agent,
+    );
+    if (created.kind !== 'entry' || created.activityId === undefined)
+      throw new Error('Expected agent entry activity');
+    const deleted = domain.deleteEntry(created.entry.id, agent, undefined, {
+      expectedRevision: created.entry.revision,
+      reason: 'Retention fixture cleanup.',
+    });
+    if (deleted.activityId === undefined) throw new Error('Expected agent delete activity');
+
+    advance(30 * 86_400_000 + 1);
+    expect(domain.purgeExpired().entries).toBe(1);
+    const activities = domain.listActivityViews();
+    expect(JSON.stringify(activities)).not.toContain(sentinel);
+    for (const activity of activities) {
+      expect(activity.text).toMatch(/content expired/i);
+      expect(activity.revert).toEqual({ eligible: false, reason: 'not_reversible' });
+      expect(
+        [...activity.preImages, ...activity.postImages]
+          .filter((snapshot) => snapshot.entity === 'entry')
+          .every((snapshot) => snapshot.row === null),
+      ).toBe(true);
+    }
+    expect(() => domain.revertActivity(deleted.activityId!, agent)).toThrowError(/expired/i);
+  });
+
   it('round-trips a clean export and rejects id collisions with different payloads', () => {
     const source = fixture();
     const created = source.domain.createEntry(

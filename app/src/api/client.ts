@@ -15,6 +15,8 @@ import {
   EntryListResponseSchema,
   LatestSummaryResponseSchema,
   PairResponseSchema,
+  RecentlyDeletedListResponseSchema,
+  RestoreEntryResponseSchema,
   RewriteSummaryResponseSchema,
   SaveSummaryResponseSchema,
   TagListResponseSchema,
@@ -28,6 +30,8 @@ import {
   type EntryPatch,
   type OwnerEntryCreate,
   type PairResponse,
+  type RecentlyDeletedListResponse,
+  type RestoreEntryResponse,
   type Settings,
   type SettingsPayload,
   type Summary,
@@ -226,6 +230,20 @@ export class JournalApiClient {
       mutationId,
       ...(revision === undefined ? {} : { ifMatch: revision }),
       schema: z.strictObject({ entry: EntrySchema }),
+    });
+  }
+
+  listRecentlyDeleted(): Promise<RecentlyDeletedListResponse> {
+    return this.request('/api/recovery/deleted', {
+      schema: RecentlyDeletedListResponseSchema,
+    });
+  }
+
+  restoreEntry(id: string, expectedRevision?: number): Promise<RestoreEntryResponse> {
+    return this.request(`/api/entries/${encodeURIComponent(id)}/restore`, {
+      method: 'POST',
+      body: expectedRevision === undefined ? {} : { expectedRevision },
+      schema: RestoreEntryResponseSchema,
     });
   }
 

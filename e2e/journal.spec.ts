@@ -249,6 +249,56 @@ test('owner capture persists and the four primary views navigate by semantic con
   await expect(page.getByText(text, { exact: true })).toBeVisible();
 });
 
+test('owner deletion supports immediate undo and later recovery from Settings', async ({
+  page,
+}) => {
+  await openJournal(page);
+  const text = uniqueText('Recoverable owner entry');
+
+  await page.getByRole('combobox', { name: 'Add an entry' }).fill(`- ${text}`);
+  await page.getByRole('button', { name: 'Add entry' }).click();
+  let row = page.locator('[data-entry-id]').filter({ hasText: text });
+  await expect(row).toBeVisible();
+
+  const remove = async () => {
+    await row.locator('.entry-row__content').click();
+    await page
+      .getByRole('dialog', { name: text })
+      .getByRole('button', { name: 'Delete', exact: true })
+      .click();
+    await page
+      .getByRole('dialog', { name: 'Delete this entry?' })
+      .getByRole('button', { name: 'Delete entry' })
+      .click();
+    await expect(page.getByRole('status').filter({ hasText: 'Entry deleted' })).toBeVisible();
+    await expect(row).toHaveCount(0);
+  };
+
+  await remove();
+  await page
+    .getByRole('status')
+    .filter({ hasText: 'Entry deleted' })
+    .getByRole('button', { name: 'Undo' })
+    .click();
+  await expect(page.getByRole('status').filter({ hasText: 'Entry restored' })).toBeVisible();
+  row = page.locator('[data-entry-id]').filter({ hasText: text });
+  await expect(row).toBeVisible();
+
+  await remove();
+  await page.getByRole('button', { name: 'Assistant access', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Assistant access' })
+    .getByRole('button', { name: 'Open recovery' })
+    .click();
+  const recovery = page.getByRole('dialog', { name: 'Recovery' });
+  const deleted = recovery.locator('article').filter({ hasText: text });
+  await expect(deleted).toBeVisible();
+  await deleted.getByRole('button', { name: 'Restore' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Entry restored' })).toBeVisible();
+  await recovery.getByRole('button', { name: 'Close dialog' }).click();
+  await expect(page.locator('[data-entry-id]').filter({ hasText: text })).toBeVisible();
+});
+
 test('default Today downloads closed daily history beyond the bootstrap window', async ({
   baseURL,
   context,
