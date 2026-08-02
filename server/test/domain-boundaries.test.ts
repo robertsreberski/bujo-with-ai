@@ -102,7 +102,7 @@ describe('JournalDomain transaction boundaries', () => {
     expect(batches).toEqual([]);
   });
 
-  it('rolls audit redaction back when the matching recovery purge cannot delete', () => {
+  it('rolls audit and idempotency redaction back when recovery purge cannot delete', () => {
     const { database, domain, agent, advance } = fixture();
     const sentinel = 'Rollback keeps this expired audit content intact';
     const created = domain.createEntry(
@@ -114,17 +114,30 @@ describe('JournalDomain transaction boundaries', () => {
         source: 'Recovery purge transaction fixture.',
       },
       agent,
+      { id: 'rollback-purge-create' },
     );
     if (created.kind !== 'entry') throw new Error('Expected agent entry');
-    domain.deleteEntry(created.entry.id, agent, undefined, {
-      expectedRevision: created.entry.revision,
-      reason: 'Exercise purge rollback.',
-    });
+    domain.deleteEntry(
+      created.entry.id,
+      agent,
+      { id: 'rollback-purge-delete' },
+      {
+        expectedRevision: created.entry.revision,
+        reason: 'Exercise purge rollback.',
+      },
+    );
     advance(30 * 86_400_000 + 1);
     const beforeActivity = database.raw
       .prepare('SELECT id, text, pre_images, post_images FROM activity ORDER BY id')
       .all();
+    const beforeMutations = database.raw
+      .prepare(
+        `SELECT actor_type, actor_id, mutation_id, request_hash, result
+         FROM processed_mutations ORDER BY mutation_id`,
+      )
+      .all();
     expect(JSON.stringify(beforeActivity)).toContain(sentinel);
+    expect(JSON.stringify(beforeMutations)).toContain(sentinel);
     database.raw.exec(`
       CREATE TRIGGER abort_expired_entry_delete
       BEFORE DELETE ON entries
@@ -141,6 +154,14 @@ describe('JournalDomain transaction boundaries', () => {
       .all();
     expect(afterActivity).toEqual(beforeActivity);
     expect(JSON.stringify(afterActivity)).toContain(sentinel);
+    expect(
+      database.raw
+        .prepare(
+          `SELECT actor_type, actor_id, mutation_id, request_hash, result
+           FROM processed_mutations ORDER BY mutation_id`,
+        )
+        .all(),
+    ).toEqual(beforeMutations);
   });
 });
 

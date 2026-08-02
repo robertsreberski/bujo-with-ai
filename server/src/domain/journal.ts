@@ -305,6 +305,7 @@ export interface JournalDomainOptions {
   >;
   readonly now?: () => Date;
   readonly idFactory?: () => string;
+  readonly recoveryRetentionDays?: number;
 }
 
 export class JournalDomain {
@@ -335,7 +336,14 @@ export class JournalDomain {
       ): T => this.write(operation, input, actor, mutation, command),
     };
     this.timelineQueries = new TimelineQueries({ db: this.db, today: () => this.today() });
-    this.collectionRecovery = new CollectionRecovery({ db: this.db, now: this.now, write });
+    this.collectionRecovery = new CollectionRecovery({
+      db: this.db,
+      now: this.now,
+      write,
+      ...(options.recoveryRetentionDays === undefined
+        ? {}
+        : { retentionDays: options.recoveryRetentionDays }),
+    });
     this.activityReflection = new ActivityReflection({
       db: this.db,
       today: () => this.today(),
@@ -388,11 +396,11 @@ export class JournalDomain {
     };
     this.entryCommands = new EntryCommands({
       today: () => this.today(),
-      now: this.now,
       idFactory: this.idFactory,
       write,
       entries,
       collections,
+      recovery: this.collectionRecovery,
       audit,
     });
   }
@@ -418,7 +426,7 @@ export class JournalDomain {
     return this.timelineQueries.searchEntries(input);
   }
 
-  public listRecentlyDeleted(retentionDays = 30): readonly RecentlyDeletedEntry[] {
+  public listRecentlyDeleted(retentionDays?: number): readonly RecentlyDeletedEntry[] {
     return this.collectionRecovery.listRecentlyDeleted(retentionDays);
   }
 
@@ -726,7 +734,7 @@ export class JournalDomain {
     id: string,
     actor: ActorContext,
     mutation?: MutationContext,
-    options: { readonly expectedRevision?: number } = {},
+    options: { readonly expectedRevision?: number; readonly retentionDays?: number } = {},
   ): {
     readonly entry: Entry;
     readonly activityId?: string;
@@ -1471,7 +1479,7 @@ export class JournalDomain {
     return { inserted, skipped };
   }
 
-  public purgeExpired(retentionDays = 30): {
+  public purgeExpired(retentionDays?: number): {
     readonly entries: number;
     readonly mutations: number;
     readonly devices: number;

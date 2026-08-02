@@ -527,6 +527,12 @@ describe('HTTP and MCP domain adapters', () => {
       tags: ['work'],
       date: '2026-07-30',
     });
+    createdEntry(domain, owner, {
+      text: 'Matching filters but unrelated words',
+      type: 'note',
+      tags: ['work'],
+      date: '2026-07-30',
+    });
 
     const page = (await adapters.api.listEntries(
       {
