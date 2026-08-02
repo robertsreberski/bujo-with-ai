@@ -4,7 +4,13 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ulid } from 'ulid';
 import { JournalDatabase } from '../src/db/database.js';
-import { EntrySchema, JournalExportSchema, type ChangeBatch } from '../src/contracts/index.js';
+import {
+  ActivityItemSchema,
+  ActivityViewSchema,
+  EntrySchema,
+  JournalExportSchema,
+  type ChangeBatch,
+} from '../src/contracts/index.js';
 import { DomainError } from '../src/domain/errors.js';
 import { JournalDomain } from '../src/domain/journal.js';
 import type { ActorContext } from '../src/domain/types.js';
@@ -1472,6 +1478,140 @@ describe('JournalDomain summaries and credentials', () => {
         id: 'expiring-create-replay',
       }),
     ).toThrowError(/different request/i);
+  });
+
+  it('scrubs expired Activity replay text and its derived presentation atomically', () => {
+    const { domain, database, owner, agent, advance } = fixture();
+    const originalText = 'Original safe wording';
+    const sentinel = 'Private reverted text must expire from mutation replay';
+    const created = domain.createEntry(
+      {
+        id: ulid(),
+        text: originalText,
+        type: 'note',
+        date: '2026-07-31',
+        source: 'Activity replay retention fixture.',
+      },
+      agent,
+    );
+    if (created.kind !== 'entry') throw new Error('Expected entry');
+    const updated = domain.updateEntry(created.entry.id, { text: sentinel }, agent, undefined, {
+      expectedRevision: created.entry.revision,
+      reason: 'Exercise Activity replay retention.',
+    });
+    if (updated.activityId === undefined) throw new Error('Expected update activity');
+    const reverted = domain.revertActivity(updated.activityId, owner, {
+      id: 'expiring-revert-replay',
+      statusCode: 200,
+    });
+    expect(JSON.stringify(reverted)).toContain(sentinel);
+    domain.deleteEntry(created.entry.id, owner);
+
+    const before = database.raw
+      .prepare(
+        `SELECT request_hash, status_code, result FROM processed_mutations
+         WHERE mutation_id = ?`,
+      )
+      .get('expiring-revert-replay') as {
+      request_hash: string;
+      status_code: number;
+      result: string;
+    };
+    expect(before.result).toContain(sentinel);
+    advance(30 * 86_400_000 + 1);
+
+    expect(domain.purgeExpired()).toMatchObject({ entries: 1, mutations: 1 });
+    const after = database.raw
+      .prepare(
+        `SELECT request_hash, status_code, result FROM processed_mutations
+         WHERE mutation_id = ?`,
+      )
+      .get('expiring-revert-replay') as {
+      request_hash: string;
+      status_code: number;
+      result: string;
+    };
+    expect(after).toMatchObject({
+      request_hash: before.request_hash,
+      status_code: before.status_code,
+    });
+    expect(after.result).not.toContain(sentinel);
+    expect(after.result).not.toContain(originalText);
+    expect(after.result).toContain('content expired');
+
+    const replay = domain.revertActivity(updated.activityId, owner, {
+      id: 'expiring-revert-replay',
+      statusCode: 200,
+    });
+    expect(() => ActivityItemSchema.parse(replay.activity)).not.toThrow();
+    expect(replay.activity.text).toMatch(/content expired/i);
+    expect(
+      [...replay.activity.preImages, ...replay.activity.postImages, ...replay.reverted]
+        .filter((snapshot) => snapshot.entity === 'entry')
+        .every((snapshot) => snapshot.row === null),
+    ).toBe(true);
+    const replayView = domain.activityView(replay.activity);
+    expect(() => ActivityViewSchema.parse(replayView)).not.toThrow();
+    expect(JSON.stringify(replayView)).not.toContain(sentinel);
+    expect(JSON.stringify(replayView)).not.toContain(originalText);
+    expect(replayView.presentation?.reason).toBeNull();
+    expect(domain.getEntry(created.entry.id, { includeDeleted: true })).toBeNull();
+    expect(() =>
+      domain.revertActivity(ulid(), owner, {
+        id: 'expiring-revert-replay',
+        statusCode: 200,
+      }),
+    ).toThrowError(/different request/i);
+  });
+
+  it('reconciles current Reflection and Summary state after a merge import', () => {
+    const target = fixture();
+    target.domain.createEntry(
+      {
+        id: ulid(),
+        text: 'Existing source for the current Reflection',
+        type: 'note',
+        date: '2026-07-21',
+      },
+      target.owner,
+    );
+    const filed = target.domain.fileSummary(
+      {
+        weekStart: '2026-07-20',
+        text: 'Current before historical merge.',
+        source: 'Merge import staleness fixture.',
+      },
+      target.agent,
+    );
+    const beforeReflection = target.domain.listReflections('2026-07-20', '2026-07-26')[0];
+    if (beforeReflection === undefined) throw new Error('Expected current Reflection');
+    expect(beforeReflection.status).toBe('current');
+    expect(filed.summary.status).toBe('current');
+
+    const source = fixture();
+    const imported = source.domain.createEntry(
+      {
+        id: ulid(),
+        text: 'Historical source arriving through merge import',
+        type: 'note',
+        date: '2026-07-23',
+      },
+      source.owner,
+    );
+    if (imported.kind !== 'entry') throw new Error('Expected imported entry');
+
+    const report = target.domain.importJournal(source.domain.exportJournal());
+
+    expect(report.inserted.entries).toBe(1);
+    expect(target.domain.requireEntry(imported.entry.id).text).toBe(imported.entry.text);
+    expect(target.domain.getReflection(beforeReflection.id)).toMatchObject({
+      status: 'stale',
+      revision: beforeReflection.revision + 1,
+    });
+    expect(target.domain.getSummary(filed.summary.id)).toMatchObject({
+      status: 'stale',
+      revision: filed.summary.revision + 1,
+    });
   });
 
   it('round-trips a clean export and rejects id collisions with different payloads', () => {

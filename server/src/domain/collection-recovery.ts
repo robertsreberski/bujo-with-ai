@@ -394,7 +394,7 @@ export class CollectionRecovery {
              FROM processed_mutations
              WHERE EXISTS (
                SELECT 1 FROM json_tree(processed_mutations.result) AS node
-               WHERE node.key = 'id'
+               WHERE node.type = 'text'
                  AND node.value IN (SELECT value FROM json_each(?))
              )`,
           )
@@ -490,6 +490,71 @@ function scrubExpiredMutationResult(value: unknown, expired: ReadonlyMap<string,
     Object.entries(value).map(([key, item]) => [key, scrubExpiredMutationResult(item, expired)]),
   );
   const id = typeof record.id === 'string' ? record.id : undefined;
+  if (record.entity === 'entry' && id !== undefined && expired.has(id) && 'row' in record) {
+    return { ...record, row: null };
+  }
+
+  const entryId = typeof record.entryId === 'string' ? record.entryId : undefined;
+  if (
+    entryId !== undefined &&
+    expired.has(entryId) &&
+    typeof record.activityId === 'string' &&
+    'reason' in record
+  ) {
+    return { ...record, reason: null };
+  }
+
+  const latestAgentTouch = record.latestAgentTouch;
+  const latestAgentTouchEntryId =
+    latestAgentTouch !== null && typeof latestAgentTouch === 'object'
+      ? (latestAgentTouch as Record<string, unknown>).entryId
+      : undefined;
+  const presentationEntryIds = [
+    typeof record.primaryEntryId === 'string' ? record.primaryEntryId : undefined,
+    typeof latestAgentTouchEntryId === 'string' ? latestAgentTouchEntryId : undefined,
+    ...(Array.isArray(record.attribution)
+      ? record.attribution.map((item) =>
+          item !== null && typeof item === 'object' && typeof item.entryId === 'string'
+            ? item.entryId
+            : undefined,
+        )
+      : []),
+  ];
+  if (
+    typeof record.objectLabel === 'string' &&
+    presentationEntryIds.some((candidate) => candidate !== undefined && expired.has(candidate))
+  ) {
+    return {
+      ...record,
+      objectLabel: 'Expired journal entry',
+      reason: null,
+      ...(record.latestAgentTouch !== undefined
+        ? { latestAgentTouch: scrubExpiredMutationResult(record.latestAgentTouch, expired) }
+        : {}),
+    };
+  }
+
+  const activityKind = parseActivityKind(record.kind);
+  const refs = record.refs;
+  const refEntryIds =
+    refs !== null && typeof refs === 'object'
+      ? (refs as Record<string, unknown>).entryIds
+      : undefined;
+  const referencesExpiredEntry =
+    Array.isArray(refEntryIds) &&
+    refEntryIds.some((candidate: unknown) =>
+      typeof candidate === 'string' ? expired.has(candidate) : false,
+    );
+  if (activityKind !== null && referencesExpiredEntry) {
+    return {
+      ...record,
+      text: expiredActivityLabel(activityKind),
+      ...(record.revert !== undefined
+        ? { revert: { eligible: false, reason: 'not_reversible' } }
+        : {}),
+    };
+  }
+
   if (
     id === undefined ||
     !expired.has(id) ||
@@ -510,6 +575,21 @@ function scrubExpiredMutationResult(value: unknown, expired: ReadonlyMap<string,
     collection: null,
     deletedAt: expired.get(id),
   };
+}
+
+function parseActivityKind(value: unknown): ActivityKind | null {
+  switch (value) {
+    case 'agent-add':
+    case 'agent-update':
+    case 'agent-delete':
+    case 'agent-migration':
+    case 'summary-filed':
+    case 'summary-saved':
+    case 'revert':
+      return value;
+    default:
+      return null;
+  }
 }
 
 function normalizeCollectionInput(input: {
