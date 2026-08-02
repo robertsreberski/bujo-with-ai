@@ -52,6 +52,7 @@ export interface ApiJournalOperations extends DeviceAuthenticator {
   timeline(query: Record<string, unknown>, actor: OwnerActor): unknown | Promise<unknown>;
   getIndex(actor: OwnerActor): unknown | Promise<unknown>;
   listEntries(query: Record<string, unknown>, actor: OwnerActor): unknown | Promise<unknown>;
+  getEntry(id: string, actor: OwnerActor): unknown | Promise<unknown>;
   createEntry(
     input: Record<string, unknown>,
     actor: OwnerActor,
@@ -321,6 +322,12 @@ export function createApiRouter(options: ApiRouterOptions): Router {
   router.get(
     '/index',
     asyncRoute((request) => options.operations.getIndex(actor(request))),
+  );
+  router.get(
+    '/entries/:id',
+    asyncRoute((request) =>
+      options.operations.getEntry(idSchema.parse(request.params.id), actor(request)),
+    ),
   );
   router.post(
     '/entries',

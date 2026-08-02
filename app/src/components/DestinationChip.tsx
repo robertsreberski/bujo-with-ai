@@ -316,9 +316,9 @@ function DestinationOptions({
         </button>
       )}
 
-      {route.name === 'review' ? (
+      {route.name === 'activity' ? (
         <p className="px-[9px] pt-2 text-sm text-fg-mute">
-          Review is an audit screen — captures file to your daily log.
+          Activity is an audit screen — captures file to your daily log.
         </p>
       ) : null}
       {creating && slug.length > 0 ? (

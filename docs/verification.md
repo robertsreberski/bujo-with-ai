@@ -82,7 +82,7 @@ each one covers is now defined by the named tests.
 | LOG-18…21    | entry detail/actions/edit                                       | component/API E2E                     | NOT RUN |
 | LOG-22…24    | resumable migration ritual                                      | browser E2E                           | NOT RUN |
 | LOG-25…29    | month route/calendar/log/summary/habits                         | component + visual + E2E              | NOT RUN |
-| LOG-30…33    | collection controls and Activity/Revert Review                  | browser + revert E2E                  | NOT RUN |
+| LOG-30…33    | collection controls and Activity/Revert history                 | browser + revert E2E                  | NOT RUN |
 | LOG-34…37    | search semantics and keyboard behavior                          | search/component E2E                  | NOT RUN |
 | LOG-38…42    | feedback, SSE coalescing, truthful Assistant access             | component/two-client E2E              | NOT RUN |
 | DS-1…8       | colors, self-hosted typography, icons/AI mark                   | computed styles + asset/network check | NOT RUN |

@@ -9,8 +9,10 @@ import { create } from 'zustand';
 import type { StoreApi, UseBoundStore } from 'zustand';
 
 import { ApiError, journalApi } from '../api/client';
+import { activityPresentation } from '../activity/presentation';
 import type {
   ActivityView,
+  AgentTouch,
   AgentToken,
   ChangeBatch,
   Collection,
@@ -40,6 +42,7 @@ import type { Destination } from '../components/destination';
 import { hydrateLogView, type LogViewConfig } from '../views/log-arrangement';
 import { createUlid } from './ids';
 import type {
+  ActivitySeenCursor,
   ConnectionStatus,
   CreateEntryInput,
   DeadLetter,
@@ -211,8 +214,15 @@ export interface JournalState extends MirrorData {
   /** Capture tag vocabulary; in-memory only, never part of the persisted record. */
   tagSuggestions: TagUsage[];
   tagsFetchedAt: string | null;
-  /** When the owner last opened Review; null until they ever have. */
+  /** Legacy Activity timestamp retained only to hydrate pre-cursor records. */
   lastReviewSeenAt: string | null;
+  /** Exact all-seen watermark; unlike the legacy timestamp it cannot hide a same-time event. */
+  activitySeenThrough: ActivitySeenCursor | null;
+  /** Events acknowledged by actually becoming visible, independent of the all-seen watermark. */
+  seenActivityIds: string[];
+  markActivityVisible(ids: readonly string[]): void;
+  markAllActivitySeen(): void;
+  /** @deprecated Compatibility alias for markAllActivitySeen. */
   markReviewSeen(): void;
   /** Per-device monthly-log arrangement; null means the default view. */
   monthLogView: LogViewConfig | null;
@@ -250,6 +260,7 @@ export interface JournalState extends MirrorData {
     >,
   ): Promise<Settings>;
   searchEntries(query: string, cursor?: string): Promise<JournalSearchPage>;
+  loadEntry(id: string): Promise<Entry>;
   loadEntries(query: LoadEntriesQuery): Promise<Entry[]>;
   loadTimeline(anchorDate?: string | null): Promise<Entry[]>;
   loadEarlierTimeline(): Promise<Entry[]>;
@@ -351,6 +362,8 @@ function recordFromState(
     deadLetters: state.deadLetters,
     agentTokens: state.agentTokens,
     lastReviewSeenAt: state.lastReviewSeenAt,
+    activitySeenThrough: state.activitySeenThrough,
+    seenActivityIds: state.seenActivityIds,
     monthLogView: state.monthLogView,
     collectionLogView: state.collectionLogView,
     timeline: {
@@ -2242,6 +2255,20 @@ async function loadIndexIntoMirror(attempt = 0): Promise<IndexResponse> {
   return response;
 }
 
+async function loadEntryIntoMirror(id: string): Promise<Entry> {
+  requireOnline();
+  const lifecycle = lifecycleGeneration;
+  const response = await authenticated(() => journalApi.getEntry(id));
+  if (lifecycle !== lifecycleGeneration || pairingExpired) return response.entry;
+  let mirror = upsertServerEntry(mirrorFromState(useJournalStore.getState()), response.entry);
+  mirror = recomputeActivityRevertEligibility(
+    applyPendingCommands(mirror, useJournalStore.getState().outbox),
+  );
+  useJournalStore.setState({ ...mirror });
+  await persistNow();
+  return useJournalStore.getState().entriesById[id] ?? response.entry;
+}
+
 function requireEntry(id: string): Entry {
   const entry = useJournalStore.getState().entriesById[id];
   if (!entry || entry.deletedAt !== null) throw new Error('Entry no longer exists.');
@@ -2364,6 +2391,8 @@ async function initializeJournal(): Promise<void> {
         recoveryLoading: false,
         agentTokens: saved.agentTokens ?? [],
         lastReviewSeenAt: saved.lastReviewSeenAt ?? null,
+        activitySeenThrough: saved.activitySeenThrough ?? null,
+        seenActivityIds: saved.seenActivityIds ?? [],
         monthLogView: hydrateLogView(saved.monthLogView),
         collectionLogView: hydrateLogView(saved.collectionLogView),
         activityHasMore: saved.mirror.activityOrder.length >= 50,
@@ -2398,6 +2427,8 @@ async function initializeJournal(): Promise<void> {
         recoveryLoading: false,
         agentTokens: [],
         lastReviewSeenAt: null,
+        activitySeenThrough: null,
+        seenActivityIds: [],
         monthLogView: null,
         collectionLogView: null,
         activityHasMore: false,
@@ -2742,25 +2773,46 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
     tagSuggestions: [],
     tagsFetchedAt: null,
     lastReviewSeenAt: null,
+    activitySeenThrough: null,
+    seenActivityIds: [],
     monthLogView: null,
     collectionLogView: null,
     initialize: initializeJournal,
     shutdown: shutdownJournal,
-    // Opening Review is what marks it read, so the write is a local, debounced
-    // one: it never reaches the server and never blocks the route change.
-    // Stamped at max(now, newest activity.at): activity timestamps are
-    // server-issued, so a client clock running behind would otherwise leave
-    // just-seen items forever "newer" than the mark.
-    markReviewSeen: () => {
-      const { activityOrder, activityById } = get();
-      const newestAt = activityOrder.reduce((max, id) => {
-        const at = activityById[id]?.at;
-        return at !== undefined && at > max ? at : max;
-      }, '');
-      const now = new Date().toISOString();
-      set({ lastReviewSeenAt: newestAt > now ? newestAt : now });
+    markActivityVisible: (ids) => {
+      if (ids.length === 0) return;
+      const { activityById, seenActivityIds } = get();
+      const seen = new Set(seenActivityIds);
+      let changed = false;
+      for (const id of ids) {
+        const activity = activityById[id];
+        if (!activity || activity.kind === 'revert' || seen.has(id)) continue;
+        seen.add(id);
+        changed = true;
+      }
+      if (!changed) return;
+      // Sparse visibility marks remain exact. "Mark all seen" is the explicit
+      // compaction mechanism; silently dropping old ids would make them unread again.
+      set({ seenActivityIds: [...seen] });
       persistSoon();
     },
+    markAllActivitySeen: () => {
+      const { activityOrder, activityById } = get();
+      const newest = activityOrder
+        .map((id) => activityById[id])
+        .filter((activity): activity is ActivityView => activity !== undefined)
+        .sort(
+          (left, right) => right.at.localeCompare(left.at) || right.id.localeCompare(left.id),
+        )[0];
+      if (newest === undefined) return;
+      set({
+        activitySeenThrough: { at: newest.at, id: newest.id },
+        lastReviewSeenAt: newest.at,
+        seenActivityIds: [],
+      });
+      persistSoon();
+    },
+    markReviewSeen: () => get().markAllActivitySeen(),
     setMonthLogView: (config) => {
       set({ monthLogView: config });
       persistSoon();
@@ -3299,6 +3351,7 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
     loadTimeline: (anchorDate = null) => loadTimelinePage(anchorDate),
     loadEarlierTimeline: loadEarlierTimelinePage,
     loadIndex: loadIndexIntoMirror,
+    loadEntry: loadEntryIntoMirror,
     loadDate: (date) => loadEntriesIntoMirror({ from: date, to: date }),
     loadMonth: async (month) => {
       const lifecycle = lifecycleGeneration;
@@ -3523,6 +3576,9 @@ export const journalActions = {
     >,
   ): Promise<Settings> => useJournalStore.getState().updateSettings(patch),
   setDraft: (draft: string): void => useJournalStore.getState().setDraft(draft),
+  markActivityVisible: (ids: readonly string[]): void =>
+    useJournalStore.getState().markActivityVisible(ids),
+  markAllActivitySeen: (): void => useJournalStore.getState().markAllActivitySeen(),
   markReviewSeen: (): void => useJournalStore.getState().markReviewSeen(),
   setMonthLogView: (config: LogViewConfig | null): void =>
     useJournalStore.getState().setMonthLogView(config),
@@ -3531,6 +3587,7 @@ export const journalActions = {
   setDefaultType: (type: EntryType): void => useJournalStore.getState().setDefaultType(type),
   searchEntries: (query: string, cursor?: string): Promise<JournalSearchPage> =>
     useJournalStore.getState().searchEntries(query, cursor),
+  loadEntry: (id: string): Promise<Entry> => useJournalStore.getState().loadEntry(id),
   loadEntries: (query: LoadEntriesQuery): Promise<Entry[]> =>
     useJournalStore.getState().loadEntries(query),
   loadTimeline: (anchorDate?: string | null): Promise<Entry[]> =>
@@ -3627,19 +3684,73 @@ export const selectOpenTodayCount = (state: JournalState): number =>
       entry.collection === null &&
       entry.date <= state.today,
   ).length;
-/**
- * What the Review badge counts: recorded changes newer than the last time the
- * owner opened Review (everything, when they never have). `revert` is excluded
- * because it is the owner's own action taken *on* the Review screen — no MCP
- * tool can produce one — so counting it would re-badge the screen for using it.
- */
-export const selectUnseenReviewCount = (state: JournalState): number =>
-  state.activityOrder.reduce((count, id) => {
+const activityAtOrBefore = (activity: ActivityView, cursor: ActivitySeenCursor): boolean =>
+  activity.at < cursor.at || (activity.at === cursor.at && activity.id <= cursor.id);
+
+/** Reverts are owner actions on Activity, so they never create an unread badge. */
+export const selectUnseenActivityIds = (state: JournalState): string[] => {
+  const individuallySeen = new Set(state.seenActivityIds);
+  return state.activityOrder.filter((id) => {
     const activity = state.activityById[id];
-    if (!activity || activity.kind === 'revert') return count;
-    if (state.lastReviewSeenAt !== null && activity.at <= state.lastReviewSeenAt) return count;
-    return count + 1;
-  }, 0);
+    if (!activity || activity.kind === 'revert' || individuallySeen.has(id)) return false;
+    if (
+      state.activitySeenThrough !== null &&
+      activityAtOrBefore(activity, state.activitySeenThrough)
+    ) {
+      return false;
+    }
+    // Records saved by the previous app only carry a timestamp. Retain that
+    // reading state until the owner uses the exact Activity cursor.
+    if (state.activitySeenThrough === null && state.lastReviewSeenAt !== null) {
+      return activity.at > state.lastReviewSeenAt;
+    }
+    return true;
+  });
+};
+
+export const selectUnseenActivityCount = (state: JournalState): number =>
+  selectUnseenActivityIds(state).length;
+
+/**
+ * Nonnumeric shell signal. If pagination has not yet reached the all-seen
+ * cursor, older events remain conservatively unseen instead of disappearing
+ * behind the bounded local mirror.
+ */
+export const selectHasUnseenActivity = (state: JournalState): boolean => {
+  if (selectUnseenActivityIds(state).length > 0) return true;
+  if (!state.activityHasMore) return false;
+  const oldest = [...state.activityOrder]
+    .reverse()
+    .map((id) => state.activityById[id])
+    .find((activity): activity is ActivityView => activity !== undefined);
+  if (oldest === undefined) return true;
+  if (state.activitySeenThrough !== null) {
+    return !activityAtOrBefore(oldest, state.activitySeenThrough);
+  }
+  if (state.lastReviewSeenAt !== null) return oldest.at > state.lastReviewSeenAt;
+  return true;
+};
+
+/** @deprecated Use selectUnseenActivityCount. */
+export const selectUnseenReviewCount = selectUnseenActivityCount;
+
+/**
+ * Timeline's intentionally small co-authorship contract: at most one latest
+ * meaningful agent touch per entry, with no raw snapshots or revert surface.
+ */
+export const selectLatestAgentTouches = (state: JournalState): Record<string, AgentTouch> => {
+  const touches: Record<string, AgentTouch> = {};
+  const tokenLabels = Object.fromEntries(state.agentTokens.map((token) => [token.id, token.label]));
+  for (const id of state.activityOrder) {
+    const activity = state.activityById[id];
+    const touch =
+      activity === undefined ? null : activityPresentation(activity, tokenLabels).latestAgentTouch;
+    if (touch !== null && touch !== undefined && touches[touch.entryId] === undefined) {
+      touches[touch.entryId] = touch;
+    }
+  }
+  return touches;
+};
 export const selectActivity = (state: JournalState): ActivityView[] =>
   state.activityOrder.flatMap((id) => {
     const activity = state.activityById[id];

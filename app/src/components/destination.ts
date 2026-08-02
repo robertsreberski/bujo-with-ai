@@ -182,7 +182,7 @@ function screenDestination(
 
 /**
  * The destination a screen is currently *showing*, or null for the screens that
- * show none. Distinct from `screenDestination`: the index and the review log
+ * show none. Distinct from `screenDestination`: the index and the Activity log
  * both file into today without displaying it, which is exactly the difference
  * that decides whether a capture needs a "View" affordance.
  */

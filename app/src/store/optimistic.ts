@@ -467,7 +467,7 @@ function sameSnapshot(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-/** Conservatively prevents a stale Review action after any local or live row change. */
+/** Conservatively prevents a stale Activity revert after any local or live row change. */
 export function recomputeActivityRevertEligibility(mirror: MirrorData): MirrorData {
   const activityById = Object.fromEntries(
     Object.entries(mirror.activityById).map(([id, activity]) => {

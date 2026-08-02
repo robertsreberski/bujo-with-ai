@@ -195,6 +195,12 @@ export class JournalApiClient {
     });
   }
 
+  getEntry(id: string): Promise<{ entry: Entry }> {
+    return this.request(`/api/entries/${encodeURIComponent(id)}`, {
+      schema: z.strictObject({ entry: EntrySchema }),
+    });
+  }
+
   listCollections(signal?: AbortSignal): Promise<CollectionListResponse> {
     return this.request('/api/collections', {
       schema: CollectionListResponseSchema,

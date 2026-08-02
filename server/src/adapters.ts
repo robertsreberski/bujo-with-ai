@@ -369,6 +369,7 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
     },
 
     getIndex: () => indexReadModel(domain),
+    getEntry: (id) => ({ entry: domain.requireEntry(id) }),
 
     createEntry: (raw, owner, mutation) => {
       const input = CreateEntryRequestSchema.parse(raw);

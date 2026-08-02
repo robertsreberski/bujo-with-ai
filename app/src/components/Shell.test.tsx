@@ -60,25 +60,25 @@ describe('Shell counts', () => {
     expect(container.querySelectorAll('.nav-item__count, .tab__count')).toHaveLength(0);
   });
 
-  it('folds the count into the accessible name of both chromes', () => {
-    renderShell({ counts: { today: 2, review: 3 } });
+  it('folds numeric work and neutral Activity state into accessible names', () => {
+    renderShell({ counts: { today: 2, activity: true } });
     expect(navPair('Timeline — 2 open items')).toHaveLength(2);
-    expect(navPair('Activity — 3 unseen changes')).toHaveLength(2);
+    expect(navPair('Activity — unseen changes')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: 'Timeline' })).not.toBeInTheDocument();
   });
 
   it('keeps the badge itself out of the accessibility tree', () => {
-    const { container } = renderShell({ counts: { today: 2, review: 3 } });
+    const { container } = renderShell({ counts: { today: 2, activity: true } });
     const badges = [...container.querySelectorAll('.nav-item__count, .tab__count')];
     expect(badges).toHaveLength(4);
     for (const badge of badges) expect(badge).toHaveAttribute('aria-hidden', 'true');
-    expect(badges.map((badge) => badge.textContent)).toEqual(['2', '3', '2', '3']);
+    expect(badges.map((badge) => badge.textContent)).toEqual(['2', '', '2', '']);
   });
 
   it('says one thing in the singular', () => {
-    renderShell({ counts: { today: 1, review: 1 } });
+    renderShell({ counts: { today: 1, activity: true } });
     expect(navPair('Timeline — 1 open item')).toHaveLength(2);
-    expect(navPair('Activity — 1 unseen change')).toHaveLength(2);
+    expect(navPair('Activity — unseen changes')).toHaveLength(2);
   });
 
   it('caps the drawn count at 9+ while announcing the real one', () => {
@@ -91,8 +91,8 @@ describe('Shell counts', () => {
 
   it('tints the active destination’s badge and leaves the others neutral', () => {
     const { container } = renderShell({
-      counts: { today: 2, review: 3 },
-      route: { name: 'review' },
+      counts: { today: 2, activity: true },
+      route: { name: 'activity' },
     });
     const active = [...container.querySelectorAll('.nav-item__count, .tab__count')].filter(
       (badge) => badge.className.includes('bg-primary'),
@@ -100,7 +100,7 @@ describe('Shell counts', () => {
     const inactive = [...container.querySelectorAll('.nav-item__count, .tab__count')].filter(
       (badge) => badge.className.includes('bg-border-strong'),
     );
-    expect(active.map((badge) => badge.textContent)).toEqual(['3', '3']);
+    expect(active.map((badge) => badge.textContent)).toEqual(['', '']);
     expect(inactive.map((badge) => badge.textContent)).toEqual(['2', '2']);
   });
 

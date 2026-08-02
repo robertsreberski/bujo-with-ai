@@ -313,6 +313,108 @@ describe('JournalDomain entry commands', () => {
     expect(domain.requireEntry(created.entry.id).text).toBe('Original owner wording');
   });
 
+  it('derives readable co-authorship and a compact Timeline touch from audit records', () => {
+    const { domain, owner, advance } = fixture();
+    const issued = domain.createAgentToken('Planning agent', ['journal:full'], owner);
+    const actor: ActorContext = {
+      kind: 'agent',
+      tokenId: issued.token.id,
+      tokenLabel: issued.token.label,
+      tool: 'update_entry',
+    };
+    const created = domain.createEntry(
+      { id: ulid(), text: 'Book the train to Lisbon', type: 'task' },
+      owner,
+    );
+    if (created.kind !== 'entry') throw new Error('Expected entry');
+    advance(1_000);
+    const updated = domain.updateEntry(created.entry.id, { time: '09:30' }, actor, undefined, {
+      expectedRevision: 1,
+      reason: 'The itinerary now includes a departure time.',
+    });
+    if (!updated.activityId) throw new Error('Expected attributed activity');
+
+    expect(domain.activityView(updated.activityId).presentation).toEqual(
+      expect.objectContaining({
+        actor: expect.objectContaining({ kind: 'agent', label: 'Planning agent' }),
+        action: 'updated',
+        objectLabel: '“Book the train to Lisbon”',
+        primaryEntryId: created.entry.id,
+        reason: 'The itinerary now includes a departure time.',
+        attribution: [
+          expect.objectContaining({
+            entryId: created.entry.id,
+            originalAuthor: 'owner',
+            latestModifier: expect.objectContaining({ label: 'Planning agent' }),
+          }),
+        ],
+        latestAgentTouch: expect.objectContaining({
+          activityId: updated.activityId,
+          entryId: created.entry.id,
+          action: 'updated',
+        }),
+      }),
+    );
+
+    advance(1_000);
+    domain.updateEntry(created.entry.id, { text: 'Book the morning train to Lisbon' }, owner);
+    // A single historical row cannot prove whether a later revision came from
+    // the owner or another agent without an extra unbounded history query.
+    expect(
+      domain.activityView(updated.activityId).presentation?.attribution[0]?.latestModifier,
+    ).toBeNull();
+  });
+
+  it('derives forward and reverse entry lineage for a migration and its revert', () => {
+    const { domain, owner, agent } = fixture();
+    const source = domain.createEntry(
+      { id: ulid(), text: 'Prepare launch', type: 'task', date: '2026-07-31' },
+      owner,
+    );
+    if (source.kind !== 'entry') throw new Error('Expected entry');
+    const migrated = domain.applyAgentMigration(
+      {
+        kind: 'split',
+        title: 'Turn launch into the next action',
+        detail: 'Preserve the source and add one concrete task.',
+        ops: [
+          {
+            op: 'update',
+            id: source.entry.id,
+            expectedRevision: source.entry.revision,
+            patch: { state: 'cancelled' },
+          },
+          {
+            op: 'create',
+            entry: {
+              text: 'Draft launch checklist',
+              type: 'task',
+              time: null,
+              tags: [],
+              collection: null,
+              source: 'From launch planning.',
+            },
+          },
+        ],
+      },
+      agent,
+    );
+    const createdId = migrated.entries.find((entry) => entry.id !== source.entry.id)?.id;
+    if (!createdId) throw new Error('Expected created migration entry');
+    expect(domain.activityView(migrated.activityId).presentation?.lineage).toEqual({
+      fromEntryIds: [source.entry.id],
+      toEntryIds: [createdId],
+      relatedActivityId: null,
+    });
+
+    const reverted = domain.revertActivity(migrated.activityId, owner);
+    expect(domain.activityView(reverted.activity.id).presentation?.lineage).toEqual({
+      fromEntryIds: [createdId],
+      toEntryIds: [source.entry.id],
+      relatedActivityId: migrated.activityId,
+    });
+  });
+
   it('applies an agent migration atomically with revision checks', () => {
     const { domain, owner, agent } = fixture();
     const source = domain.createEntry(
