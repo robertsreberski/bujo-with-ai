@@ -983,6 +983,22 @@ export class JournalDomain {
     return row === undefined ? null : mapCollection(row);
   }
 
+  /** Resolve only the destination labels needed by one bounded Timeline page. */
+  public listCollectionsByIds(ids: readonly string[]): readonly Collection[] {
+    const unique = [...new Set(ids)];
+    for (const id of unique) validateCollectionId(id);
+    if (unique.length === 0) return [];
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM collections
+           WHERE id IN (SELECT value FROM json_each(?))
+           ORDER BY name COLLATE NOCASE, id`,
+        )
+        .all(JSON.stringify(unique)) as CollectionRow[]
+    ).map(mapCollection);
+  }
+
   public listActivity(limit = 100, offset = 0): readonly ActivityItem[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 500)
       invalid('limit must be between 1 and 500');

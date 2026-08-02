@@ -201,4 +201,19 @@ describe('EntryRow', () => {
     fireEvent.click(content, { detail: 0 });
     expect(onOpen).toHaveBeenCalledWith(entry);
   });
+
+  it('shows a Timeline destination without changing the canonical text', () => {
+    render(
+      <EntryRow
+        entry={{ ...entry, collection: 'projects' }}
+        destinationLabel="Projects"
+        preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
+        onToggle={vi.fn()}
+        onOpen={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Reply to Mira')).toBeInTheDocument();
+    expect(screen.getByText('Projects')).toHaveClass('entry-row__destination');
+  });
 });

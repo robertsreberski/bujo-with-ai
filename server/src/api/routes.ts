@@ -18,6 +18,7 @@ import {
   SettingsPatchSchema,
   SummaryRewriteRequestSchema,
   SummarySaveRequestSchema,
+  TimelineQuerySchema,
   TokenCreateRequestSchema,
   type AgentTokenScope,
   UlidSchema,
@@ -45,6 +46,7 @@ export interface MutationContext {
 
 export interface ApiJournalOperations extends DeviceAuthenticator {
   bootstrap(actor: OwnerActor): unknown | Promise<unknown>;
+  timeline(query: Record<string, unknown>, actor: OwnerActor): unknown | Promise<unknown>;
   listEntries(query: Record<string, unknown>, actor: OwnerActor): unknown | Promise<unknown>;
   createEntry(
     input: Record<string, unknown>,
@@ -210,6 +212,18 @@ function entryQuery(request: Request): Record<string, unknown> {
   });
 }
 
+function timelineQuery(request: Request): Record<string, unknown> {
+  const raw = {
+    to: scalarQuery(request, 'to'),
+    limit: scalarQuery(request, 'limit'),
+    cursor: scalarQuery(request, 'cursor'),
+  };
+  return TimelineQuerySchema.parse({
+    ...raw,
+    ...(raw.limit === undefined ? {} : { limit: z.coerce.number().parse(raw.limit) }),
+  });
+}
+
 function withMcpStatus(
   request: Request,
   settings: unknown,
@@ -269,6 +283,11 @@ export function createApiRouter(options: ApiRouterOptions): Router {
         cursor,
       };
     }),
+  );
+
+  router.get(
+    '/timeline',
+    asyncRoute((request) => options.operations.timeline(timelineQuery(request), actor(request))),
   );
 
   router.get(

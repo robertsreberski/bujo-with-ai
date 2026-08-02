@@ -190,6 +190,16 @@ export interface JournalState extends MirrorData {
   activityLoading: boolean;
   activityHasMore: boolean;
   activityNextCursor: string | null;
+  /** IDs mounted by the bounded Timeline projection, never the entire mirror. */
+  timelineEntryIds: string[];
+  timelineNextCursor: string | null;
+  timelineAnchorDate: string | null;
+  timelineLoaded: boolean;
+  timelineLoading: boolean;
+  timelineLoadingEarlier: boolean;
+  /** Reserved extension slots populated by later Activity/Reflection work. */
+  timelineLatestAgentTouch: ActivityView | null;
+  timelineWeeklyReflection: Summary | null;
   /** Capture tag vocabulary; in-memory only, never part of the persisted record. */
   tagSuggestions: TagUsage[];
   tagsFetchedAt: string | null;
@@ -227,6 +237,8 @@ export interface JournalState extends MirrorData {
   ): Promise<Settings>;
   searchEntries(query: string, cursor?: string): Promise<JournalSearchPage>;
   loadEntries(query: LoadEntriesQuery): Promise<Entry[]>;
+  loadTimeline(anchorDate?: string | null): Promise<Entry[]>;
+  loadEarlierTimeline(): Promise<Entry[]>;
   loadDate(date: string): Promise<Entry[]>;
   loadMonth(month: string): Promise<Entry[]>;
   loadCollection(id: string): Promise<Entry[]>;
@@ -280,6 +292,7 @@ let canonicalHistoryHydrationGeneration: number | null = null;
 let sseReplayReady = true;
 let activeResetSequence: number | null = null;
 let resetSequence = 0;
+let timelineRequestSequence = 0;
 let canonicalHistoryRollback: {
   generation: number;
   mirror: MirrorData;
@@ -323,6 +336,14 @@ function recordFromState(
     lastReviewSeenAt: state.lastReviewSeenAt,
     monthLogView: state.monthLogView,
     collectionLogView: state.collectionLogView,
+    timeline: {
+      loaded: state.timelineLoaded,
+      entryIds: state.timelineEntryIds,
+      nextCursor: state.timelineNextCursor,
+      anchorDate: state.timelineAnchorDate,
+      latestAgentTouch: state.timelineLatestAgentTouch,
+      weeklyReflection: state.timelineWeeklyReflection,
+    },
   };
 }
 
@@ -582,6 +603,26 @@ export async function applyChangeBatch(
     : before.outbox;
   let mirror = applyServerChangeBatch({ ...mirrorFromState(before), cursor }, batch);
   const agentTokens = applyAgentTokenChanges(before.agentTokens, batch);
+  const timelineEntryIds = new Set(before.timelineEntryIds);
+  for (const change of batch.changes) {
+    if (change.kind === 'entry.created') {
+      if (
+        change.payload.deletedAt === null &&
+        (before.timelineAnchorDate === null || change.payload.date <= before.timelineAnchorDate)
+      ) {
+        timelineEntryIds.add(change.payload.id);
+      }
+    } else if (change.kind === 'entry.deleted') {
+      timelineEntryIds.delete(change.payload.id);
+    } else if (change.kind === 'entry.updated' && timelineEntryIds.has(change.payload.id)) {
+      if (
+        change.payload.deletedAt !== null ||
+        (before.timelineAnchorDate !== null && change.payload.date > before.timelineAnchorDate)
+      ) {
+        timelineEntryIds.delete(change.payload.id);
+      }
+    }
+  }
 
   mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, remaining));
   const recentlyDeleted = new Map(
@@ -595,6 +636,7 @@ export async function applyChangeBatch(
   }
   useJournalStore.setState({
     ...mirror,
+    timelineEntryIds: [...timelineEntryIds],
     outbox: remaining,
     outboxCount: remaining.length,
     agentTokens,
@@ -627,20 +669,15 @@ export async function applyChangeBatch(
   }
 }
 
-function retainedHistoricalEntries(
+function retainedCachedEntries(
   mirror: MirrorData,
-  today: string,
   discardedIds: ReadonlySet<string> = new Set(),
 ): Record<string, Entry> {
-  const cutoff = addCalendarDays(today, -13);
-  const currentMonth = `month:${today.slice(0, 7)}`;
+  // Bootstrap is intentionally a bounded Timeline page, so absence from that
+  // response says nothing about older cached entries. Only an authoritative
+  // reset or an explicit discard may remove them from the local mirror.
   return Object.fromEntries(
-    Object.entries(mirror.entriesById).filter(([id, entry]) => {
-      if (discardedIds.has(id)) return false;
-      const inBootstrapWindow =
-        entry.date >= cutoff || entry.state === 'open' || entry.collection === currentMonth;
-      return !inBootstrapWindow;
-    }),
+    Object.entries(mirror.entriesById).filter(([id]) => !discardedIds.has(id)),
   );
 }
 
@@ -676,6 +713,17 @@ interface PreparedBootstrap {
   mirror: MirrorData;
   activityHasMore: boolean;
   activityNextCursor: string | null;
+  timeline: Pick<
+    JournalState,
+    | 'timelineEntryIds'
+    | 'timelineNextCursor'
+    | 'timelineAnchorDate'
+    | 'timelineLoaded'
+    | 'timelineLoading'
+    | 'timelineLoadingEarlier'
+    | 'timelineLatestAgentTouch'
+    | 'timelineWeeklyReflection'
+  > | null;
 }
 
 async function prepareBootstrapReconciliation(
@@ -719,8 +767,10 @@ async function prepareBootstrapReconciliation(
   const entriesById = {
     ...(options.authoritative
       ? {}
-      : retainedHistoricalEntries(mirrorFromState(state), response.today, options.discardEntryIds)),
-    ...Object.fromEntries(response.entries.map((entry) => [entry.id, entry])),
+      : retainedCachedEntries(mirrorFromState(state), options.discardEntryIds)),
+    ...Object.fromEntries(
+      [...response.entries, ...(response.timeline?.items ?? [])].map((entry) => [entry.id, entry]),
+    ),
   };
   const activityById = {
     ...(options.authoritative ? {} : state.activityById),
@@ -730,7 +780,10 @@ async function prepareBootstrapReconciliation(
     entriesById,
     ...buildEntryIndexes(entriesById),
     collectionsById: Object.fromEntries(
-      response.collections.map((collection) => [collection.id, collection]),
+      [...response.collections, ...(response.timeline?.collections ?? [])].map((collection) => [
+        collection.id,
+        collection,
+      ]),
     ),
     activityById,
     activityOrder: Object.values(activityById)
@@ -756,6 +809,21 @@ async function prepareBootstrapReconciliation(
     mirror,
     activityHasMore: response.activity.length >= 50,
     activityNextCursor: oldest?.at ?? null,
+    timeline: response.timeline
+      ? {
+          timelineEntryIds: mergeIds(
+            response.timeline.items.map((entry) => entry.id),
+            pendingTimelineIds(projectedOutbox, null),
+          ),
+          timelineNextCursor: response.timeline.nextCursor,
+          timelineAnchorDate: null,
+          timelineLoaded: true,
+          timelineLoading: false,
+          timelineLoadingEarlier: false,
+          timelineLatestAgentTouch: response.timeline.latestAgentTouch ?? null,
+          timelineWeeklyReflection: response.timeline.weeklyReflection ?? null,
+        }
+      : null,
   };
 }
 
@@ -764,6 +832,7 @@ export async function reconcileFromBootstrap(options: ReconcileOptions = {}): Pr
   if (!prepared) return false;
   useJournalStore.setState({
     ...prepared.mirror,
+    ...(prepared.timeline ?? {}),
     loading: false,
     resourceStatus: 'ready',
     online:
@@ -840,11 +909,9 @@ async function refetchCanonicalResetHistory(
   generation: number,
 ): Promise<boolean> {
   const responseGeneration = sseGeneration;
-  await loadEntriesIntoMirror(
-    {},
-    { persist: false, retryOnChange: false, requireConnection: false },
-  );
-  if (!resetHydrationIsCurrent(generation, responseGeneration)) return false;
+  // The bounded bootstrap already supplied the canonical Timeline page. Other
+  // screens reload their own scoped data after reconnect; a reset must never
+  // turn into an implicit lifetime entry download.
 
   const remainingActivityIds = new Set(scope.activityIds);
   for (const id of useJournalStore.getState().activityOrder) remainingActivityIds.delete(id);
@@ -1467,7 +1534,28 @@ async function enqueueCommand(command: QueueableCommand): Promise<void> {
     const mirror = recomputeActivityRevertEligibility(
       applyOptimisticCommand(mirrorFromState(state), command),
     );
-    return { ...mirror, outbox, outboxCount: outbox.length };
+    const createdIds = commandCreatedEntries(command)
+      .filter(
+        (entry) => state.timelineAnchorDate === null || entry.date <= state.timelineAnchorDate,
+      )
+      .map((entry) => entry.id);
+    let timelineEntryIds = mergeIds(state.timelineEntryIds, createdIds);
+    if (command.kind === 'entry.update' || command.kind === 'entry.delete') {
+      const entry = mirror.entriesById[command.id];
+      if (
+        !entry ||
+        entry.deletedAt !== null ||
+        (state.timelineAnchorDate !== null && entry.date > state.timelineAnchorDate)
+      ) {
+        timelineEntryIds = timelineEntryIds.filter((id) => id !== command.id);
+      }
+    }
+    return {
+      ...mirror,
+      timelineEntryIds,
+      outbox,
+      outboxCount: outbox.length,
+    };
   });
   await persistNow();
   if (lifecycle === lifecycleGeneration) {
@@ -1925,6 +2013,141 @@ async function loadEntriesIntoMirror(
   return loaded;
 }
 
+const TIMELINE_PAGE_SIZE = 100;
+
+function mergeIds(...groups: readonly (readonly string[])[]): string[] {
+  return [...new Set(groups.flatMap((group) => [...group]))];
+}
+
+function commandCreatedEntries(command: QueueableCommand): Entry[] {
+  switch (command.kind) {
+    case 'entry.create':
+      return [command.entry];
+    case 'entry.migrate':
+    case 'entry.schedule':
+      return [command.copy];
+    case 'entry.update':
+    case 'entry.delete':
+    case 'collection.create':
+    case 'collection.update':
+      return [];
+  }
+}
+
+function pendingTimelineIds(outbox: readonly OutboxItem[], anchorDate: string | null): string[] {
+  return outbox.flatMap((item) =>
+    commandCreatedEntries(item.command)
+      .filter((entry) => anchorDate === null || entry.date <= anchorDate)
+      .map((entry) => entry.id),
+  );
+}
+
+async function loadTimelinePage(anchorDate: string | null): Promise<Entry[]> {
+  requireOnline();
+  const request = ++timelineRequestSequence;
+  const lifecycle = lifecycleGeneration;
+  const startingIds = new Set(useJournalStore.getState().timelineEntryIds);
+  useJournalStore.setState({ timelineLoading: true, timelineLoadingEarlier: false });
+  try {
+    const response = await authenticated(() =>
+      journalApi.timeline({
+        ...(anchorDate === null ? {} : { to: anchorDate }),
+        limit: TIMELINE_PAGE_SIZE,
+      }),
+    );
+    if (request !== timelineRequestSequence || lifecycle !== lifecycleGeneration) {
+      return response.items;
+    }
+    const current = useJournalStore.getState();
+    let mirror = mirrorFromState(current);
+    for (const entry of response.items) mirror = upsertServerEntry(mirror, entry);
+    for (const collection of response.collections) {
+      mirror = upsertServerCollection(mirror, collection);
+    }
+    mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, current.outbox));
+    const arrivedDuringRequest = current.timelineEntryIds.filter((id) => {
+      const entry = current.entriesById[id];
+      return (
+        !startingIds.has(id) &&
+        entry !== undefined &&
+        (anchorDate === null || entry.date <= anchorDate)
+      );
+    });
+    useJournalStore.setState({
+      ...mirror,
+      timelineEntryIds: mergeIds(
+        response.items.map((entry) => entry.id),
+        arrivedDuringRequest,
+        pendingTimelineIds(current.outbox, anchorDate),
+      ),
+      timelineNextCursor: response.nextCursor,
+      timelineAnchorDate: anchorDate,
+      timelineLoaded: true,
+      timelineLoading: false,
+      timelineLoadingEarlier: false,
+      timelineLatestAgentTouch: response.latestAgentTouch ?? null,
+      timelineWeeklyReflection: response.weeklyReflection ?? null,
+      today: response.today,
+      serverToday: response.today,
+      timezone: response.timezone,
+    });
+    await persistNow();
+    return response.items;
+  } finally {
+    if (request === timelineRequestSequence && lifecycle === lifecycleGeneration) {
+      useJournalStore.setState({ timelineLoading: false });
+    }
+  }
+}
+
+async function loadEarlierTimelinePage(): Promise<Entry[]> {
+  requireOnline();
+  const state = useJournalStore.getState();
+  const cursor = state.timelineNextCursor;
+  if (!state.timelineLoaded || cursor === null || state.timelineLoadingEarlier) return [];
+  const request = ++timelineRequestSequence;
+  const lifecycle = lifecycleGeneration;
+  useJournalStore.setState({ timelineLoadingEarlier: true });
+  try {
+    const response = await authenticated(() =>
+      journalApi.timeline({
+        ...(state.timelineAnchorDate === null ? {} : { to: state.timelineAnchorDate }),
+        limit: TIMELINE_PAGE_SIZE,
+        cursor,
+      }),
+    );
+    if (request !== timelineRequestSequence || lifecycle !== lifecycleGeneration) {
+      return response.items;
+    }
+    const current = useJournalStore.getState();
+    let mirror = mirrorFromState(current);
+    for (const entry of response.items) mirror = upsertServerEntry(mirror, entry);
+    for (const collection of response.collections) {
+      mirror = upsertServerCollection(mirror, collection);
+    }
+    mirror = recomputeActivityRevertEligibility(applyPendingCommands(mirror, current.outbox));
+    useJournalStore.setState({
+      ...mirror,
+      timelineEntryIds: mergeIds(
+        current.timelineEntryIds,
+        response.items.map((entry) => entry.id),
+      ),
+      // A repeated cursor is a malformed page, not permission to loop forever.
+      timelineNextCursor: response.nextCursor === cursor ? null : response.nextCursor,
+      timelineLoadingEarlier: false,
+      today: response.today,
+      serverToday: response.today,
+      timezone: response.timezone,
+    });
+    await persistNow();
+    return response.items;
+  } finally {
+    if (request === timelineRequestSequence && lifecycle === lifecycleGeneration) {
+      useJournalStore.setState({ timelineLoadingEarlier: false });
+    }
+  }
+}
+
 function requireEntry(id: string): Entry {
   const entry = useJournalStore.getState().entriesById[id];
   if (!entry || entry.deletedAt !== null) throw new Error('Entry no longer exists.');
@@ -2050,6 +2273,14 @@ async function initializeJournal(): Promise<void> {
         activityHasMore: saved.mirror.activityOrder.length >= 50,
         activityNextCursor:
           saved.mirror.activityById[saved.mirror.activityOrder.at(-1) ?? '']?.at ?? null,
+        timelineEntryIds: saved.timeline?.entryIds ?? [],
+        timelineNextCursor: saved.timeline?.nextCursor ?? null,
+        timelineAnchorDate: saved.timeline?.anchorDate ?? null,
+        timelineLoaded: saved.timeline?.loaded ?? false,
+        timelineLoading: false,
+        timelineLoadingEarlier: false,
+        timelineLatestAgentTouch: saved.timeline?.latestAgentTouch ?? null,
+        timelineWeeklyReflection: saved.timeline?.weeklyReflection ?? null,
         hydrated: true,
         loading: networkAvailable,
         resourceStatus: 'ready',
@@ -2075,6 +2306,14 @@ async function initializeJournal(): Promise<void> {
         collectionLogView: null,
         activityHasMore: false,
         activityNextCursor: null,
+        timelineEntryIds: [],
+        timelineNextCursor: null,
+        timelineAnchorDate: null,
+        timelineLoaded: false,
+        timelineLoading: false,
+        timelineLoadingEarlier: false,
+        timelineLatestAgentTouch: null,
+        timelineWeeklyReflection: null,
         hydrated: true,
         loading: networkAvailable,
         resourceStatus: networkAvailable ? 'loading' : 'ready',
@@ -2216,6 +2455,7 @@ function attachLifecycle(): void {
 function shutdownJournal(): void {
   const restoredCanonicalHistory = restoreCanonicalHistoryRollback();
   lifecycleGeneration += 1;
+  timelineRequestSequence += 1;
   pairingExpired = false;
   replayAuthenticationGeneration = null;
   startupConnectionGeneration = null;
@@ -2252,6 +2492,8 @@ function shutdownJournal(): void {
     tokensLoading: false,
     authenticationRequired: false,
     recoveryLoading: false,
+    timelineLoading: false,
+    timelineLoadingEarlier: false,
   });
 }
 
@@ -2380,6 +2622,14 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
     activityLoading: false,
     activityHasMore: false,
     activityNextCursor: null,
+    timelineEntryIds: [],
+    timelineNextCursor: null,
+    timelineAnchorDate: null,
+    timelineLoaded: false,
+    timelineLoading: false,
+    timelineLoadingEarlier: false,
+    timelineLatestAgentTouch: null,
+    timelineWeeklyReflection: null,
     tagSuggestions: [],
     tagsFetchedAt: null,
     lastReviewSeenAt: null,
@@ -2723,10 +2973,17 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
         }),
       );
       if (lifecycle === lifecycleGeneration && generation === sseGeneration) {
-        let mirror = mirrorFromState(get());
+        const current = get();
+        let mirror = mirrorFromState(current);
         mirror = upsertServerEntry(mirror, response.entry);
         mirror = upsertServerSummary(mirror, response.summary);
-        set(recomputeActivityRevertEligibility(mirror));
+        set({
+          ...recomputeActivityRevertEligibility(mirror),
+          timelineEntryIds:
+            current.timelineAnchorDate === null || response.entry.date <= current.timelineAnchorDate
+              ? mergeIds(current.timelineEntryIds, [response.entry.id])
+              : current.timelineEntryIds,
+        });
         await persistNow();
       }
       return response.summary;
@@ -2858,6 +3115,8 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
       };
     },
     loadEntries: loadEntriesIntoMirror,
+    loadTimeline: (anchorDate = null) => loadTimelinePage(anchorDate),
+    loadEarlierTimeline: loadEarlierTimelinePage,
     loadDate: (date) => loadEntriesIntoMirror({ from: date, to: date }),
     loadMonth: async (month) => {
       const lifecycle = lifecycleGeneration;
@@ -3083,6 +3342,9 @@ export const journalActions = {
     useJournalStore.getState().searchEntries(query, cursor),
   loadEntries: (query: LoadEntriesQuery): Promise<Entry[]> =>
     useJournalStore.getState().loadEntries(query),
+  loadTimeline: (anchorDate?: string | null): Promise<Entry[]> =>
+    useJournalStore.getState().loadTimeline(anchorDate),
+  loadEarlierTimeline: (): Promise<Entry[]> => useJournalStore.getState().loadEarlierTimeline(),
   loadDate: (date: string): Promise<Entry[]> => useJournalStore.getState().loadDate(date),
   loadMonth: (month: string): Promise<Entry[]> => useJournalStore.getState().loadMonth(month),
   loadCollection: (id: string): Promise<Entry[]> => useJournalStore.getState().loadCollection(id),
@@ -3146,6 +3408,11 @@ export const selectJournalStatus = (state: JournalState): JournalStatus => {
 
 export const selectEntries = (state: JournalState): Entry[] =>
   Object.values(state.entriesById).filter((entry) => entry.deletedAt === null);
+export const selectTimelineEntries = (state: JournalState): Entry[] =>
+  state.timelineEntryIds.flatMap((id) => {
+    const entry = state.entriesById[id];
+    return entry && entry.deletedAt === null ? [entry] : [];
+  });
 export const selectCollections = (state: JournalState): Collection[] =>
   Object.values(state.collectionsById);
 /** Collections a capture can file into: no archives, no server-owned monthly logs. */
@@ -3154,10 +3421,10 @@ export const selectActiveCollections = (state: JournalState): Collection[] =>
     .filter((collection) => !collection.archivedAt && !collection.id.startsWith('month:'))
     .sort((left, right) => left.name.localeCompare(right.name));
 /**
- * What the Today badge counts: work still waiting in the daily log. Only tasks
+ * What the Timeline badge counts: work still waiting in the daily log. Only tasks
  * and habits can be open, collections have their own screens, and anything
  * dated ahead of today is not yet due — so the count is exactly the set the
- * Today screen shows as actionable.
+ * Timeline shows as actionable.
  */
 export const selectOpenTodayCount = (state: JournalState): number =>
   Object.values(state.entriesById).filter(

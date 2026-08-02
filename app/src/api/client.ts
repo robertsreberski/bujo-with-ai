@@ -20,6 +20,7 @@ import {
   RewriteSummaryResponseSchema,
   SaveSummaryResponseSchema,
   TagListResponseSchema,
+  TimelinePageResponseSchema,
   type ActivityView,
   type AgentToken,
   type BootstrapResponse,
@@ -36,6 +37,7 @@ import {
   type SettingsPayload,
   type Summary,
   type TagListResponse,
+  type TimelinePageResponse,
 } from './types';
 
 interface ApiErrorBody {
@@ -173,6 +175,16 @@ export class JournalApiClient {
   ): Promise<EntryListResponse> {
     return this.request(`/api/entries${searchParams(query)}`, {
       schema: EntryListResponseSchema,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  }
+
+  timeline(
+    query: { to?: string; limit?: number; cursor?: string },
+    signal?: AbortSignal,
+  ): Promise<TimelinePageResponse> {
+    return this.request(`/api/timeline${searchParams(query)}`, {
+      schema: TimelinePageResponseSchema,
       ...(signal === undefined ? {} : { signal }),
     });
   }

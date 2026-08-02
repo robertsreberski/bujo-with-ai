@@ -3,7 +3,7 @@ import { CollectionView } from './views/CollectionView';
 import { IndexView } from './views/IndexView';
 import { MonthView } from './views/MonthView';
 import { ReviewView } from './views/ReviewView';
-import { TodayView } from './views/TodayView';
+import { TimelineView } from './views/TimelineView';
 import { Composer } from './components/Composer';
 import { RecoveryDialog } from './components/DeadLetterDialog';
 import { EntryDetailHost } from './components/EntryDetailHost';
@@ -38,6 +38,7 @@ import {
   selectActiveCollections,
   selectJournalStatus,
   selectOpenTodayCount,
+  selectTimelineEntries,
   selectUnseenReviewCount,
   useJournalStore,
 } from './store/journal-store';
@@ -84,6 +85,7 @@ export default function App() {
     () => Object.values(store.entriesById).filter((entry) => entry.deletedAt === null),
     [store.entriesById],
   );
+  const timelineEntries = selectTimelineEntries(store);
   const collections = useMemo(() => Object.values(store.collectionsById), [store.collectionsById]);
   const activity = useMemo(
     () =>
@@ -383,19 +385,50 @@ export default function App() {
   }, [store.connectionStatus]);
 
   useEffect(() => {
+    if (!store.hydrated || route.name !== 'today' || route.date !== store.today) return;
+    navigate({ name: 'today', date: null }, { replace: true });
+  }, [navigate, route, store.hydrated, store.today]);
+
+  useEffect(() => {
+    if (
+      route.name !== 'today' ||
+      !store.hydrated ||
+      !store.online ||
+      store.connectionStatus !== 'connected' ||
+      route.date === store.today
+    ) {
+      return;
+    }
+    const anchorDate = route.date;
+    if (store.timelineLoaded && store.timelineAnchorDate === anchorDate) return;
+    const key = `timeline:${anchorDate ?? 'latest'}`;
+    const loadedRoutes = loadedRoutesRef.current;
+    if (loadedRoutes.has(key)) return;
+    loadedRoutes.add(key);
+    void journalActions.loadTimeline(anchorDate).catch((error: unknown) => {
+      loadedRoutes.delete(key);
+      say(messageFromError(error), 'error');
+    });
+    return () => {
+      loadedRoutes.delete(key);
+    };
+  }, [
+    route,
+    say,
+    store.connectionStatus,
+    store.hydrated,
+    store.online,
+    store.timelineAnchorDate,
+    store.timelineLoaded,
+    store.today,
+  ]);
+
+  useEffect(() => {
     if (!store.hydrated || !store.online || store.connectionStatus !== 'connected') {
       return;
     }
     const request = (() => {
-      if (route.name === 'today') {
-        if (route.date) {
-          return {
-            key: `day:${route.date}`,
-            load: () => journalActions.loadDate(route.date ?? store.today),
-          };
-        }
-        return { key: 'today:history', load: () => journalActions.loadEntries({}) };
-      }
+      if (route.name === 'today') return null;
       if (route.name === 'month') {
         const month = route.month ?? store.today.slice(0, 7);
         return { key: `month:${month}`, load: () => journalActions.loadMonth(month) };
@@ -423,14 +456,29 @@ export default function App() {
     switch (route.name) {
       case 'today':
         return (
-          <TodayView
-            entries={entries}
+          <TimelineView
+            entries={
+              store.timelineLoaded && store.timelineAnchorDate === route.date ? timelineEntries : []
+            }
+            collectionsById={store.collectionsById}
             today={store.today}
             selectedDate={route.date}
+            loading={
+              store.timelineLoading ||
+              !store.timelineLoaded ||
+              store.timelineAnchorDate !== route.date
+            }
+            hasEarlier={
+              store.timelineLoaded &&
+              store.timelineAnchorDate === route.date &&
+              store.timelineNextCursor !== null
+            }
+            loadingEarlier={store.timelineLoadingEarlier}
             preferences={preferences}
             onOpenEntry={(entry) => setDetailId(entry.id)}
             onToggleEntry={toggleEntry}
             onStartMigration={setMigrationEntries}
+            onLoadEarlier={() => run(() => journalActions.loadEarlierTimeline())}
           />
         );
       case 'month':
@@ -444,7 +492,9 @@ export default function App() {
             logView={store.monthLogView ?? DEFAULT_LOG_VIEW}
             onLogViewChange={journalActions.setMonthLogView}
             onMonthChange={(month) => navigate({ name: 'month', month })}
-            onDaySelect={(date) => navigate({ name: 'today', date })}
+            onDaySelect={(date) =>
+              navigate({ name: 'today', date: date === store.today ? null : date })
+            }
             onOpenEntry={(entry) => setDetailId(entry.id)}
             onToggleEntry={toggleEntry}
             onSaveSummary={(summary) =>
@@ -515,7 +565,11 @@ export default function App() {
   const routeTitle = (() => {
     switch (route.name) {
       case 'today':
-        return route.date && route.date !== store.today ? formatLongDate(route.date) : 'Timeline';
+        return route.date
+          ? route.date > store.today
+            ? `Planning ${formatLongDate(route.date)}`
+            : formatLongDate(route.date)
+          : 'Timeline';
       case 'month':
         return formatMonth(displayedMonth);
       case 'index':
@@ -532,8 +586,10 @@ export default function App() {
   const routeSubtitle = (() => {
     switch (route.name) {
       case 'today':
-        return route.date && route.date !== store.today
-          ? 'Daily log in your Timeline'
+        return route.date
+          ? route.date > store.today
+            ? 'Future log'
+            : 'Daily log in your Timeline'
           : `${formatLongDate(store.today)} · ${dayCount} ${dayCount === 1 ? 'day' : 'days'} logged`;
       case 'month':
         return `${dayCount} ${dayCount === 1 ? 'day' : 'days'} logged in Timeline`;

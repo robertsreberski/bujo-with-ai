@@ -457,6 +457,64 @@ describe('HTTP and MCP domain adapters', () => {
     ).toThrowError(/Conflicting entry type/i);
   });
 
+  it('builds one deduplicated Timeline page with referenced collection labels', async () => {
+    const { domain, owner, adapters, advance } = fixture();
+    domain.createCollection({ id: 'projects', name: 'Projects' }, owner);
+    const daily = createdEntry(domain, owner, { text: 'Daily thought', type: 'note' });
+    advance();
+    const filed = createdEntry(domain, owner, {
+      text: 'Filed thought',
+      type: 'note',
+      collection: 'projects',
+    });
+
+    const page = (await adapters.api.timeline({ limit: 100 }, owner)) as {
+      items: Entry[];
+      collections: Collection[];
+      nextCursor: string | null;
+      latestAgentTouch?: unknown;
+      weeklyReflection?: unknown;
+    };
+
+    expect(page.items.map((entry) => entry.id)).toEqual([filed.id, daily.id]);
+    expect(new Set(page.items.map((entry) => entry.id)).size).toBe(page.items.length);
+    expect(page.collections).toEqual([
+      expect.objectContaining({ id: 'projects', name: 'Projects' }),
+    ]);
+    expect(page).not.toHaveProperty('latestAgentTouch');
+    expect(page).not.toHaveProperty('weeklyReflection');
+  });
+
+  it.each([5_000, 20_000])(
+    'keeps bootstrap and Timeline bounded for a %,i-entry journal',
+    async (entryCount) => {
+      const statements: string[] = [];
+      const { database, owner, adapters } = fixture((sql) => statements.push(sql));
+      const insert = database.raw.prepare(
+        `INSERT INTO entries(
+        id,date,type,text,state,time,tags,author,source,migrations,collection,
+        created_at,updated_at,deleted_at,revision
+      ) VALUES (?,?,'note',?,'logged',NULL,'[]','me',NULL,0,NULL,?,?,NULL,1)`,
+      );
+      database.raw.transaction(() => {
+        for (let index = 0; index < entryCount; index += 1) {
+          const timestamp = '2026-07-31T09:00:00.000Z';
+          insert.run(ulid(), '2026-07-31', `Timeline fixture ${index}`, timestamp, timestamp);
+        }
+      })();
+
+      statements.length = 0;
+      const bootstrap = (await adapters.api.bootstrap(owner)) as {
+        entries: Entry[];
+        timeline: { items: Entry[]; nextCursor: string | null };
+      };
+      expect(bootstrap.entries).toHaveLength(100);
+      expect(bootstrap.timeline.items).toHaveLength(100);
+      expect(bootstrap.timeline.nextCursor).toEqual(expect.any(String));
+      expect(statements.filter((sql) => /^SELECT e\.\*/i.test(sql.trim()))).toHaveLength(1);
+    },
+  );
+
   it('pages a large entry fixture with one bounded SQL query per page', async () => {
     const statements: string[] = [];
     const { database, owner, adapters } = fixture((sql) => statements.push(sql));

@@ -1153,12 +1153,29 @@ describe('journal lifecycle persistence', () => {
     const saved = savedWithHistory();
     persistenceMocks.load.mockResolvedValue(saved);
     mockCanonicalBootstrap();
-    vi.mocked(journalApi.listEntries).mockImplementation(async (query) => ({
-      items: query.from ? [] : [{ ...staleEntry, text: 'Partial canonical row', revision: 2 }],
-      nextCursor: null,
+    const partialCanonicalEntry = {
+      ...staleEntry,
+      text: 'Partial canonical row',
+      revision: 2,
+    };
+    vi.mocked(journalApi.bootstrap).mockResolvedValue({
       today: '2026-07-31',
       timezone: 'Europe/Amsterdam',
-    }));
+      deviceId: '01K1H000000000000000000044',
+      cursor: 'new-epoch:20',
+      entries: [partialCanonicalEntry],
+      collections: [],
+      latestSummary: null,
+      activity: [],
+      settings,
+      timeline: {
+        today: '2026-07-31',
+        timezone: 'Europe/Amsterdam',
+        items: [partialCanonicalEntry],
+        collections: [],
+        nextCursor: null,
+      },
+    });
     vi.spyOn(journalApi, 'latestSummary').mockRejectedValue(
       new Error('Injected summary refetch failure'),
     );
@@ -1170,6 +1187,7 @@ describe('journal lifecycle persistence', () => {
 
     const state = useJournalStore.getState();
     expect(journalApi.bootstrap).toHaveBeenCalledTimes(1);
+    expect(journalApi.listEntries).not.toHaveBeenCalled();
     expect(journalApi.latestSummary).toHaveBeenCalledWith('2026-06');
     expect(state.entriesById[staleEntry.id]).toEqual(staleEntry);
     expect(state.summariesByMonth['2026-06']).toEqual(staleSummary);
@@ -1282,10 +1300,10 @@ describe('journal lifecycle persistence', () => {
     vi.stubGlobal('EventSource', ControllableEventSource);
     await journalActions.initialize();
 
-    let releaseEntries!: (value: Awaited<ReturnType<typeof journalApi.listEntries>>) => void;
-    vi.mocked(journalApi.listEntries).mockReturnValueOnce(
+    let releaseSummary!: (value: Awaited<ReturnType<typeof journalApi.latestSummary>>) => void;
+    vi.spyOn(journalApi, 'latestSummary').mockReturnValueOnce(
       new Promise((resolve) => {
-        releaseEntries = resolve;
+        releaseSummary = resolve;
       }),
     );
     sources[0]?.dispatchEvent(
@@ -1298,16 +1316,12 @@ describe('journal lifecycle persistence', () => {
       }),
     );
     await vi.waitFor(() => expect(journalApi.bootstrap).toHaveBeenCalledTimes(1));
-    await vi.waitFor(() => expect(journalApi.listEntries).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(journalApi.latestSummary).toHaveBeenCalledTimes(1));
+    expect(journalApi.listEntries).toHaveBeenCalledTimes(1);
 
     visibility = 'hidden';
     document.dispatchEvent(new Event('visibilitychange'));
-    releaseEntries({
-      items: [],
-      nextCursor: null,
-      today: '2026-07-31',
-      timezone: 'Europe/Amsterdam',
-    });
+    releaseSummary({ summary: null });
     await vi.waitFor(() => expect(useJournalStore.getState().connectionStatus).toBe('offline'));
 
     expect(sources).toHaveLength(1);
@@ -1315,7 +1329,7 @@ describe('journal lifecycle persistence', () => {
 
   it('restores the durable mirror before shutdown flushes a draft queued mid-reset', async () => {
     const saved = savedWithHistory();
-    let releaseEntries!: (value: Awaited<ReturnType<typeof journalApi.listEntries>>) => void;
+    let releaseSummary!: (value: Awaited<ReturnType<typeof journalApi.latestSummary>>) => void;
     useJournalStore.setState({
       ...saved.mirror,
       hydrated: true,
@@ -1330,15 +1344,15 @@ describe('journal lifecycle persistence', () => {
       activityNextCursor: null,
     });
     mockCanonicalBootstrap();
-    vi.mocked(journalApi.listEntries).mockReturnValue(
+    vi.spyOn(journalApi, 'latestSummary').mockReturnValue(
       new Promise((resolve) => {
-        releaseEntries = resolve;
+        releaseSummary = resolve;
       }),
     );
-    vi.spyOn(journalApi, 'latestSummary').mockResolvedValue({ summary: null });
 
     const hydration = reconcileAfterReset();
-    await vi.waitFor(() => expect(journalApi.listEntries).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(journalApi.latestSummary).toHaveBeenCalledTimes(1));
+    expect(journalApi.listEntries).not.toHaveBeenCalled();
     expect(useJournalStore.getState().entriesById).toEqual({});
 
     journalActions.setDraft('Draft typed during reset');
@@ -1355,12 +1369,7 @@ describe('journal lifecycle persistence', () => {
       }),
     );
 
-    releaseEntries({
-      items: [],
-      nextCursor: null,
-      today: '2026-07-31',
-      timezone: 'Europe/Amsterdam',
-    });
+    releaseSummary({ summary: null });
     await expect(hydration).rejects.toThrow('superseded');
   });
 });

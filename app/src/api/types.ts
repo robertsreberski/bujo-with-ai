@@ -14,6 +14,7 @@ import {
   SseReplayReadySchema,
   SseResetSchema,
   TagListResponseSchema,
+  TimelinePageResponseSchema,
   type ActivityView,
   type ActivityItem,
   type AgentToken,
@@ -32,6 +33,7 @@ import {
   type Settings,
   type Summary,
   type TagUsage,
+  type TimelinePageResponse,
 } from '@journal/server/contracts/app';
 import type { z } from 'zod';
 
@@ -54,6 +56,7 @@ export type {
   Settings,
   Summary,
   TagUsage,
+  TimelinePageResponse,
 };
 
 export type PairResponse = z.infer<typeof PairResponseSchema>;
@@ -84,4 +87,5 @@ export {
   SseReplayReadySchema,
   SseResetSchema as ResetEventSchema,
   TagListResponseSchema,
+  TimelinePageResponseSchema,
 };

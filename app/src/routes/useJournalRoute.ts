@@ -7,8 +7,19 @@ export type JournalRoute =
   | { name: 'collection'; collectionId: string }
   | { name: 'review' };
 
+const TIMELINE_ALIASES = new Set(['/today', '/timeline']);
+
+const canonicalizeTimelineAlias = (): void => {
+  const url = new URL(window.location.href);
+  if (!TIMELINE_ALIASES.has(url.pathname)) return;
+  window.history.replaceState(null, '', `/${url.search}${url.hash}`);
+};
+
 const readRoute = (): JournalRoute => {
   const url = new URL(window.location.href);
+  if (TIMELINE_ALIASES.has(url.pathname)) {
+    return { name: 'today', date: url.searchParams.get('date') };
+  }
   if (url.pathname === '/month') return { name: 'month', month: url.searchParams.get('month') };
   if (url.pathname === '/index') return { name: 'index' };
   if (url.pathname === '/review') return { name: 'review' };
@@ -38,7 +49,12 @@ export function useJournalRoute() {
   const [route, setRoute] = useState<JournalRoute>(() => readRoute());
 
   useEffect(() => {
-    const onPopState = () => setRoute(readRoute());
+    canonicalizeTimelineAlias();
+    const onPopState = () => {
+      const next = readRoute();
+      canonicalizeTimelineAlias();
+      setRoute(next);
+    };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);

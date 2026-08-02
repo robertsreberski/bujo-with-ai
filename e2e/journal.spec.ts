@@ -44,7 +44,13 @@ async function seedOwnerEntry(
   request: APIRequestContext,
   baseURL: string | undefined,
   server: ServerContext,
-  entry: { text: string; type: string; tags?: string[] },
+  entry: {
+    text: string;
+    type: string;
+    tags?: string[];
+    collection?: string | null;
+    date?: string;
+  },
 ): Promise<void> {
   const created = await request.post('/api/entries', {
     data: {
@@ -53,13 +59,21 @@ async function seedOwnerEntry(
       type: entry.type,
       time: null,
       tags: entry.tags ?? [],
-      collection: null,
-      dateIntent: {
-        kind: 'today',
-        baseToday: server.today,
-        capturedAt: new Date().toISOString(),
-        timezone: server.timezone,
-      },
+      collection: entry.collection ?? null,
+      dateIntent: entry.date
+        ? {
+            kind: 'absolute',
+            date: entry.date,
+            baseToday: server.today,
+            capturedAt: new Date().toISOString(),
+            timezone: server.timezone,
+          }
+        : {
+            kind: 'today',
+            baseToday: server.today,
+            capturedAt: new Date().toISOString(),
+            timezone: server.timezone,
+          },
     },
     headers: { 'Idempotency-Key': ulid(), Origin: baseURL! },
   });
@@ -73,7 +87,10 @@ function humanizeSlug(slug: string): string {
 }
 
 /** LOG-53's Timeline-badge formula, computed from the server's own bootstrap. */
-async function openTodayCount(request: APIRequestContext, server: ServerContext): Promise<number> {
+async function openTimelineCount(
+  request: APIRequestContext,
+  server: ServerContext,
+): Promise<number> {
   const bootstrap = await request.get('/api/bootstrap');
   expect(bootstrap.ok()).toBeTruthy();
   const body = (await bootstrap.json()) as {
@@ -235,7 +252,7 @@ test('owner capture persists and the four primary views navigate by semantic con
     { button: 'Month', path: '/month', landmark: /^[A-Z][a-z]+ \d{4} monthly log$/ },
     { button: 'Index', path: '/index', landmark: 'Journal index' },
     { button: 'Activity', path: '/review', landmark: 'Assistant activity' },
-    { button: 'Timeline', path: '/', landmark: 'Daily log' },
+    { button: 'Timeline', path: '/', landmark: 'Timeline' },
   ] as const;
 
   for (const route of routes) {
@@ -299,7 +316,7 @@ test('owner deletion supports immediate undo and later recovery from Settings', 
   await expect(page.locator('[data-entry-id]').filter({ hasText: text })).toBeVisible();
 });
 
-test('default Timeline downloads closed daily history beyond the bootstrap window', async ({
+test('Timeline stays bounded and reveals older daily and collection entries explicitly', async ({
   baseURL,
   context,
   page,
@@ -313,31 +330,57 @@ test('default Timeline downloads closed daily history beyond the bootstrap windo
   expect(bootstrapResponse.ok()).toBeTruthy();
   const bootstrap = (await bootstrapResponse.json()) as { today: string; timezone: string };
   const historicalDate = addCalendarDays(bootstrap.today, -21);
-  const text = uniqueText('Downloaded closed history');
-  const created = await context.request.post('/api/entries', {
-    data: {
-      id: ulid(),
-      text,
-      type: 'note',
-      time: null,
-      tags: ['history'],
-      collection: null,
-      dateIntent: {
-        kind: 'absolute',
-        date: historicalDate,
-        baseToday: bootstrap.today,
-        capturedAt: new Date().toISOString(),
-        timezone: bootstrap.timezone,
-      },
-    },
+  const collectionId = `timeline-${ulid().toLowerCase()}`;
+  const collectionName = uniqueText('Timeline archive');
+  const collection = await context.request.post('/api/collections', {
+    data: { id: collectionId, name: collectionName, note: null },
     headers: { 'Idempotency-Key': ulid(), Origin: baseURL! },
   });
-  expect(created.status()).toBe(201);
+  expect(collection.status()).toBe(201);
 
-  await openJournal(page);
+  const filedText = uniqueText('Filed history boundary');
+  const dailyText = uniqueText('Daily history boundary');
+  await seedOwnerEntry(context.request, baseURL, bootstrap, {
+    text: filedText,
+    type: 'note',
+    collection: collectionId,
+    date: historicalDate,
+  });
+  await seedOwnerEntry(context.request, baseURL, bootstrap, {
+    text: dailyText,
+    type: 'note',
+    date: historicalDate,
+  });
+  for (let start = 0; start < 100; start += 20) {
+    await Promise.all(
+      Array.from({ length: 20 }, (_, offset) =>
+        seedOwnerEntry(context.request, baseURL, bootstrap, {
+          text: uniqueText(`Timeline boundary ${start + offset}`),
+          type: 'note',
+          date: historicalDate,
+        }),
+      ),
+    );
+  }
 
-  await expect(page.getByText(text, { exact: true })).toBeVisible();
-  await expect(page.locator(`[data-day="${historicalDate}"]`)).toContainText(text);
+  const entryRequests: string[] = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === '/api/entries') entryRequests.push(url.search);
+  });
+  await page.goto(`/?date=${historicalDate}`);
+  await expect(page.locator('#journal-content')).toBeVisible();
+
+  await expect(page.locator('.entry-row')).toHaveCount(100);
+  await expect(page.getByText(filedText, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(dailyText, { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Earlier' }).click();
+  await expect(page.getByText(filedText, { exact: true })).toBeVisible();
+  await expect(page.getByText(dailyText, { exact: true })).toBeVisible();
+  await expect(
+    page.locator('.entry-row').filter({ hasText: filedText }).getByText(collectionName),
+  ).toBeVisible();
+  expect(entryRequests).not.toContain('');
 });
 
 test('two paired browsers converge through SSE and notify the other device once', async ({
@@ -629,7 +672,7 @@ test('a capture on the month spread lands in the monthly log without leaving it'
   page,
 }) => {
   await openJournal(page);
-  await page.getByRole('button', { name: /^Month/ }).click();
+  await page.getByRole('button', { name: 'Month', exact: true }).click();
   await expect(page).toHaveURL(/\/month(?:\?|$)/);
 
   // The screen's own default: the month being browsed, named as the chip says.
@@ -654,7 +697,7 @@ test('a capture on the month spread lands in the monthly log without leaving it'
 
 test('the monthly log collapses done work and the arrange menu narrows it', async ({ page }) => {
   await openJournal(page);
-  await page.getByRole('button', { name: /^Month/ }).click();
+  await page.getByRole('button', { name: 'Month', exact: true }).click();
   const monthlyLog = page.getByRole('region', { name: 'Monthly log' });
 
   const keep = uniqueText('Renew passport');
@@ -719,7 +762,9 @@ test('an unknown /slug mints its collection, files the capture, and the toast op
   await page.getByRole('button', { name: 'Add entry' }).click();
   const toast = page.locator('.toast');
   await expect(toast).toContainText(`Added to ${name}`);
-  await expect(page.getByText(text, { exact: true })).toHaveCount(0);
+  const timelineRow = page.locator('.entry-row').filter({ hasText: text });
+  await expect(timelineRow.getByText(text, { exact: true })).toHaveCount(1);
+  await expect(timelineRow.getByText(name, { exact: true })).toBeVisible();
 
   await toast.getByRole('button', { name: 'View' }).click();
   await expect(page).toHaveURL(new RegExp(`/c/${slug}$`));
@@ -844,7 +889,7 @@ test('the Timeline and Activity tabs announce counts and Activity stays cleared'
 
   // Anchor the baseline to server truth, not to whatever the badge shows
   // mid-hydration — the shared database already carries earlier specs' rows.
-  const openBefore = await openTodayCount(context.request, server);
+  const openBefore = await openTimelineCount(context.request, server);
   await expect.poll(() => navCount(page, 'Timeline')).toBe(openBefore);
   await seedOwnerEntry(context.request, baseURL, server, {
     text: uniqueText('Badge open task'),

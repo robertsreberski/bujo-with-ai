@@ -290,7 +290,7 @@ test('route navigation restores the content scroller to the top', async ({ page 
   await expect(page.getByRole('heading', { name: 'Collections', exact: true })).toBeVisible();
 });
 
-test('a delayed older-day deep link settles on its final section geometry', async ({
+test('a delayed older-day deep link settles on its anchored Timeline section', async ({
   baseURL,
   context,
   page,
@@ -337,12 +337,9 @@ test('a delayed older-day deep link settles on its final section geometry', asyn
   ]);
   expect(seeded.every((response) => response.status() === 201)).toBeTruthy();
 
-  await page.route('**/api/entries?**', async (route) => {
+  await page.route('**/api/timeline?**', async (route) => {
     const url = new URL(route.request().url());
-    if (
-      url.searchParams.get('from') === selectedDate &&
-      url.searchParams.get('to') === selectedDate
-    ) {
+    if (url.searchParams.get('to') === selectedDate) {
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
     await route.continue();
@@ -355,12 +352,10 @@ test('a delayed older-day deep link settles on its final section geometry', asyn
 
   const selectedSection = page.locator(`[data-day="${selectedDate}"]`);
   await expect(selectedSection).toBeFocused();
-  await expect
-    .poll(() => page.locator('#journal-content').evaluate((element) => element.scrollTop))
-    .toBeGreaterThan(0);
+  await expect(
+    page.getByText('Newer geometry row 1 with enough text to occupy visible space'),
+  ).toHaveCount(0);
   await page.waitForTimeout(100);
   await expect(selectedSection).toBeFocused();
-  expect(
-    await page.locator('#journal-content').evaluate((element) => element.scrollTop),
-  ).toBeGreaterThan(0);
+  expect(await page.locator('#journal-content').evaluate((element) => element.scrollTop)).toBe(0);
 });

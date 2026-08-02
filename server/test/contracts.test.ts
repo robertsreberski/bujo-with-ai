@@ -21,6 +21,8 @@ import {
   SseReplayReadySchema,
   TagSchema,
   TokenCreateRequestSchema,
+  TimelinePageResponseSchema,
+  TimelineQuerySchema,
 } from '../src/contracts/index.js';
 
 const ENTRY_ID = '01K1A2B3C4D5E6F7G8H9J0K1M2';
@@ -299,6 +301,29 @@ describe('autonomous write contracts', () => {
 });
 
 describe('sync contracts', () => {
+  it('bounds the extensible Timeline page and its cursor query', () => {
+    expect(TimelineQuerySchema.parse({})).toEqual({ limit: 100 });
+    expect(TimelineQuerySchema.safeParse({ limit: 101 }).success).toBe(false);
+    expect(
+      TimelinePageResponseSchema.safeParse({
+        today: '2026-07-31',
+        timezone: 'Europe/Amsterdam',
+        items: [entry],
+        collections: [],
+        nextCursor: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      TimelinePageResponseSchema.safeParse({
+        today: '2026-07-31',
+        timezone: 'Europe/Amsterdam',
+        items: Array.from({ length: 101 }, () => entry),
+        collections: [],
+        nextCursor: null,
+      }).success,
+    ).toBe(false);
+  });
+
   it('accepts only an exact epoch-qualified replay-ready cursor', () => {
     expect(SseReplayReadySchema.safeParse({ cursor: 'epoch:7' }).success).toBe(true);
     expect(SseReplayReadySchema.safeParse({ cursor: 'epoch:7', ready: true }).success).toBe(false);

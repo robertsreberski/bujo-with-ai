@@ -315,17 +315,16 @@ test('an offline tomorrow capture after browser midnight replays to its intended
   await page.clock.install({
     time: instantForLocalTime(bootstrap.today, '23:59:30', bootstrap.timezone),
   });
-  const initialHistoryLoaded = page.waitForResponse((response) => {
+  const initialTimelineLoaded = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return (
-      url.pathname === '/api/entries' &&
-      url.searchParams.get('limit') === '100' &&
+      url.pathname === '/api/bootstrap' &&
       response.request().method() === 'GET' &&
       response.status() === 200
     );
   });
   await openJournal(page);
-  await initialHistoryLoaded;
+  await initialTimelineLoaded;
 
   await context.setOffline(true);
   await expect(page.locator('.status-strip')).toContainText(
