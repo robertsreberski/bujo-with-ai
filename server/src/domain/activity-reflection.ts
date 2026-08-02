@@ -179,10 +179,10 @@ export class ActivityReflection {
 
   /** Merge one portable Reflection inside the caller's import transaction. */
   public importReflection(input: Reflection, context: WriteContext): 'inserted' | 'skipped' {
-    const parsed = ReflectionSchema.parse({
-      ...input,
-      claimedSourceEntries: input.claimedSourceEntries ?? null,
-    });
+    // Parse the legacy portable shape before filling current-only fields: an
+    // older schema-valid running Reflection legitimately omitted its source
+    // binding, while an explicit null would make that running shape invalid.
+    const parsed = ReflectionSchema.parse(input);
     // Agent credentials are intentionally not portable. Preserve the durable
     // request, but make a running claim reclaimable on the destination.
     const reflection: Reflection =
