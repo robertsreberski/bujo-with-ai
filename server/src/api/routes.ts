@@ -101,6 +101,7 @@ export interface ApiJournalOperations extends DeviceAuthenticator {
     id: string,
     expectedRevision: number | undefined,
     actor: OwnerActor,
+    mutation: MutationContext,
   ): unknown | Promise<unknown>;
   listRecentlyDeleted?(actor: OwnerActor): unknown | Promise<unknown>;
   listCollections(actor: OwnerActor): unknown | Promise<unknown>;
@@ -399,6 +400,7 @@ export function createApiRouter(options: ApiRouterOptions): Router {
         idSchema.parse(request.params.id),
         expectedRevision ?? expectedRevisionFromIfMatch(request),
         actor(request),
+        mutation(request),
       );
     }),
   );

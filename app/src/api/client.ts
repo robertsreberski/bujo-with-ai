@@ -270,10 +270,15 @@ export class JournalApiClient {
     });
   }
 
-  restoreEntry(id: string, expectedRevision?: number): Promise<RestoreEntryResponse> {
+  restoreEntry(
+    id: string,
+    mutationId: string,
+    expectedRevision?: number,
+  ): Promise<RestoreEntryResponse> {
     return this.request(`/api/entries/${encodeURIComponent(id)}/restore`, {
       method: 'POST',
       body: expectedRevision === undefined ? {} : { expectedRevision },
+      mutationId,
       schema: RestoreEntryResponseSchema,
     });
   }

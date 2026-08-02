@@ -258,7 +258,7 @@ describe('journal store reconciliation', () => {
     expect(useJournalStore.getState().recentlyDeleted[0]?.destination.status).toBe('missing');
     const result = await journalActions.restoreEntry(tombstone.id);
 
-    expect(restore).toHaveBeenCalledWith(tombstone.id, tombstone.revision);
+    expect(restore).toHaveBeenCalledWith(tombstone.id, expect.any(String), tombstone.revision);
     expect(result).toMatchObject({
       entry: { collection: null, deletedAt: null },
       outcome: 'daily_fallback',
@@ -315,11 +315,96 @@ describe('journal store reconciliation', () => {
     resolveDelete({ entry: tombstone });
     const result = await undo;
 
-    expect(restore).toHaveBeenCalledWith(original.id, tombstone.revision);
+    expect(restore).toHaveBeenCalledWith(original.id, expect.any(String), tombstone.revision);
     expect(result.entry).toEqual(recovered);
     expect(useJournalStore.getState().entriesById[original.id]).toEqual(recovered);
     expect(useJournalStore.getState().outbox).toHaveLength(0);
     expect(useJournalStore.getState().timelineEntryIds).toContain(original.id);
+  });
+
+  it('reuses the same restore mutation after an indeterminate network outcome', async () => {
+    const tombstone = entry(93, {
+      revision: 2,
+      deletedAt: '2026-07-31T10:00:00.000Z',
+    });
+    const recovered = { ...tombstone, revision: 3, deletedAt: null };
+    const restore = vi
+      .spyOn(journalApi, 'restoreEntry')
+      .mockRejectedValueOnce(new ApiError(0, 'network_error', 'Response was lost.'))
+      .mockResolvedValueOnce({
+        entry: recovered,
+        destination: { outcome: 'original', originalCollectionId: null },
+      });
+    useJournalStore.setState({
+      entriesById: { [tombstone.id]: tombstone },
+      entryIdsByDate: {},
+      entryIdsByCollection: {},
+      collectionsById: {},
+      recentlyDeleted: [],
+      timelineEntryIds: [],
+      timelineAnchorDate: null,
+      networkOnline: true,
+      online: true,
+      connectionStatus: 'connected',
+    });
+
+    await expect(journalActions.restoreEntry(tombstone.id)).rejects.toMatchObject({
+      code: 'network_error',
+    });
+    await expect(journalActions.restoreEntry(tombstone.id)).resolves.toMatchObject({
+      entry: recovered,
+    });
+
+    expect(restore).toHaveBeenCalledTimes(2);
+    expect(restore.mock.calls[0]?.[1]).toBe(restore.mock.calls[1]?.[1]);
+    expect(restore.mock.calls[0]?.[2]).toBe(tombstone.revision);
+  });
+
+  it('keeps an SSE tombstone that lands while Recovery is loading', async () => {
+    const original = entry(94, { id: canonicalId('50') });
+    const tombstone = {
+      ...original,
+      revision: 2,
+      deletedAt: '2026-07-31T10:00:00.000Z',
+      updatedAt: '2026-07-31T10:00:00.000Z',
+    };
+    let resolveRecovery!: (value: { items: [] }) => void;
+    vi.spyOn(journalApi, 'listRecentlyDeleted').mockReturnValue(
+      new Promise((resolve) => {
+        resolveRecovery = resolve;
+      }),
+    );
+    useJournalStore.setState({
+      entriesById: { [original.id]: original },
+      entryIdsByDate: { [original.date]: [original.id] },
+      entryIdsByCollection: {},
+      collectionsById: {},
+      recentlyDeleted: [],
+      timelineEntryIds: [original.id],
+      timelineAnchorDate: null,
+      networkOnline: true,
+      online: true,
+      connectionStatus: 'connected',
+    });
+
+    const loading = journalActions.loadRecovery();
+    await vi.waitFor(() => expect(journalApi.listRecentlyDeleted).toHaveBeenCalledOnce());
+    await applyChangeBatch(
+      {
+        transactionId: canonicalId('43'),
+        mutationId: null,
+        origin: { kind: 'app', deviceId: canonicalId('44') },
+        changes: [{ kind: 'entry.deleted', payload: tombstone }],
+      } as ChangeBatch,
+      'epoch:recovery-race',
+    );
+    resolveRecovery({ items: [] });
+    await loading;
+
+    expect(useJournalStore.getState().recentlyDeleted).toMatchObject([
+      { entry: { id: original.id, deletedAt: tombstone.deletedAt } },
+    ]);
+    expect(useJournalStore.getState().timelineEntryIds).not.toContain(original.id);
   });
 
   it('preserves the daily migration count when scheduling a monthly copy', async () => {
@@ -341,6 +426,7 @@ describe('journal store reconciliation', () => {
 
     expect(copy.migrations).toBe(3);
     expect(useJournalStore.getState().outbox[0]?.command.kind).toBe('entry.schedule');
+    expect(useJournalStore.getState().timelineEntryIds).not.toContain(copy.id);
   });
 
   it('detaches an offline migration copy from its source collection', async () => {
@@ -508,6 +594,119 @@ describe('journal store reconciliation', () => {
     expect(timeline).toHaveBeenLastCalledWith({ limit: 100, cursor: 'stable-cursor' });
     expect(useJournalStore.getState().timelineEntryIds).toHaveLength(101);
     expect(useJournalStore.getState().timelineNextCursor).toBeNull();
+  });
+
+  it('uses one Timeline eligibility rule for page rows and live collection moves', async () => {
+    const daily = entry(101, { id: canonicalId('51') });
+    const monthly = entry(102, {
+      id: canonicalId('52'),
+      collection: 'month:2026-07',
+    });
+    vi.spyOn(journalApi, 'timeline').mockResolvedValue({
+      items: [monthly, daily],
+      collections: [],
+      nextCursor: null,
+      today: '2026-07-31',
+      timezone: 'Europe/Amsterdam',
+    });
+    useJournalStore.setState({
+      entriesById: {},
+      entryIdsByDate: {},
+      entryIdsByCollection: {},
+      collectionsById: {},
+      outbox: [],
+      outboxCount: 0,
+      networkOnline: true,
+      online: true,
+      connectionStatus: 'connected',
+      timelineEntryIds: [],
+      timelineAnchorDate: null,
+      timelineLoaded: false,
+    });
+
+    await journalActions.loadTimeline();
+    expect(useJournalStore.getState().timelineEntryIds).toEqual([daily.id]);
+
+    const movedToMonth = { ...daily, collection: 'month:2026-07', revision: 2 };
+    await applyChangeBatch(
+      {
+        transactionId: canonicalId('45'),
+        mutationId: null,
+        origin: { kind: 'mcp', tokenLabel: 'Assistant' },
+        changes: [{ kind: 'entry.updated', payload: movedToMonth }],
+      } as ChangeBatch,
+      'epoch:timeline-month',
+    );
+    expect(useJournalStore.getState().timelineEntryIds).toEqual([]);
+
+    await applyChangeBatch(
+      {
+        transactionId: canonicalId('46'),
+        mutationId: null,
+        origin: { kind: 'mcp', tokenLabel: 'Assistant' },
+        changes: [
+          {
+            kind: 'entry.updated',
+            payload: { ...movedToMonth, collection: null, revision: 3 },
+          },
+        ],
+      } as ChangeBatch,
+      'epoch:timeline-daily',
+    );
+    expect(useJournalStore.getState().timelineEntryIds).toEqual([daily.id]);
+  });
+
+  it('does not let a delayed Timeline page resurrect an intervening tombstone', async () => {
+    const original = entry(103, { id: canonicalId('53') });
+    const tombstone = {
+      ...original,
+      revision: 2,
+      deletedAt: '2026-07-31T10:00:00.000Z',
+      updatedAt: '2026-07-31T10:00:00.000Z',
+    };
+    let resolveTimeline!: (value: Awaited<ReturnType<typeof journalApi.timeline>>) => void;
+    vi.spyOn(journalApi, 'timeline').mockReturnValue(
+      new Promise((resolve) => {
+        resolveTimeline = resolve;
+      }),
+    );
+    useJournalStore.setState({
+      entriesById: { [original.id]: original },
+      entryIdsByDate: { [original.date]: [original.id] },
+      entryIdsByCollection: {},
+      collectionsById: {},
+      outbox: [],
+      outboxCount: 0,
+      networkOnline: true,
+      online: true,
+      connectionStatus: 'connected',
+      timelineEntryIds: [original.id],
+      timelineAnchorDate: null,
+      timelineLoaded: false,
+    });
+
+    const loading = journalActions.loadTimeline();
+    await vi.waitFor(() => expect(journalApi.timeline).toHaveBeenCalledOnce());
+    await applyChangeBatch(
+      {
+        transactionId: canonicalId('47'),
+        mutationId: null,
+        origin: { kind: 'app', deviceId: canonicalId('48') },
+        changes: [{ kind: 'entry.deleted', payload: tombstone }],
+      } as ChangeBatch,
+      'epoch:timeline-race',
+    );
+    resolveTimeline({
+      items: [original],
+      collections: [],
+      nextCursor: null,
+      today: '2026-07-31',
+      timezone: 'Europe/Amsterdam',
+    });
+    await loading;
+
+    expect(useJournalStore.getState().entriesById[original.id]).toEqual(tombstone);
+    expect(useJournalStore.getState().timelineEntryIds).not.toContain(original.id);
   });
 
   it('anchors a future Timeline page without silently following its cursor', async () => {
@@ -1319,6 +1518,43 @@ describe('journal store reconciliation', () => {
     expect(state.outbox[0]?.command).toMatchObject({ kind: 'entry.update', id: pending.id });
     expect(state.deadLetters).toHaveLength(1);
     expect(state.deadLetters[0]?.code).toBe('revision_conflict');
+  });
+
+  it('restores Timeline and Recovery atomically when an optimistic delete dead-letters', async () => {
+    const original = entry(104, {
+      id: canonicalId('49'),
+      text: 'Keep visible after rejected delete',
+    });
+    mockBootstrap({ entries: [original] });
+    vi.spyOn(journalApi, 'deleteEntry').mockRejectedValue(
+      new ApiError(409, 'revision_conflict', 'The entry changed first.'),
+    );
+    useJournalStore.setState({
+      entriesById: { [original.id]: original },
+      entryIdsByDate: { [original.date]: [original.id] },
+      entryIdsByCollection: {},
+      collectionsById: {},
+      outbox: [],
+      outboxCount: 0,
+      deadLetters: [],
+      recentlyDeleted: [],
+      timelineEntryIds: [original.id],
+      timelineAnchorDate: null,
+      online: true,
+      networkOnline: true,
+      connectionStatus: 'connected',
+    });
+
+    await journalActions.deleteEntry(original.id);
+    await journalActions.flush();
+
+    const state = useJournalStore.getState();
+    expect(state.entriesById[original.id]).toEqual(original);
+    expect(state.timelineEntryIds).toContain(original.id);
+    expect(state.recentlyDeleted).toEqual([]);
+    expect(state.deadLetters).toMatchObject([
+      { code: 'revision_conflict', operation: 'entry.delete' },
+    ]);
   });
 
   it('retries an absent conflicted row without repeating its stale revision precondition', async () => {
