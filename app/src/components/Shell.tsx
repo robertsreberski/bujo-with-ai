@@ -122,6 +122,7 @@ export function Shell({
     journalStatus.persistence === 'available' ? 'saved on this device' : 'only in this open tab'
   }`;
   const pendingChangesSuffix = journalStatus.pendingChanges > 0 ? ` — ${pendingChanges}` : '';
+  const durableOfflineReady = offlineReady && journalStatus.persistence === 'available';
   const connectionNotice = (() => {
     switch (journalStatus.connection) {
       case 'initializing':
@@ -142,8 +143,8 @@ export function Shell({
           variant: 'statusOffline' as const,
           message:
             journalStatus.pendingChanges > 0
-              ? `${offlineReady ? 'Offline ready' : 'Offline'} — ${pendingChanges}`
-              : offlineReady
+              ? `${durableOfflineReady ? 'Offline ready' : 'Offline'} — ${pendingChanges}`
+              : durableOfflineReady
                 ? 'Offline ready — showing what is saved on this device'
                 : 'Offline — showing what is available on this device',
           action: null,

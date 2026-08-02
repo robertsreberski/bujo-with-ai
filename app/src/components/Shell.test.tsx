@@ -223,6 +223,7 @@ describe('Shell journal status', () => {
   it('never calls an IndexedDB failure saved and offers to retry it', () => {
     const retryLocalSave = vi.fn();
     renderShell({
+      offlineReady: true,
       journalStatus: {
         ...onlineStatus,
         connection: 'offline',
@@ -234,6 +235,7 @@ describe('Shell journal status', () => {
     });
 
     expect(screen.getByText(/Offline — 1 change only in this open tab/)).toBeInTheDocument();
+    expect(screen.queryByText(/Offline ready/)).not.toBeInTheDocument();
     expect(screen.queryByText(/1 change saved on this device/)).not.toBeInTheDocument();
     fireEvent.click(
       screen.getByRole('button', {
