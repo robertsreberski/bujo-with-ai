@@ -67,8 +67,12 @@ export type AgentTokenRecord = AgentToken;
 export type SearchEntriesInput = Omit<SearchInput, 'limit'> & {
   readonly limit?: number;
   readonly includeDeleted?: boolean;
-  /** Internal retrieval option: monthly planning destinations are not Timeline rows. */
-  readonly excludeMonthlyCollections?: boolean;
+  /**
+   * Internal retrieval option: a monthly log's undated inventory is not a
+   * Timeline row. One that names its day is — it belongs to that day as much
+   * as any other filing does.
+   */
+  readonly excludeUndatedMonthlyCollections?: boolean;
   readonly offset?: number;
 };
 
@@ -131,6 +135,11 @@ export interface CreateEntryInput {
   readonly time?: string | null;
   readonly tags?: readonly string[];
   readonly collection?: string | null;
+  /**
+   * Overrides the default reading of `date` for a filing. Omitted, a supplied
+   * `date` states the day and an absent one leaves the entry undated.
+   */
+  readonly dateStated?: boolean;
   readonly source?: string;
   readonly summaryWeekStart?: string;
   readonly reflectionAction?: 'claim' | 'complete' | 'fail';

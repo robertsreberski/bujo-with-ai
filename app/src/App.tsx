@@ -22,7 +22,7 @@ import type {
 } from './components/types';
 import { isTextEntryTarget, useViewportLayout } from './hooks/use-viewport-layout';
 import { useJournalRoute } from './routes/useJournalRoute';
-import { DEFAULT_LOG_VIEW } from './domain/log-arrangement';
+import { DEFAULT_LOG_VIEW, DEFAULT_MONTH_LOG_VIEW } from './domain/log-arrangement';
 import { claimJournalInstallGuidance, observeJournalInstallGuidance } from './pwa/install';
 import { createUlid } from './store/ids';
 import {
@@ -673,8 +673,11 @@ export default function App() {
             collections={collections}
             summary={store.summariesByMonth[displayedMonth] ?? null}
             preferences={preferences}
-            logView={store.monthLogView ?? DEFAULT_LOG_VIEW}
+            logView={store.monthLogView ?? DEFAULT_MONTH_LOG_VIEW}
             onLogViewChange={journalActions.setMonthLogView}
+            monthReviewDismissed={store.monthReviewDismissed}
+            onStartMonthReview={setMigrationEntries}
+            onDismissMonthReview={journalActions.dismissMonthReview}
             onMonthChange={(month) => navigate({ name: 'month', month })}
             onDaySelect={(date) => {
               if (date === store.today) {
@@ -948,6 +951,7 @@ export default function App() {
         {migrationEntries ? (
           <MigrationDialog
             entries={migrationEntries}
+            scheduleMonth={store.today.slice(0, 7)}
             onClose={() => setMigrationEntries(null)}
             onMigrate={acceptMigration}
             onSchedule={acceptSchedule}

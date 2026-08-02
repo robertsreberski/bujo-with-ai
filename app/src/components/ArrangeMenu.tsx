@@ -24,6 +24,11 @@ interface ArrangeMenuProps {
   onChange: (config: LogViewConfig) => void;
   /** Names the trigger and the surface, e.g. "Arrange monthly log". */
   label: string;
+  /**
+   * What Reset returns to, and what counts as unarranged. Surfaces differ: a
+   * monthly log opens split into its two pages, a flat collection as one list.
+   */
+  defaultView?: LogViewConfig;
   /** Stable class the surface carries in both forms, for e2e. */
   marker?: string;
 }
@@ -37,12 +42,13 @@ export function ArrangeMenu({
   config,
   onChange,
   label,
+  defaultView = DEFAULT_LOG_VIEW,
   marker = 'arrange-menu',
 }: ArrangeMenuProps) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const view = normalizeLogView(config);
-  const filtered = !isDefaultLogView(view);
+  const filtered = !isDefaultLogView(view, defaultView);
   const checkedTypes: readonly EntryType[] = view.types.length === 0 ? ENTRY_TYPES : view.types;
 
   const emit = (next: LogViewConfig) => onChange(normalizeLogView(next));
@@ -134,6 +140,7 @@ export function ArrangeMenu({
             Group
           </p>
           {radioRow('None', view.group === 'none', () => emit({ ...view, group: 'none' }))}
+          {radioRow('By day', view.group === 'day', () => emit({ ...view, group: 'day' }))}
           {radioRow('By type', view.group === 'type', () => emit({ ...view, group: 'type' }))}
         </div>
         <div role="group" aria-label="Show">
@@ -174,7 +181,7 @@ export function ArrangeMenu({
             className={cn(ROW, 'mt-1 border-t border-bg-line text-fg-mute')}
             type="button"
             role="menuitem"
-            onClick={() => emit(DEFAULT_LOG_VIEW)}
+            onClick={() => emit(defaultView)}
           >
             Reset to defaults
           </button>

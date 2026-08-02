@@ -84,16 +84,25 @@ export function TimelineView({
     () => [...new Map(entries.map((entry) => [entry.id, entry])).values()],
     [entries],
   );
-  const dailyEntries = useMemo(
-    () => timelineEntries.filter((entry) => entry.collection === null),
-    [timelineEntries],
-  );
+  // The migration queue, mirroring the server's own leftovers rule: the daily
+  // log, plus the monthly-log tasks that named a day and let it pass. Other
+  // collections are reference material and are not nagged about.
   const leftovers = useMemo(
     () =>
-      dailyEntries
-        .filter((entry) => entry.type === 'task' && entry.state === 'open' && entry.date < today)
+      timelineEntries
+        .filter(
+          (entry) =>
+            (entry.collection === null || entry.collection.startsWith('month:')) &&
+            entry.type === 'task' &&
+            entry.state === 'open' &&
+            entry.date < today,
+        )
         .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt)),
-    [dailyEntries, today],
+    [timelineEntries, today],
+  );
+  const monthLogLeftovers = useMemo(
+    () => leftovers.filter((entry) => entry.collection !== null).length,
+    [leftovers],
   );
   const sections = useMemo(() => {
     const grouped = new Map<string, JournalEntry[]>();
@@ -239,6 +248,12 @@ export function TimelineView({
               {leftovers.length} {leftovers.length === 1 ? 'task' : 'tasks'} from an earlier day{' '}
               {leftovers.length === 1 ? 'is' : 'are'} still open
             </h2>
+            {monthLogLeftovers > 0 ? (
+              <p className="pt-0.5 text-sm leading-[1.5] text-fg-mute">
+                {leftovers.length - monthLogLeftovers} from the daily log · {monthLogLeftovers} from
+                a monthly log
+              </p>
+            ) : null}
             <p className="pt-0.5 text-sm leading-[1.5] text-fg-mute">
               Decide what to do with each one: move it to today, finish it, or drop it.
             </p>

@@ -55,9 +55,19 @@ async function seedOwnerEntry(
     tags?: string[];
     collection?: string | null;
     date?: string;
+    /**
+     * Files without naming a day — the month's inventory rather than something
+     * that happens on a date. Only meaningful alongside a collection.
+     */
+    undated?: boolean;
   },
 ): Promise<string> {
   const id = ulid();
+  const context = {
+    baseToday: server.today,
+    capturedAt: new Date().toISOString(),
+    timezone: server.timezone,
+  };
   const created = await request.post('/api/entries', {
     data: {
       id,
@@ -66,20 +76,11 @@ async function seedOwnerEntry(
       time: null,
       tags: entry.tags ?? [],
       collection: entry.collection ?? null,
-      dateIntent: entry.date
-        ? {
-            kind: 'absolute',
-            date: entry.date,
-            baseToday: server.today,
-            capturedAt: new Date().toISOString(),
-            timezone: server.timezone,
-          }
-        : {
-            kind: 'today',
-            baseToday: server.today,
-            capturedAt: new Date().toISOString(),
-            timezone: server.timezone,
-          },
+      dateIntent: entry.undated
+        ? { kind: 'unstated', ...context }
+        : entry.date
+          ? { kind: 'absolute', date: entry.date, ...context }
+          : { kind: 'today', ...context },
     },
     headers: { 'Idempotency-Key': ulid(), Origin: baseURL! },
   });
@@ -697,11 +698,13 @@ test('the monthly log collapses done work and the arrange menu narrows it', asyn
     text: keep,
     type: 'task',
     collection,
+    undated: true,
   });
   const finishId = await seedOwnerEntry(context.request, baseURL, server, {
     text: finish,
     type: 'task',
     collection,
+    undated: true,
   });
 
   await openJournal(page);
@@ -747,6 +750,82 @@ test('the monthly log collapses done work and the arrange menu narrows it', asyn
   await page.keyboard.press('Escape');
   await expect(monthlyLog.getByText(keep, { exact: true })).toBeVisible();
   await expect(monthlyLog.getByText(finish, { exact: true })).toBeHidden();
+});
+
+test('a monthly-log task that names a day meets that day, and can be pulled into it', async ({
+  baseURL,
+  context,
+  page,
+}) => {
+  const server = await pairAndBootstrap(context, baseURL);
+  const month = server.today.slice(0, 7);
+  const collection = `month:${month}`;
+  const inventory = uniqueText('Book flights');
+  const dueToday = uniqueText('File the tax extension');
+  await seedOwnerEntry(context.request, baseURL, server, {
+    text: inventory,
+    type: 'task',
+    collection,
+    undated: true,
+  });
+  await seedOwnerEntry(context.request, baseURL, server, {
+    text: dueToday,
+    type: 'task',
+    collection,
+    date: server.today,
+  });
+
+  // The dated one belongs to today, so it shows in the timeline beside the
+  // daily log, named by the month it came from. The inventory item does not.
+  await openJournal(page);
+  const timeline = page.getByRole('region', { name: 'Timeline' });
+  const datedRow = timeline.locator('.entry-row', { hasText: dueToday });
+  await expect(datedRow).toBeVisible();
+  await expect(datedRow.locator('.entry-row__destination')).toHaveText(/\w/);
+  await expect(timeline.getByText(inventory, { exact: true })).toHaveCount(0);
+
+  // The month spread keeps both, split into the two pages it has always been.
+  // Exact naming matters here: the whole screen is labelled "<Month> monthly
+  // log", which substring-matches the section inside it.
+  await page.getByRole('button', { name: 'Month', exact: true }).click();
+  const monthlyLog = page.getByRole('region', { name: 'Monthly log', exact: true });
+  await expect(
+    monthlyLog.getByRole('heading', { level: 3, name: /^On a day \(\d+\)$/ }),
+  ).toBeVisible();
+  await expect(
+    monthlyLog.getByRole('heading', { level: 3, name: /^This month \(\d+\)$/ }),
+  ).toBeVisible();
+  await expect(monthlyLog.getByText(dueToday, { exact: true })).toBeVisible();
+  await expect(monthlyLog.getByText(inventory, { exact: true })).toBeVisible();
+
+  // The same dated row is also the month's own timeline, which claims to show
+  // every dated entry; the inventory item is correctly absent from it.
+  const monthTimeline = page.getByRole('region', { name: 'Month timeline', exact: true });
+  await expect(monthTimeline.getByText(dueToday, { exact: true })).toBeVisible();
+  await expect(monthTimeline.getByText(inventory, { exact: true })).toHaveCount(0);
+
+  // Pulling it into today is the paper `>`: a daily copy, and a tombstone
+  // left behind in the month log pointing at it.
+  await monthlyLog.getByRole('button', { name: dueToday, exact: true }).click();
+  await page.getByRole('button', { name: 'Move to today' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(monthlyLog.getByText(/^Done & moved \(\d+\)$/)).toBeVisible();
+
+  // Today then holds both halves of that move, the way the crossed-out line and
+  // its rewrite sit on facing pages: a live daily copy carrying no destination,
+  // and the monthly-log shell beside it, still dated today and marked moved.
+  await page.getByRole('button', { name: 'Timeline', exact: true }).click();
+  const copy = timeline.locator('.entry-row', { hasText: dueToday }).filter({
+    has: page.getByRole('button', { name: `Mark as done: ${dueToday}` }),
+  });
+  await expect(copy).toHaveCount(1);
+  await expect(copy.locator('.entry-row__destination')).toHaveCount(0);
+
+  const tombstone = timeline.locator('.entry-row', { hasText: dueToday }).filter({
+    has: page.getByRole('button', { name: `Open task: ${dueToday}` }),
+  });
+  await expect(tombstone.locator('.entry-row__destination')).toHaveText(/August|\w+ \d{4}/);
+  await expect(tombstone).toContainText('Moved forward');
 });
 
 test('an unknown /slug mints its collection, files the capture, and the toast opens it', async ({

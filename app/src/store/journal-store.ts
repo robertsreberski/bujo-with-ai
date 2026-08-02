@@ -243,6 +243,7 @@ function recordFromState(
     seenActivityIds: state.seenActivityIds,
     monthLogView: state.monthLogView,
     collectionLogView: state.collectionLogView,
+    monthReviewDismissed: state.monthReviewDismissed,
     timeline: {
       loaded: state.timelineLoaded,
       entryIds: state.timelineEntryIds,
@@ -1617,10 +1618,20 @@ export function createCaptureContext(
   dateIntent: DateIntent;
   targetDate: string;
 } {
-  const targetDate =
-    input.dateShift === 'tomorrow' ? addCalendarDays(state.today, 1) : (input.date ?? state.today);
-  const kind =
-    targetDate === state.serverToday
+  // "No day named" is a distinct intent from "the day is today", and only the
+  // capture knows which it was. Sent as `today`, the server would have no way
+  // to tell a filing meant for the 2nd from one merely filed on the 2nd. An
+  // unstated filing takes the server's day, which is what `unstated` resolves
+  // to, so the optimistic row already holds the date the server will stamp.
+  const unstated = input.dateStated === false;
+  const targetDate = unstated
+    ? state.serverToday
+    : input.dateShift === 'tomorrow'
+      ? addCalendarDays(state.today, 1)
+      : (input.date ?? state.today);
+  const kind = unstated
+    ? 'unstated'
+    : targetDate === state.serverToday
       ? 'today'
       : targetDate === addCalendarDays(state.serverToday, 1)
         ? 'tomorrow'
@@ -1746,6 +1757,7 @@ async function initializeJournal(): Promise<void> {
         seenActivityIds: saved.seenActivityIds ?? [],
         monthLogView: hydrateLogView(saved.monthLogView),
         collectionLogView: hydrateLogView(saved.collectionLogView),
+        monthReviewDismissed: saved.monthReviewDismissed ?? null,
         activityHasMore: saved.mirror.activityOrder.length >= 50,
         activityNextCursor:
           saved.mirror.activityById[saved.mirror.activityOrder.at(-1) ?? '']?.at ?? null,
@@ -1789,6 +1801,7 @@ async function initializeJournal(): Promise<void> {
         seenActivityIds: [],
         monthLogView: null,
         collectionLogView: null,
+        monthReviewDismissed: null,
         activityHasMore: false,
         activityNextCursor: null,
         timelineEntryIds: [],
@@ -2029,6 +2042,7 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
     seenActivityIds: [],
     monthLogView: null,
     collectionLogView: null,
+    monthReviewDismissed: null,
     initialize: initializeJournal,
     shutdown: shutdownJournal,
     ...createActivityEnrichmentActions({
@@ -2052,6 +2066,10 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
     },
     setCollectionLogView: (config) => {
       set({ collectionLogView: config });
+      persistSoon();
+    },
+    dismissMonthReview: (month) => {
+      set({ monthReviewDismissed: month });
       persistSoon();
     },
     setDraft: (draft) => {
@@ -2079,6 +2097,7 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
         source: null,
         migrations: 0,
         collection: input.collection ?? null,
+        dateStated: context.dateIntent.kind !== 'unstated',
         createdAt: at,
         updatedAt: at,
         revision: 1,
@@ -2151,6 +2170,8 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
         date: target ?? get().today,
         state: 'open',
         collection: null,
+        // Pulled back onto a day, so the day is the log and states itself.
+        dateStated: true,
         migrations: entry.migrations + 1,
         createdAt: at,
         updatedAt: at,
@@ -2181,6 +2202,9 @@ export const useJournalStore: UseBoundStore<StoreApi<JournalState>> = create<Jou
         date: get().today,
         state: 'open',
         collection: collectionId,
+        // Mirrors the server: scheduling moves a task into the month's
+        // inventory, so the copy names no day and stays off the Timeline.
+        dateStated: false,
         migrations: entry.migrations,
         createdAt: at,
         updatedAt: at,
@@ -2354,6 +2378,7 @@ export const journalActions = {
     useJournalStore.getState().setMonthLogView(config),
   setCollectionLogView: (config: LogViewConfig | null): void =>
     useJournalStore.getState().setCollectionLogView(config),
+  dismissMonthReview: (month: string): void => useJournalStore.getState().dismissMonthReview(month),
   setDefaultType: (type: EntryType): void => useJournalStore.getState().setDefaultType(type),
   searchEntries: (query: string, cursor?: string): Promise<JournalSearchPage> =>
     useJournalStore.getState().searchEntries(query, cursor),

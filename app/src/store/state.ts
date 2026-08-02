@@ -104,6 +104,8 @@ export interface JournalDataState extends MirrorData {
   monthLogView: LogViewConfig | null;
   /** One shared per-device arrangement for every collection screen. */
   collectionLogView: LogViewConfig | null;
+  /** The month whose start-of-month review has been waved off, as `YYYY-MM`. */
+  monthReviewDismissed: string | null;
   composerPreset: { destination: Destination | null; nonce: number } | null;
 }
 
@@ -113,6 +115,7 @@ export interface JournalActions {
   /** @deprecated Compatibility alias for markAllActivitySeen. */
   markReviewSeen(): void;
   setMonthLogView(config: LogViewConfig | null): void;
+  dismissMonthReview(month: string): void;
   setCollectionLogView(config: LogViewConfig | null): void;
   initialize(): Promise<void>;
   shutdown(): void;

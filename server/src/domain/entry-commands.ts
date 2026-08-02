@@ -366,6 +366,7 @@ export class EntryCommands {
           source: before.source,
           migrations: before.migrations + 1,
           collection: null,
+          dateStated: true,
         },
         context.now,
       );
@@ -426,6 +427,10 @@ export class EntryCommands {
             source: before.source,
             migrations: before.migrations,
             collection: collectionId,
+            // Scheduling moves a task off the calendar and into the month's
+            // inventory — the paper `<`. Keeping the day stated would put the
+            // copy straight back on today's timeline, looping the two logs.
+            dateStated: false,
           },
           context.now,
         );
@@ -477,6 +482,9 @@ export class EntryCommands {
             ...before,
             collection: collectionId,
             date: options.filingDate ?? (collectionId === null ? before.date : this.today()),
+            // Filing states a day only when one was given. Returning an entry
+            // to the daily log always does, since the day is then the log.
+            dateStated: collectionId === null || options.filingDate !== undefined,
           },
           context.now,
         );
@@ -607,6 +615,10 @@ function normalizeCreateEntry(
     source,
     migrations: 0,
     collection,
+    // A daily log's day is the log itself. A filing states its day only when
+    // one was named: left unsaid, the entry belongs to the collection rather
+    // than to the day it happened to be captured on.
+    dateStated: collection === null ? true : (input.dateStated ?? input.date !== undefined),
   };
 }
 
@@ -636,7 +648,18 @@ function normalizePatchedEntry(before: Entry, patchInput: EntryPatch): Entry {
     collection: patch.collection === undefined ? before.collection : patch.collection,
   };
   if (entry.collection !== null) validateCollectionId(entry.collection);
-  return EntrySchema.parse(entry);
+  return EntrySchema.parse({ ...entry, dateStated: patchedDateStated(before, patch, entry) });
+}
+
+/**
+ * Naming a day states it; leaving a collection restores the invariant that a
+ * daily-log entry always states its day. An explicit `dateStated` outranks
+ * both, so a day can be taken back without also having to clear the date.
+ */
+function patchedDateStated(before: Entry, patch: EntryPatch, next: Pick<Entry, 'collection'>) {
+  if (patch.dateStated !== undefined) return patch.dateStated;
+  if (next.collection === null) return true;
+  return patch.date !== undefined ? true : before.dateStated;
 }
 
 function normalizeEntryText(value: string): string {

@@ -41,6 +41,7 @@ function entry(index: number, patch: Partial<Entry> = {}): Entry {
     source: null,
     migrations: 0,
     collection: null,
+    dateStated: true,
     createdAt: new Date(Date.UTC(2026, 6, 31, 8, 0, 0, index)).toISOString(),
     updatedAt: new Date(Date.UTC(2026, 6, 31, 8, 0, 0, index)).toISOString(),
     revision: 1,
@@ -598,9 +599,11 @@ describe('journal store reconciliation', () => {
 
   it('uses one Timeline eligibility rule for page rows and live collection moves', async () => {
     const daily = entry(101, { id: canonicalId('51') });
+    // Undated monthly inventory: filed to the month, belonging to no day.
     const monthly = entry(102, {
       id: canonicalId('52'),
       collection: 'month:2026-07',
+      dateStated: false,
     });
     vi.spyOn(journalApi, 'timeline').mockResolvedValue({
       items: [monthly, daily],
@@ -627,7 +630,13 @@ describe('journal store reconciliation', () => {
     await journalActions.loadTimeline();
     expect(useJournalStore.getState().timelineEntryIds).toEqual([daily.id]);
 
-    const movedToMonth = { ...daily, collection: 'month:2026-07', revision: 2 };
+    // Filing states no day, which is what the server's fileEntry records.
+    const movedToMonth = {
+      ...daily,
+      collection: 'month:2026-07',
+      dateStated: false,
+      revision: 2,
+    };
     await applyChangeBatch(
       {
         transactionId: canonicalId('45'),
@@ -647,13 +656,56 @@ describe('journal store reconciliation', () => {
         changes: [
           {
             kind: 'entry.updated',
-            payload: { ...movedToMonth, collection: null, revision: 3 },
+            payload: { ...movedToMonth, collection: null, dateStated: true, revision: 3 },
           },
         ],
       } as ChangeBatch,
       'epoch:timeline-daily',
     );
     expect(useJournalStore.getState().timelineEntryIds).toEqual([daily.id]);
+  });
+
+  it('admits a monthly-log row that names its day, and drops it again when the day is taken back', async () => {
+    const dated = entry(104, {
+      id: canonicalId('54'),
+      collection: 'month:2026-07',
+      dateStated: true,
+    });
+    vi.spyOn(journalApi, 'timeline').mockResolvedValue({
+      items: [dated],
+      collections: [],
+      nextCursor: null,
+      today: '2026-07-31',
+      timezone: 'Europe/Amsterdam',
+    });
+    useJournalStore.setState({
+      entriesById: {},
+      entryIdsByDate: {},
+      entryIdsByCollection: {},
+      collectionsById: {},
+      outbox: [],
+      outboxCount: 0,
+      networkOnline: true,
+      online: true,
+      connectionStatus: 'connected',
+      timelineEntryIds: [],
+      timelineAnchorDate: null,
+      timelineLoaded: false,
+    });
+
+    await journalActions.loadTimeline();
+    expect(useJournalStore.getState().timelineEntryIds).toEqual([dated.id]);
+
+    await applyChangeBatch(
+      {
+        transactionId: canonicalId('47'),
+        mutationId: null,
+        origin: { kind: 'mcp', tokenLabel: 'Assistant' },
+        changes: [{ kind: 'entry.updated', payload: { ...dated, dateStated: false, revision: 2 } }],
+      } as ChangeBatch,
+      'epoch:timeline-undated',
+    );
+    expect(useJournalStore.getState().timelineEntryIds).toEqual([]);
   });
 
   it('does not let a delayed Timeline page resurrect an intervening tombstone', async () => {

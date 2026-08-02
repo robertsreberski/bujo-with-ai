@@ -22,6 +22,7 @@ const entry = (overrides: Partial<JournalEntry> & { id: string }): JournalEntry 
   source: null,
   migrations: 0,
   collection: 'month:2026-08',
+  dateStated: false,
   createdAt: '2026-08-05T10:00:00.000Z',
   updatedAt: '2026-08-05T10:00:00.000Z',
   revision: 1,
@@ -235,5 +236,51 @@ describe('hydrateLogView', () => {
       view({ sort: 'newest', types: ['task'] }),
     );
     expect(hydrateLogView(DEFAULT_LOG_VIEW)).toEqual(DEFAULT_LOG_VIEW);
+  });
+});
+
+describe('arrangeLog grouped by day', () => {
+  const dated = (id: string, date: string) => entry({ id, date, dateStated: true });
+  const inventory = (id: string) => entry({ id, dateStated: false });
+
+  it('splits a monthly log into its calendar page and its task page', () => {
+    const arrangement = arrangeLog(
+      [inventory('b'), dated('a', '2026-08-14'), inventory('c'), dated('d', '2026-08-02')],
+      view({ group: 'day' }),
+      { undatedLabel: 'This month' },
+    );
+
+    expect(arrangement.sections.map((section) => section.label)).toEqual([
+      'On a day (2)',
+      'This month (2)',
+    ]);
+    // The calendar page reads day 1 up; the task page keeps capture order.
+    expect(ids(arrangement.sections[0]!.entries)).toEqual(['d', 'a']);
+    expect(ids(arrangement.sections[1]!.entries)).toEqual(['b', 'c']);
+  });
+
+  it('shows the date only where it means something', () => {
+    const arrangement = arrangeLog(
+      [dated('a', '2026-08-14'), inventory('b')],
+      view({ group: 'day' }),
+    );
+
+    expect(arrangement.sections.map((section) => section.showDate)).toEqual([true, false]);
+  });
+
+  it('drops a half that has nothing in it', () => {
+    expect(
+      arrangeLog([inventory('b')], view({ group: 'day' })).sections.map((s) => s.label),
+    ).toEqual(['No day (1)']);
+    expect(
+      arrangeLog([dated('a', '2026-08-14')], view({ group: 'day' })).sections.map((s) => s.label),
+    ).toEqual(['On a day (1)']);
+  });
+
+  it('measures "arranged" against the default the surface actually opens with', () => {
+    const monthDefault = view({ group: 'day' });
+    expect(isDefaultLogView(monthDefault, monthDefault)).toBe(true);
+    expect(isDefaultLogView(DEFAULT_LOG_VIEW, monthDefault)).toBe(false);
+    expect(isDefaultLogView(DEFAULT_LOG_VIEW)).toBe(true);
   });
 });

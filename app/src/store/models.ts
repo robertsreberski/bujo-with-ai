@@ -88,6 +88,12 @@ export interface JournalClientRecord {
   monthLogView?: LogViewConfig | null;
   /** One shared per-device arrangement for every collection screen. */
   collectionLogView?: LogViewConfig | null;
+  /**
+   * The month whose start-of-month review has been waved off, as `YYYY-MM`.
+   * Per-device like the arrangements: declining the ritual is a preference,
+   * not a fact about the journal.
+   */
+  monthReviewDismissed?: string | null;
   /** One bounded chronological page, retained so the Timeline works offline. */
   timeline?: {
     loaded: boolean;

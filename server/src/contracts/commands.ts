@@ -48,6 +48,12 @@ export const EntryPatchSchema = z
     collection: CollectionIdSchema.nullable()
       .optional()
       .describe('Replacement collection, or null to remove the entry from a collection.'),
+    dateStated: z
+      .boolean()
+      .optional()
+      .describe(
+        'Whether the entry belongs to its date. False leaves a filed entry undated inventory.',
+      ),
   })
   .refine((patch) => Object.keys(patch).length > 0, 'Patch must contain at least one field.');
 
@@ -68,6 +74,12 @@ export const CaptureContextSchema = z.strictObject(CaptureContextFields);
 export const DateIntentSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('today'), ...CaptureContextFields }),
   z.strictObject({ kind: z.literal('tomorrow'), ...CaptureContextFields }),
+  /**
+   * No day was named. Only a collection filing can be unstated — a capture aimed
+   * at a calendar day always has the screen's day to state. Resolves to the
+   * capture day so the row still sorts, but that day carries no intent.
+   */
+  z.strictObject({ kind: z.literal('unstated'), ...CaptureContextFields }),
   z.strictObject({
     kind: z.literal('absolute'),
     date: CalendarDateSchema,

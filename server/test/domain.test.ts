@@ -2590,4 +2590,118 @@ describe('JournalDomain summaries and credentials', () => {
     };
     expect(() => target.domain.importJournal(brokenReference)).toThrowError(/AI-authored summary/i);
   });
+
+  describe('a monthly log that names a day', () => {
+    it('states the day only when one was given, and never for the daily log', () => {
+      const { domain, owner, agent } = fixture();
+
+      const daily = domain.createEntry({ text: 'Call the plumber' }, owner);
+      const inventory = domain.createEntry(
+        { text: 'Book flights', collection: 'month:2026-07', source: 'From a test.' },
+        agent,
+      );
+      const dated = domain.createEntry(
+        {
+          text: 'File the tax extension',
+          collection: 'month:2026-07',
+          date: '2026-07-31',
+          source: 'From a test.',
+        },
+        agent,
+      );
+
+      expect(daily).toMatchObject({ kind: 'entry', entry: { dateStated: true } });
+      expect(inventory).toMatchObject({ kind: 'entry', entry: { dateStated: false } });
+      expect(dated).toMatchObject({ kind: 'entry', entry: { dateStated: true } });
+    });
+
+    it('keeps undated inventory out of the day while admitting the dated row', () => {
+      const { domain, owner, agent } = fixture();
+
+      domain.createEntry({ text: 'Call the plumber' }, owner);
+      domain.createEntry(
+        { text: 'Book flights', collection: 'month:2026-07', source: 'From a test.' },
+        agent,
+      );
+      domain.createEntry(
+        {
+          text: 'File the tax extension',
+          collection: 'month:2026-07',
+          date: '2026-07-31',
+          source: 'From a test.',
+        },
+        agent,
+      );
+
+      const day = domain.listDay('2026-07-31');
+      expect(day.entries.map((entry) => entry.text).sort()).toEqual([
+        'Call the plumber',
+        'File the tax extension',
+      ]);
+
+      const timeline = domain.pageEntries({ excludeUndatedMonthlyCollections: true, limit: 10 });
+      expect(timeline.items.map((entry) => entry.text).sort()).toEqual([
+        'Call the plumber',
+        'File the tax extension',
+      ]);
+    });
+
+    it('calls an overdue dated monthly task a leftover, and leaves inventory alone', () => {
+      const { domain, owner, agent, advance } = fixture();
+
+      domain.createEntry({ text: 'Yesterday task', date: '2026-07-30' }, owner);
+      domain.createEntry(
+        { text: 'Book flights', collection: 'month:2026-07', source: 'From a test.' },
+        agent,
+      );
+      domain.createEntry(
+        {
+          text: 'File the tax extension',
+          collection: 'month:2026-07',
+          date: '2026-07-30',
+          source: 'From a test.',
+        },
+        agent,
+      );
+      advance(24 * 60 * 60 * 1000);
+
+      const day = domain.listDay('2026-08-01');
+      expect(day.leftovers.entries.map((entry) => entry.text).sort()).toEqual([
+        'File the tax extension',
+        'Yesterday task',
+      ]);
+    });
+
+    it('stands a scheduled copy down to inventory so it cannot bounce back', () => {
+      const { domain, owner } = fixture();
+
+      const created = domain.createEntry({ text: 'Renew the passport' }, owner);
+      if (created.kind !== 'entry') throw new Error('expected an entry');
+      const scheduled = domain.scheduleMonthly(
+        created.entry.id,
+        { copyId: ulid(), month: '2026-07' },
+        owner,
+      );
+
+      expect(scheduled.copy).toMatchObject({ collection: 'month:2026-07', dateStated: false });
+      expect(domain.listDay('2026-07-31').entries.map((entry) => entry.id)).not.toContain(
+        scheduled.copy.id,
+      );
+    });
+
+    it('restores the invariant when a filing is pulled back onto a day', () => {
+      const { domain, agent, owner } = fixture();
+
+      const filed = domain.createEntry(
+        { text: 'Ship the atlas spec', collection: 'month:2026-07', source: 'From a test.' },
+        agent,
+      );
+      if (filed.kind !== 'entry') throw new Error('expected an entry');
+      expect(filed.entry.dateStated).toBe(false);
+
+      const pulled = domain.migrateEntry(filed.entry.id, { newEntryId: ulid() }, owner);
+      expect(pulled.copy).toMatchObject({ collection: null, dateStated: true });
+      expect(pulled.original.state).toBe('migrated');
+    });
+  });
 });

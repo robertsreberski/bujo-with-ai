@@ -4,10 +4,13 @@ import { Icon } from './Icon';
 import { Button } from './ui/button';
 import { ACTION_GRID, DIALOG_ACTIONS_END } from './ui/dialog-classes';
 import { formatLongDate } from './dates';
+import { monthCollectionLabel } from './entry-actions';
 import type { JournalEntry } from './types';
 
 interface MigrationDialogProps {
   entries: JournalEntry[];
+  /** The month `onSchedule` files into, so the queue cannot offer a no-op. */
+  scheduleMonth: string;
   onClose: () => void;
   onMigrate: (entry: JournalEntry) => Promise<void>;
   onUpdate: (entry: JournalEntry, state: 'done' | 'cancelled') => Promise<void>;
@@ -19,6 +22,7 @@ type PendingAction = 'migrate' | 'done' | 'schedule' | 'drop';
 
 export function MigrationDialog({
   entries,
+  scheduleMonth,
   onClose,
   onMigrate,
   onUpdate,
@@ -99,6 +103,11 @@ export function MigrationDialog({
         </h3>
         <p className="pt-1 text-xs text-fg-mute">
           From {formatLongDate(current.date)}
+          {/* The queue mixes the daily log with monthly-log tasks that let
+              their day pass, so a row has to say which one it came from. */}
+          {monthCollectionLabel(current.collection) === null
+            ? ''
+            : ` · ${monthCollectionLabel(current.collection)}`}
           {current.tags.length ? ` · ${current.tags.map((tag) => `#${tag}`).join(' ')}` : ''}
         </p>
         {current.migrations > 1 ? (
@@ -126,7 +135,10 @@ export function MigrationDialog({
         </Button>
         <Button
           variant="secondary"
-          disabled={pending !== null}
+          // Scheduling files a copy into the target month. A task already
+          // sitting in that log would get a second one beside it — the same
+          // rule buildEntryActions applies to `schedule-month`.
+          disabled={pending !== null || current.collection === `month:${scheduleMonth}`}
           onClick={() => void decide('schedule', () => onSchedule(current))}
         >
           <Icon name="calendar" size={14} />

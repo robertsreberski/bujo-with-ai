@@ -114,6 +114,7 @@ describe('store feature boundaries', () => {
         'createToken',
         'deleteEntry',
         'discardDeadLetter',
+        'dismissMonthReview',
         'flush',
         'focusComposer',
         'initialize',

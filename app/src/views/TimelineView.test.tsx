@@ -20,6 +20,7 @@ const entry: JournalEntry = {
   source: null,
   migrations: 0,
   collection: null,
+  dateStated: true,
   createdAt: '2026-08-03T08:00:00.000Z',
   updatedAt: '2026-08-03T08:00:00.000Z',
   revision: 1,
@@ -103,6 +104,49 @@ describe('TimelineView', () => {
     expect(container.querySelectorAll(`[data-day="${entry.date}"]`)).toHaveLength(1);
     expect(screen.getByText('Collection-only thought')).toBeInTheDocument();
     expect(screen.getByText('Projects')).toBeInTheDocument();
+  });
+
+  it('puts a dated monthly-log task in its day, labelled by its month', () => {
+    const monthly = {
+      ...entry,
+      id: '01J00000000000000000000003',
+      text: 'File the tax extension',
+      collection: 'month:2026-08',
+    };
+    const { container } = render(<TimelineView entries={[entry, monthly]} {...props} />);
+
+    expect(container.querySelectorAll(`[data-day="${entry.date}"] .entry-row`)).toHaveLength(2);
+    expect(screen.getByText('File the tax extension')).toBeInTheDocument();
+    expect(screen.getByText('August 2026')).toHaveClass('entry-row__destination');
+  });
+
+  it('counts an overdue monthly-log task as a leftover and says where it came from', () => {
+    const overdue = {
+      ...entry,
+      id: '01J00000000000000000000004',
+      text: 'Renew the passport',
+      date: '2026-07-29',
+      collection: 'month:2026-07',
+    };
+    const stale = { ...entry, id: '01J00000000000000000000005', date: '2026-07-30' };
+    render(<TimelineView entries={[stale, overdue]} {...props} />);
+
+    expect(
+      screen.getByRole('heading', { name: '2 tasks from an earlier day are still open' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('1 from the daily log · 1 from a monthly log')).toBeInTheDocument();
+  });
+
+  it('leaves a monthly-log task dated today out of the leftovers queue', () => {
+    const dueToday = {
+      ...entry,
+      id: '01J00000000000000000000006',
+      date: props.today,
+      collection: 'month:2026-07',
+    };
+    render(<TimelineView entries={[dueToday]} {...props} />);
+
+    expect(screen.queryByRole('button', { name: 'Review them' })).not.toBeInTheDocument();
   });
 
   it('names a future deep link as planning without adding an empty Today section', () => {

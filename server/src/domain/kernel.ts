@@ -44,6 +44,8 @@ export interface EntryRow {
   readonly source: string | null;
   readonly migrations: number;
   readonly collection: string | null;
+  /** SQLite has no boolean type; 1 when the day was chosen, 0 when defaulted. */
+  readonly date_stated: number;
   readonly created_at: string;
   readonly updated_at: string;
   readonly deleted_at: string | null;
@@ -218,6 +220,7 @@ export function mapEntry(row: EntryRow): Entry {
     source: row.source,
     migrations: row.migrations,
     collection: row.collection,
+    dateStated: row.date_stated !== 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     revision: row.revision,
@@ -348,13 +351,13 @@ export function insertEntry(
   });
   db.prepare(
     `INSERT INTO entries(
-      id,date,type,text,state,time,tags,author,source,migrations,collection,
+      id,date,type,text,state,time,tags,author,source,migrations,collection,date_stated,
       created_at,updated_at,deleted_at,revision
     ) VALUES (
-      @id,@date,@type,@text,@state,@time,@tags,@author,@source,@migrations,@collection,
+      @id,@date,@type,@text,@state,@time,@tags,@author,@source,@migrations,@collection,@dateStated,
       @createdAt,@updatedAt,@deletedAt,@revision
     )`,
-  ).run({ ...entry, tags: JSON.stringify(entry.tags) });
+  ).run(entryRowParameters(entry));
   return entry;
 }
 
@@ -370,11 +373,16 @@ export function replaceEntry(db: Database.Database, input: Entry, now: string): 
   db.prepare(
     `UPDATE entries SET
       date=@date,type=@type,text=@text,state=@state,time=@time,tags=@tags,author=@author,
-      source=@source,migrations=@migrations,collection=@collection,updated_at=@updatedAt,
-      deleted_at=@deletedAt,revision=@revision
+      source=@source,migrations=@migrations,collection=@collection,date_stated=@dateStated,
+      updated_at=@updatedAt,deleted_at=@deletedAt,revision=@revision
      WHERE id=@id`,
-  ).run({ ...entry, tags: JSON.stringify(entry.tags) });
+  ).run(entryRowParameters(entry));
   return entry;
+}
+
+/** better-sqlite3 binds neither arrays nor booleans; both need a scalar form. */
+function entryRowParameters(entry: Entry) {
+  return { ...entry, tags: JSON.stringify(entry.tags), dateStated: entry.dateStated ? 1 : 0 };
 }
 
 export function validateId(id: string): void {

@@ -23,6 +23,7 @@ const makeEntry = (patch: Partial<JournalEntry> = {}): JournalEntry => ({
   source: null,
   migrations: 0,
   collection: 'project-atlas',
+  dateStated: false,
   createdAt: '2026-07-31T09:00:00.000Z',
   updatedAt: '2026-07-31T09:00:00.000Z',
   revision: 1,

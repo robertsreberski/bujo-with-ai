@@ -5,8 +5,14 @@ import { EntryRow } from '../components/EntryRow';
 import { Icon } from '../components/Icon';
 import { Button } from '../components/ui/button';
 import { daysInMonth, formatLongDate, formatMonth, mondayStartOffset } from '../components/dates';
+import { destinationLabel } from '../components/destination';
 import { cn } from '../lib/utils';
-import { arrangeLog, logMetaLabel, type LogViewConfig } from '../domain/log-arrangement';
+import {
+  DEFAULT_MONTH_LOG_VIEW,
+  arrangeLog,
+  logMetaLabel,
+  type LogViewConfig,
+} from '../domain/log-arrangement';
 import {
   CALENDAR_DAY,
   CARD,
@@ -40,7 +46,17 @@ interface MonthViewProps {
   onRewriteSummary: (summary: JournalSummary) => void;
   onLogViewChange: (config: LogViewConfig) => void;
   onAddToMonthlyLog: () => void;
+  /** Null while the review has been waved off for this month. */
+  onStartMonthReview?: ((entries: JournalEntry[]) => void) | undefined;
+  onDismissMonthReview?: ((month: string) => void) | undefined;
+  monthReviewDismissed?: string | null;
 }
+
+const previousMonth = (month: string): string => {
+  const [year = 0, monthNumber = 1] = month.split('-').map(Number);
+  const value = new Date(year, monthNumber - 2, 1, 12);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}`;
+};
 
 const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
 
@@ -66,13 +82,20 @@ export function MonthView({
   onRewriteSummary,
   onLogViewChange,
   onAddToMonthlyLog,
+  onStartMonthReview,
+  onDismissMonthReview,
+  monthReviewDismissed = null,
 }: MonthViewProps) {
   const datedEntries = useMemo(
     () =>
       entries
         .filter(
           (entry) =>
-            entry.date.startsWith(`${month}-`) && entry.collection?.startsWith('month:') !== true,
+            entry.date.startsWith(`${month}-`) &&
+            // A monthly log's undated inventory has a date only because every
+            // row must; it is not a dated entry, so it stays out of the
+            // calendar counts and the month timeline. One that named its day is.
+            (entry.collection?.startsWith('month:') !== true || entry.dateStated),
         )
         .sort(
           (left, right) =>
@@ -118,12 +141,26 @@ export function MonthView({
       arrangeLog(
         entries.filter((entry) => entry.collection === `month:${month}`),
         logView,
+        { undatedLabel: 'This month' },
       ),
     [entries, month, logView],
   );
   // The month log is a server-owned collection, so an invite files into it by
   // id rather than by date — the same address the schedule action uses.
   const addToMonthlyLog = onAddToMonthlyLog;
+  // Setting up a new spread is where the paper method reviews the last one.
+  // Only the current month gets the prompt: browsing an old August is reading,
+  // not planning, and the daily banner already owns day-level leftovers.
+  const lastMonth = previousMonth(month);
+  const monthReview = useMemo(() => {
+    if (month !== today.slice(0, 7) || monthReviewDismissed === month) return [];
+    return entries.filter(
+      (entry) =>
+        entry.collection === `month:${lastMonth}` &&
+        (entry.type === 'task' || entry.type === 'habit') &&
+        entry.state === 'open',
+    );
+  }, [entries, lastMonth, month, monthReviewDismissed, today]);
   const habits = useMemo(() => {
     const names = [
       ...new Set(
@@ -250,7 +287,14 @@ export function MonthView({
                         <p className="border-b border-bg-line px-4 pt-2 text-2xs text-fg-mute">
                           Filed in{' '}
                           <span className="font-medium text-fg-mid">
-                            {destination?.name ?? `/${entry.collection}`}
+                            {/* A monthly log is server-owned and may not be in
+                                the mirror's collection list, so the shared
+                                labeller names it rather than a raw slug. */}
+                            {destinationLabel(
+                              { kind: 'collection', id: entry.collection },
+                              Object.fromEntries(collectionsById),
+                              today,
+                            )}
                           </span>
                           {destination?.archivedAt ? ' · archived' : ''}
                         </p>
@@ -272,6 +316,31 @@ export function MonthView({
         )}
       </section>
 
+      {monthReview.length > 0 && onStartMonthReview ? (
+        <aside className="mx-4 mt-[18px] flex items-start gap-[11px] rounded-lg border border-border px-[14px] py-[13px] text-fg-mute">
+          <Icon name="info" size={16} className="mt-0.5 flex-none" />
+          <div>
+            <h2 className="text-base font-medium text-fg">
+              {formatMonth(lastMonth)} left {monthReview.length}{' '}
+              {monthReview.length === 1 ? 'task' : 'tasks'} unfinished
+            </h2>
+            <p className="pt-0.5 text-sm leading-[1.5] text-fg-mute">
+              Carry them into {formatMonth(month)}, do them today, or let them go.
+            </p>
+            <div className="mt-[9px] flex gap-2">
+              <Button variant="primary" onClick={() => onStartMonthReview(monthReview)}>
+                Review {formatMonth(lastMonth)}
+              </Button>
+              {onDismissMonthReview ? (
+                <Button variant="secondary" onClick={() => onDismissMonthReview(month)}>
+                  Not now
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </aside>
+      ) : null}
+
       <section className={SECTION} aria-labelledby="monthly-log-title">
         <header className={SECTION_HEADING}>
           <div>
@@ -282,7 +351,12 @@ export function MonthView({
           </div>
           <div className="flex flex-none items-center gap-1.5">
             <span className={SECTION_COUNT}>{logMetaLabel(arrangement)}</span>
-            <ArrangeMenu config={logView} onChange={onLogViewChange} label="Arrange monthly log" />
+            <ArrangeMenu
+              config={logView}
+              onChange={onLogViewChange}
+              defaultView={DEFAULT_MONTH_LOG_VIEW}
+              label="Arrange monthly log"
+            />
             <Button
               variant="ghost"
               size="icon"

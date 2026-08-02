@@ -20,6 +20,7 @@ const task = (id: string, text: string): JournalEntry => ({
   source: null,
   migrations: 0,
   collection: null,
+  dateStated: true,
   createdAt: '2026-07-30T09:00:00.000Z',
   updatedAt: '2026-07-30T09:00:00.000Z',
   revision: 1,
@@ -44,6 +45,7 @@ describe('MigrationDialog', () => {
     render(
       <MigrationDialog
         entries={[first, second]}
+        scheduleMonth="2026-07"
         onClose={vi.fn()}
         onMigrate={onMigrate}
         onUpdate={onUpdate}
@@ -74,6 +76,7 @@ describe('MigrationDialog', () => {
     render(
       <MigrationDialog
         entries={[first, second]}
+        scheduleMonth="2026-07"
         onClose={vi.fn()}
         onMigrate={vi.fn().mockResolvedValue(undefined)}
         onUpdate={onUpdate}

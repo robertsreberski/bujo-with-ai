@@ -23,6 +23,7 @@ const renderMonth = (
   entries: JournalEntry[] = [],
   logView: LogViewConfig = DEFAULT_LOG_VIEW,
   collections: JournalCollection[] = [],
+  overrides: Partial<React.ComponentProps<typeof MonthView>> = {},
 ) =>
   render(
     <MonthView
@@ -34,6 +35,7 @@ const renderMonth = (
       preferences={{ density: 'comfortable', showTypeBadges: true, highlightAiEntries: true }}
       logView={logView}
       {...callbacks}
+      {...overrides}
     />,
   );
 
@@ -49,6 +51,7 @@ const logEntry = (id: string, patch: Partial<JournalEntry> = {}): JournalEntry =
   source: null,
   migrations: 0,
   collection: 'month:2026-08',
+  dateStated: false,
   createdAt: '2026-08-05T10:00:00.000Z',
   updatedAt: '2026-08-05T10:00:00.000Z',
   revision: 1,
@@ -125,6 +128,7 @@ describe('MonthView', () => {
       source: null,
       migrations: 0,
       collection: null,
+      dateStated: true,
       createdAt: '2026-08-03T08:00:00.000Z',
       updatedAt: '2026-08-03T08:00:00.000Z',
       revision: 1,
@@ -201,5 +205,84 @@ describe('MonthView', () => {
     const log = screen.getByRole('region', { name: 'Monthly log' });
     expect(within(log).getByText('Nothing matches the current arrangement.')).toBeInTheDocument();
     expect(within(log).getByText('0 of 1 items')).toBeInTheDocument();
+  });
+});
+
+describe('MonthView and the monthly log that names a day', () => {
+  const dated = (id: string, patch: Partial<JournalEntry> = {}) =>
+    logEntry(id, { dateStated: true, ...patch });
+
+  it('splits the monthly log into a calendar page and a task page', () => {
+    renderMonth(
+      [
+        logEntry('a', { text: 'Book flights' }),
+        dated('b', { text: 'File the tax extension', date: '2026-08-03' }),
+      ],
+      { ...DEFAULT_LOG_VIEW, group: 'day' },
+    );
+    const log = screen.getByRole('region', { name: 'Monthly log' });
+    expect(
+      within(log).getByRole('heading', { level: 3, name: 'On a day (1)' }),
+    ).toBeInTheDocument();
+    expect(
+      within(log).getByRole('heading', { level: 3, name: 'This month (1)' }),
+    ).toBeInTheDocument();
+  });
+
+  it('counts a dated monthly-log entry on the calendar and in the month timeline', () => {
+    renderMonth([
+      logEntry('a', { text: 'Book flights', date: '2026-08-03' }),
+      dated('b', { text: 'File the tax extension', date: '2026-08-03' }),
+    ]);
+
+    expect(
+      screen.getByRole('button', { name: /Monday, August 3 — 1 entries/i }),
+    ).toBeInTheDocument();
+    const timeline = screen.getByRole('region', { name: 'Month timeline' });
+    expect(within(timeline).getByText('File the tax extension')).toBeInTheDocument();
+    expect(within(timeline).queryByText('Book flights')).not.toBeInTheDocument();
+    expect(within(timeline).getByText('August 2026')).toBeInTheDocument();
+  });
+
+  it('offers last month’s unfinished tasks when setting up the current spread', () => {
+    const onStartMonthReview = vi.fn();
+    renderMonth(
+      [
+        logEntry('a', { collection: 'month:2026-07', text: 'Renew the passport' }),
+        logEntry('b', { collection: 'month:2026-07', text: 'Cancel the gym', state: 'done' }),
+      ],
+      DEFAULT_LOG_VIEW,
+      [],
+      { onStartMonthReview },
+    );
+
+    expect(
+      screen.getByRole('heading', { name: 'July 2026 left 1 task unfinished' }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Review July 2026' }));
+    expect(onStartMonthReview).toHaveBeenCalledWith([
+      expect.objectContaining({ text: 'Renew the passport' }),
+    ]);
+  });
+
+  it('stays quiet once the review is waved off, and while browsing an old month', () => {
+    const leftover = logEntry('a', {
+      collection: 'month:2026-07',
+      text: 'Renew the passport',
+    });
+    renderMonth([leftover], DEFAULT_LOG_VIEW, [], {
+      onStartMonthReview: vi.fn(),
+      monthReviewDismissed: '2026-08',
+    });
+    expect(
+      screen.queryByRole('heading', { name: /left 1 task unfinished/ }),
+    ).not.toBeInTheDocument();
+
+    cleanup();
+    renderMonth([logEntry('a', { collection: 'month:2026-06' })], DEFAULT_LOG_VIEW, [], {
+      month: '2026-07',
+      onStartMonthReview: vi.fn(),
+    });
+    expect(screen.queryByRole('heading', { name: /unfinished/ })).not.toBeInTheDocument();
   });
 });

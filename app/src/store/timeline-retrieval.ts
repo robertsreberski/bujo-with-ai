@@ -110,11 +110,16 @@ export function mergeIds(...groups: readonly (readonly string[])[]): string[] {
   return [...new Set(groups.flatMap((group) => [...group]))];
 }
 
-/** Single membership rule for the bounded Timeline projection. */
+/**
+ * Single membership rule for the bounded Timeline projection, and the mirror of
+ * the server's own predicate. A monthly log holds two kinds of thing: items that
+ * name a day, which belong to that day like any other filing, and undated
+ * inventory for the month, which belongs to no day at all.
+ */
 export function isTimelineEligible(entry: Entry, anchorDate: string | null): boolean {
   return (
     entry.deletedAt === null &&
-    !entry.collection?.startsWith('month:') &&
+    (!entry.collection?.startsWith('month:') || entry.dateStated) &&
     (anchorDate === null || entry.date <= anchorDate)
   );
 }
@@ -498,15 +503,22 @@ export function createTimelineRetrievalActions(
         throw new Error('Invalid calendar month.');
       }
       const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
-      const [daily, monthlyLog] = await Promise.all([
+      const previous = new Date(Date.UTC(year, monthNumber - 2, 1));
+      const previousMonth = `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, '0')}`;
+      const [daily, monthlyLog, previousLog] = await Promise.all([
         loadEntriesIntoMirror({
           from: `${month}-01`,
           to: `${month}-${String(lastDay).padStart(2, '0')}`,
         }),
         loadEntriesIntoMirror({ collection: `month:${month}` }),
+        // Setting up a spread means reviewing the one before it, so the month
+        // screen needs last month's log in hand to know whether to offer that.
+        loadEntriesIntoMirror({ collection: `month:${previousMonth}` }),
       ]);
       const loaded = [
-        ...new Map([...daily, ...monthlyLog].map((entry) => [entry.id, entry])).values(),
+        ...new Map(
+          [...daily, ...monthlyLog, ...previousLog].map((entry) => [entry.id, entry]),
+        ).values(),
       ];
       if (lifecycle !== runtime.lifecycleGeneration()) return loaded;
       if (runtime.pairingExpired()) {

@@ -165,6 +165,7 @@ describe('JournalDatabase and backups', () => {
         source: null,
         migrations: 0,
         collection: null,
+        dateStated: true,
         createdAt: '2026-07-21T08:00:00.000Z',
         updatedAt: '2026-07-21T08:00:00.000Z',
         revision: 1,
@@ -712,7 +713,7 @@ describe('JournalDatabase and backups', () => {
       now: () => new Date('2026-07-21T09:00:00.000Z'),
     });
     expect(upgraded.raw.prepare('SELECT max(version) FROM schema_migrations').pluck().get()).toBe(
-      7,
+      migrationVersions.at(-1),
     );
     expect(
       upgraded.raw

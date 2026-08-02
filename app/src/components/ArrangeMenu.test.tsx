@@ -33,7 +33,8 @@ describe('ArrangeMenu', () => {
   it('opens a menu of radio groups for sort, group, and show plus type checkboxes', () => {
     renderMenu();
     openMenu();
-    expect(screen.getAllByRole('menuitemradio')).toHaveLength(7);
+    // 2 sorts + 3 groups (none, by day, by type) + 3 show states.
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(8);
     expect(screen.getAllByRole('menuitemcheckbox')).toHaveLength(7);
     expect(screen.getByRole('menuitemradio', { name: 'Oldest first' })).toBeChecked();
     expect(screen.getByRole('menuitemradio', { name: 'None' })).toBeChecked();

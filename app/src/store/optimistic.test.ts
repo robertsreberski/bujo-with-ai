@@ -61,6 +61,7 @@ function entry(patch: Partial<Entry> = {}): Entry {
     source: null,
     migrations: 0,
     collection: null,
+    dateStated: true,
     createdAt: '2026-07-31T08:00:00.000Z',
     updatedAt: '2026-07-31T08:00:00.000Z',
     revision: 1,

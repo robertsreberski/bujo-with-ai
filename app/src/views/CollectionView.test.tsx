@@ -28,6 +28,7 @@ const entry = (id: string, patch: Partial<JournalEntry> = {}): JournalEntry => (
   source: null,
   migrations: 0,
   collection: collection.id,
+  dateStated: false,
   createdAt: '2026-08-05T10:00:00.000Z',
   updatedAt: '2026-08-05T10:00:00.000Z',
   revision: 1,

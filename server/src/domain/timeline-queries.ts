@@ -117,21 +117,29 @@ export class TimelineQueries {
 
   public listDay(date = this.today()): DayResult {
     validateDate(date);
+    // The same membership rule the Timeline uses, so an agent asked what is on
+    // for a day sees the day the owner sees. A filing that names this day
+    // belongs to it; a monthly log's undated inventory does not.
     const entries = (
       this.db
         .prepare(
-          `SELECT * FROM entries WHERE date = ? AND collection IS NULL AND deleted_at IS NULL
+          `SELECT * FROM entries WHERE date = ? AND deleted_at IS NULL
+             AND (collection IS NULL OR collection NOT LIKE 'month:%' OR date_stated = 1)
            ORDER BY created_at DESC, id DESC`,
         )
         .all(date) as EntryRow[]
     ).map(mapEntry);
     const isToday = date === this.today();
+    // Leftovers stay the owner's migration queue: the daily log, plus the
+    // monthly-log tasks that named a day and let it pass. Other collections
+    // are reference material and are not nagged about.
     const leftovers = isToday
       ? (
           this.db
             .prepare(
-              `SELECT * FROM entries WHERE date < ? AND collection IS NULL AND type = 'task'
-               AND state = 'open' AND deleted_at IS NULL ORDER BY date ASC, created_at ASC`,
+              `SELECT * FROM entries WHERE date < ? AND type = 'task'
+                 AND (collection IS NULL OR (collection LIKE 'month:%' AND date_stated = 1))
+                 AND state = 'open' AND deleted_at IS NULL ORDER BY date ASC, created_at ASC`,
             )
             .all(date) as EntryRow[]
         ).map(mapEntry)
@@ -173,8 +181,8 @@ function entryPredicate(input: SearchEntriesInput): { predicate: string; params:
   const where: string[] = [];
   const params: unknown[] = [];
   if (input.includeDeleted !== true) where.push('e.deleted_at IS NULL');
-  if (input.excludeMonthlyCollections === true) {
-    where.push("(e.collection IS NULL OR e.collection NOT LIKE 'month:%')");
+  if (input.excludeUndatedMonthlyCollections === true) {
+    where.push("(e.collection IS NULL OR e.collection NOT LIKE 'month:%' OR e.date_stated = 1)");
   }
   if (input.type !== undefined) addWhere(where, params, 'e.type = ?', input.type);
   if (input.state !== undefined) addWhere(where, params, 'e.state = ?', input.state);

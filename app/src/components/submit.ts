@@ -24,12 +24,12 @@ export interface SubmitPlan {
  * The date mapping mirrors `createCaptureContext`, which prefers `dateShift`
  * over `date`:
  *
- * | destination                | fields                            |
- * | -------------------------- | --------------------------------- |
- * | `{collection, id}`         | `collection: id`, `date` if stated|
- * | `{date}` equal to today    | `collection: null`                |
- * | `{date}` equal to tomorrow | `collection: null, dateShift`     |
- * | `{date}` any other day     | `collection: null, date`          |
+ * | destination                | fields                                  |
+ * | -------------------------- | --------------------------------------- |
+ * | `{collection, id}`         | `collection: id`, `date`/`dateStated`   |
+ * | `{date}` equal to today    | `collection: null`                      |
+ * | `{date}` equal to tomorrow | `collection: null, dateShift`           |
+ * | `{date}` any other day     | `collection: null, date`                |
  *
  * Tomorrow deliberately travels as `dateShift` rather than an absolute `date`:
  * an offline capture that replays after the browser rolls past midnight must
@@ -61,16 +61,15 @@ function entryInput(
     time: parsed.time,
     tags: parsed.tags,
   };
-  // A filed capture states its day only when the owner named one; left unsaid,
-  // the server still stamps the filing date. `dateShift` never travels with a
-  // collection — the shift intent exists to survive a midnight rollover on the
-  // daily log, and a collection filing has no day to roll over.
+  // A filed capture states its day only when the owner named one. Left unsaid,
+  // it becomes the collection's undated inventory: the server still stamps the
+  // filing date so the row sorts, but no dated view will claim it. `dateShift`
+  // never travels with a collection — the shift intent exists to survive a
+  // midnight rollover on the daily log, and a filing has no day to roll over.
   if (destination.kind === 'collection') {
-    return {
-      ...base,
-      collection: destination.id,
-      ...(resolved.statedDate === null ? {} : { date: resolved.statedDate }),
-    };
+    return resolved.statedDate === null
+      ? { ...base, collection: destination.id, dateStated: false }
+      : { ...base, collection: destination.id, date: resolved.statedDate };
   }
   if (destination.date === today) return { ...base, collection: null };
   if (destination.date === nextCalendarDate(today)) {

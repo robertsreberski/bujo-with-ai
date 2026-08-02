@@ -27,7 +27,11 @@ export interface ResolvedDestination {
 
 /** Persisted arrangement for monthly and collection logs. */
 export type LogSort = 'newest' | 'oldest';
-export type LogGroup = 'none' | 'type';
+/**
+ * `day` splits a monthly log into the two facing pages it has always been: the
+ * items that name a day, and the month's undated inventory.
+ */
+export type LogGroup = 'none' | 'type' | 'day';
 export type LogStateFilter = 'open' | 'all' | 'closed';
 
 export interface LogViewConfig {
@@ -42,6 +46,17 @@ export interface LogViewConfig {
 export const DEFAULT_LOG_VIEW: LogViewConfig = Object.freeze({
   sort: 'oldest',
   group: 'none',
+  stateFilter: 'open',
+  types: [],
+});
+
+/**
+ * The monthly log's own default. A flat collection is one list; a monthly log
+ * is a calendar page and a task page, so it opens split.
+ */
+export const DEFAULT_MONTH_LOG_VIEW: LogViewConfig = Object.freeze({
+  sort: 'oldest',
+  group: 'day',
   stateFilter: 'open',
   types: [],
 });
@@ -169,6 +184,12 @@ export interface CreateEntryInput {
   collection?: string | null;
   date?: string;
   dateShift?: 'tomorrow' | null;
+  /**
+   * False when the capture named no day, which only a collection filing can do.
+   * The entry still gets the capture day so it sorts, but that day is not a
+   * claim about when it belongs, and dated views leave it alone.
+   */
+  dateStated?: boolean;
   /** Accepted for view-model compatibility; the server owns initial state. */
   state?: Entry['state'];
 }

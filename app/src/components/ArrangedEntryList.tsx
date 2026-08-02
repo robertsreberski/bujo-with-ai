@@ -41,11 +41,13 @@ export function ArrangedEntryList({
     );
   }
 
-  const row = (entry: JournalEntry) => (
+  // A section can veto the date it would otherwise show: the monthly log's
+  // task page groups precisely the rows whose date means nothing.
+  const row = (sectionShowsDate: boolean) => (entry: JournalEntry) => (
     <EntryRow
       entry={entry}
       preferences={preferences}
-      showDate={showDate}
+      showDate={showDate && sectionShowsDate}
       onOpen={onOpen}
       onToggle={onToggle}
       key={entry.id}
@@ -59,7 +61,7 @@ export function ArrangedEntryList({
           {section.label !== null ? (
             <h3 className="px-4 pt-3 pb-1 text-xs font-medium text-fg-mute">{section.label}</h3>
           ) : null}
-          {section.entries.map(row)}
+          {section.entries.map(row(section.showDate))}
         </Fragment>
       ))}
       {closedCount > 0 ? (
@@ -68,7 +70,7 @@ export function ArrangedEntryList({
             <Icon name="chevronRight" size={12} className="group-open:rotate-90" />
             {`Done & moved (${closedCount})`}
           </summary>
-          {closed.map(row)}
+          {closed.map(row(true))}
         </details>
       ) : null}
     </>

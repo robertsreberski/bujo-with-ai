@@ -1,13 +1,23 @@
 import type { Entry as JournalEntry, EntryType } from '../api/types';
-import { DEFAULT_LOG_VIEW, ENTRY_TYPES, type LogSort, type LogViewConfig } from './contracts';
+import {
+  DEFAULT_LOG_VIEW,
+  ENTRY_TYPES,
+  type LogGroup,
+  type LogSort,
+  type LogViewConfig,
+} from './contracts';
 
-export { DEFAULT_LOG_VIEW } from './contracts';
+export { DEFAULT_LOG_VIEW, DEFAULT_MONTH_LOG_VIEW } from './contracts';
 export type { LogGroup, LogSort, LogStateFilter, LogViewConfig } from './contracts';
 
 /**
  * The default from before the log sorted by entry date. A saved copy of it
  * means the arrangement was never really customized — only reset — so it
  * yields to the current default instead of pinning the old sort forever.
+ *
+ * The monthly log's move to a split default deliberately does *not* join this
+ * list: `oldest/none` is only ever stored by someone who picked it from the
+ * arrange menu, and collapsing it would make "None" impossible to keep.
  */
 const LEGACY_DEFAULT_LOG_VIEW: LogViewConfig = Object.freeze({
   sort: 'newest',
@@ -38,7 +48,7 @@ export const normalizeLogView = (value: unknown): LogViewConfig => {
   const types = ENTRY_TYPES.filter((type) => rawTypes.includes(type));
   return {
     sort: raw.sort === 'newest' ? 'newest' : 'oldest',
-    group: raw.group === 'type' ? 'type' : 'none',
+    group: raw.group === 'type' || raw.group === 'day' ? raw.group : 'none',
     stateFilter:
       raw.stateFilter === 'all' || raw.stateFilter === 'closed' ? raw.stateFilter : 'open',
     types: types.length === ENTRY_TYPES.length ? [] : types,
@@ -52,8 +62,10 @@ const matchesLogView = (config: LogViewConfig, other: LogViewConfig): boolean =>
   config.types.length === other.types.length &&
   config.types.every((type) => other.types.includes(type));
 
-export const isDefaultLogView = (config: LogViewConfig): boolean =>
-  matchesLogView(normalizeLogView(config), DEFAULT_LOG_VIEW);
+export const isDefaultLogView = (
+  config: LogViewConfig,
+  defaultView: LogViewConfig = DEFAULT_LOG_VIEW,
+): boolean => matchesLogView(normalizeLogView(config), defaultView);
 
 /**
  * Reads a persisted arrangement back. Null means "no opinion, use the
@@ -71,6 +83,11 @@ export interface LogSection {
   /** Null when the list is ungrouped; a pluralized count header otherwise. */
   label: string | null;
   entries: JournalEntry[];
+  /**
+   * Whether rows in this section should show their date. False for a section
+   * that exists *because* its rows have no day worth showing.
+   */
+  showDate: boolean;
 }
 
 export interface LogArrangement {
@@ -109,7 +126,51 @@ const compareBy =
     return sort === 'newest' ? -ascending : ascending;
   };
 
-export function arrangeLog(entries: JournalEntry[], config: LogViewConfig): LogArrangement {
+export interface ArrangeOptions {
+  /**
+   * Names the undated half under `group: 'day'`. A monthly log calls it "This
+   * month"; a flat collection has no such span, so it falls back to "No day".
+   */
+  undatedLabel?: string;
+}
+
+function buildSections(
+  sorted: JournalEntry[],
+  group: LogGroup,
+  undatedLabel: string,
+): LogSection[] {
+  if (group === 'type') {
+    return ENTRY_TYPES.flatMap((type) => {
+      const entries = sorted.filter((entry) => entry.type === type);
+      if (entries.length === 0) return [];
+      return [
+        { key: type, label: `${TYPE_PLURALS[type]} (${entries.length})`, entries, showDate: true },
+      ];
+    });
+  }
+  if (group === 'day') {
+    // The two facing pages of a paper monthly log. The calendar page shows the
+    // day each row named; the task page has no day to show, so it shows none.
+    const dated = sorted.filter((entry) => entry.dateStated);
+    const undated = sorted.filter((entry) => !entry.dateStated);
+    return [
+      { key: 'dated', label: `On a day (${dated.length})`, entries: dated, showDate: true },
+      {
+        key: 'undated',
+        label: `${undatedLabel} (${undated.length})`,
+        entries: undated,
+        showDate: false,
+      },
+    ].filter((section) => section.entries.length > 0);
+  }
+  return [{ key: 'all', label: null, entries: sorted, showDate: true }];
+}
+
+export function arrangeLog(
+  entries: JournalEntry[],
+  config: LogViewConfig,
+  options: ArrangeOptions = {},
+): LogArrangement {
   const view = normalizeLogView(config);
   const narrowed =
     view.types.length === 0 ? entries : entries.filter((entry) => view.types.includes(entry.type));
@@ -122,14 +183,11 @@ export function arrangeLog(entries: JournalEntry[], config: LogViewConfig): LogA
   const sorted = [...shown].sort(compare);
   const closed = view.stateFilter === 'open' ? [...finished].sort(compare) : [];
 
-  const sections: LogSection[] =
-    view.group === 'type'
-      ? ENTRY_TYPES.flatMap((type) => {
-          const group = sorted.filter((entry) => entry.type === type);
-          if (group.length === 0) return [];
-          return [{ key: type, label: `${TYPE_PLURALS[type]} (${group.length})`, entries: group }];
-        })
-      : [{ key: 'all', label: null, entries: sorted }];
+  const sections: LogSection[] = buildSections(
+    sorted,
+    view.group,
+    options.undatedLabel ?? 'No day',
+  );
 
   return {
     sections,

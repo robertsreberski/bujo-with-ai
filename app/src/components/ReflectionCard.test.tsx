@@ -27,6 +27,7 @@ const sourceEntry: Entry = {
   source: null,
   migrations: 0,
   collection: null,
+  dateStated: true,
   createdAt: '2026-07-21T08:00:00.000Z',
   updatedAt: '2026-07-21T08:00:00.000Z',
   revision: 1,

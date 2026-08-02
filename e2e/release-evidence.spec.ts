@@ -852,7 +852,13 @@ test('the month flow exposes calendar navigation and the complete habit grid at 
     try {
       await openJournal(screenshotPage);
       await screenshotPage.getByRole('button', { name: 'Month', exact: true }).click();
-      await expect(screenshotPage.getByText(monthlyText, { exact: true })).toBeVisible();
+      // Scoped to the log section: a monthly-log entry that names a day is also
+      // a dated entry, so it appears in the month timeline above as well.
+      await expect(
+        screenshotPage
+          .getByRole('region', { name: 'Monthly log', exact: true })
+          .getByText(monthlyText, { exact: true }),
+      ).toBeVisible();
       const grid = screenshotPage.getByRole('list', {
         name: new RegExp(`^${habitText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:`),
       });

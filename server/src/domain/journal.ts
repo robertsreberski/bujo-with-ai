@@ -953,6 +953,7 @@ export class JournalDomain {
             source: `Weekly summary, saved by you on ${this.today()}.`,
             migrations: 0,
             collection: null,
+            dateStated: true,
           },
           context.now,
         );

@@ -51,6 +51,9 @@ export const EntrySchema = z
     source: SourceSchema.nullable(),
     migrations: z.number().int().nonnegative(),
     collection: CollectionIdSchema.nullable(),
+    dateStated: z
+      .boolean()
+      .describe('True when the day on this entry was chosen rather than defaulted.'),
     createdAt: IsoTimestampSchema,
     updatedAt: IsoTimestampSchema,
     revision: z.number().int().positive(),
@@ -58,6 +61,15 @@ export const EntrySchema = z
   })
   .superRefine((entry, context) => {
     const actionable = isActionableEntryType(entry.type);
+    // A daily-log entry's day is the log it sits in, so it is always stated.
+    // Only a filing can be undated: "sometime this month" has no day to name.
+    if (entry.collection === null && !entry.dateStated) {
+      context.addIssue({
+        code: 'custom',
+        path: ['dateStated'],
+        message: 'A daily-log entry always states its day.',
+      });
+    }
     if (actionable && entry.state === 'logged') {
       context.addIssue({
         code: 'custom',

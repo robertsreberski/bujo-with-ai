@@ -27,13 +27,21 @@ returned revision to protect against overwriting a newer edit.
 1. Use `add_entry` for a daily-log item and `add_to_collection` for a flat
    collection or `month:YYYY-MM`. Both accept `date` and `time`, so put the day
    an entry belongs to in those fields rather than writing it into the text. A
-   date given to a `month:YYYY-MM` log must fall inside that month; omitting it
-   files the entry under today.
-2. Use a stable `idempotencyKey` when a write may be retried. Reuse it only for
+   date given to a `month:YYYY-MM` log must fall inside that month.
+2. On a `month:YYYY-MM` log, whether you pass `date` decides what kind of thing
+   you are filing. Pass it for something that happens on a day — a deadline, an
+   appointment — and it appears in that day alongside the daily log. Omit it for
+   something to do sometime this month, and it stays the month's inventory until
+   the owner pulls it into a day. Omitting it still stamps today, but that day
+   is not a claim about when the entry belongs.
+3. Use a stable `idempotencyKey` when a write may be retried. Reuse it only for
    byte-for-byte equivalent intent.
-3. Use `list_day` for one daily log and its open-task leftovers. Use `search`
-   for text, tags, types, states, authors, collections, or date ranges.
-4. Report what actually committed, including the returned entry id; never call
+4. Use `list_day` for one day and its open-task leftovers. It returns the daily
+   log plus anything filed elsewhere that named that day, so read `collection`
+   on each entry to see where a row lives. Leftovers cover the daily log and
+   monthly-log tasks whose day has passed. Use `search` for text, tags, types,
+   states, authors, collections, or date ranges.
+5. Report what actually committed, including the returned entry id; never call
    a failed or interrupted write successful.
 
 ## Change existing material

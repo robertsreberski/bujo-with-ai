@@ -205,6 +205,7 @@ describe('App Activity acknowledgement', () => {
       source: null,
       migrations: 0,
       collection: null,
+      dateStated: true,
       createdAt: `${TODAY}T09:00:00.000Z`,
       updatedAt: `${TODAY}T09:00:00.000Z`,
       revision: 1,

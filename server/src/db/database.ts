@@ -233,6 +233,8 @@ export class JournalDatabase {
       { version: 5, type: 'index', name: 'idx_reflection_versions_slot' },
       { version: 7, type: 'table', name: 'summary_reflection_reverts' },
       { version: 7, type: 'table', name: 'legacy_summary_reconciliation_state' },
+      { version: 8, type: 'index', name: 'idx_entries_stated_day' },
+      { version: 8, type: 'table', name: 'date_stated_backfill_state' },
     ] as const;
     const lookup = this.raw.prepare('SELECT type FROM sqlite_master WHERE name = ?');
     for (const object of required) {
@@ -268,6 +270,9 @@ export class JournalDatabase {
       hasLegacySummaryProvenance &&
       this.raw.prepare('SELECT 1 FROM legacy_summary_reconciliation_state WHERE id=1').get() ===
         undefined;
+    const dateStatedBackfillPending =
+      (appliedVersion ?? 0) >= 8 &&
+      this.raw.prepare('SELECT 1 FROM date_stated_backfill_state WHERE id=1').get() === undefined;
     const now = this.now().toISOString();
     const reconcile = this.raw.transaction(() => {
       if (hasLegacySummaryProvenance)
@@ -375,6 +380,18 @@ export class JournalDatabase {
           .prepare(
             'INSERT OR IGNORE INTO legacy_summary_reconciliation_state(id,completed_at) VALUES (1,?)',
           )
+          .run(now);
+      }
+
+      if (dateStatedBackfillPending) {
+        // Migration 008 defaults every row to "states its day", which is right
+        // for the daily log and wrong for filings written before the column
+        // existed: none of them named a day. Stand those back down exactly
+        // once, so a filing dated deliberately after the upgrade survives the
+        // next open.
+        this.raw.exec('UPDATE entries SET date_stated = 0 WHERE collection IS NOT NULL');
+        this.raw
+          .prepare('INSERT OR IGNORE INTO date_stated_backfill_state(id,completed_at) VALUES (1,?)')
           .run(now);
       }
     });

@@ -79,10 +79,16 @@ function searchAll(
   }
 }
 
+/** True when the owner named a day, rather than letting the capture pick one. */
+function dateIntentStatesDay(intent: DateIntent): boolean {
+  return intent.kind !== 'unstated';
+}
+
 function resolveDateIntent(intent: DateIntent): string {
   switch (intent.kind) {
     case 'absolute':
       return intent.date;
+    case 'unstated':
     case 'today':
       return intent.baseToday;
     case 'tomorrow':
@@ -245,7 +251,7 @@ function timelinePage(domain: JournalDomain, config: JournalConfig, raw: unknown
   const page = domain.pageEntries(
     {
       ...(query.to === undefined ? {} : { dateTo: query.to }),
-      excludeMonthlyCollections: true,
+      excludeUndatedMonthlyCollections: true,
       limit: query.limit,
     },
     cursor,
@@ -388,6 +394,7 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
           text: input.text,
           type: input.type,
           date: resolveDateIntent(input.dateIntent),
+          dateStated: dateIntentStatesDay(input.dateIntent),
           time: input.time,
           tags: input.tags,
           collection: input.collection,
@@ -432,6 +439,7 @@ export function createDomainAdapters(domain: JournalDomain, config: JournalConfi
           text: parsed.text,
           type: parsed.type,
           date: resolveDateIntent(input.dateIntent),
+          dateStated: dateIntentStatesDay(input.dateIntent),
           time: parsed.time,
           tags: parsed.tags,
           collection: parsed.collection,
