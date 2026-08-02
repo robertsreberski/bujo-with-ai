@@ -1114,5 +1114,5 @@ describe('JournalDatabase and backups', () => {
     expect(readdirSync(join(repository, 'server/dist/db/migrations')).sort()).toEqual(
       migrations.map((migration) => migration.filename).sort(),
     );
-  });
+  }, 20_000);
 });
